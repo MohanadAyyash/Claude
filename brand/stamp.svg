@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000">
+ <defs><path id="top" d="M 135 500 A 365 365 0 0 1 865 500"/><path id="bot" d="M 80 500 A 420 420 0 0 0 920 500"/></defs>
+ <circle cx="500" cy="500" r="485" fill="none" stroke="#1f3a5f" stroke-width="16"/><circle cx="500" cy="500" r="455" fill="none" stroke="#1f3a5f" stroke-width="5"/>
+ <circle cx="500" cy="500" r="272" fill="none" stroke="#1f3a5f" stroke-width="5"/>
+ <text font-family="IBM Plex Sans Arabic" font-weight="600" font-size="60" fill="#1f3a5f" text-anchor="middle" direction="rtl"><textPath href="#top" startOffset="50%">تريجون سيفيل للمقاولات ذ.م.م</textPath></text>
+ <text font-family="Archivo" font-weight="600" font-size="46" letter-spacing="4" fill="#1f3a5f" text-anchor="middle"><textPath href="#bot" startOffset="50%">TRIGON CIVIL CONTRACTING L.L.C</textPath></text>
+ <g font-family="IBM Plex Mono" font-weight="500" font-size="28" fill="#1f3a5f" text-anchor="middle"><text x="150" y="490">DUBAI</text><text x="150" y="526">U.A.E</text><text x="850" y="490">P.O. BOX</text><text x="850" y="526">334112</text></g>
+ <g transform="translate(335 376.2459594475463) scale(3.2324419629738466) translate(-64.52 -297.71)"><path fill="#1f3a5f" d="M 64.519531 297.710938 L 111.3125 297.710938 L 111.3125 314.726562 L 64.519531 314.726562 Z M 64.519531 297.710938 "/><path fill="#1f3a5f" d="M 64.519531 327.488281 L 138.960938 327.488281 L 138.960938 344.503906 L 64.519531 344.503906 Z M 64.519531 327.488281 "/><path fill="#1f3a5f" d="M 64.519531 357.265625 L 166.613281 357.265625 L 166.613281 374.28125 L 64.519531 374.28125 Z M 64.519531 357.265625 "/></g></svg>
