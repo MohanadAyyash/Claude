@@ -52,3 +52,5 @@ textarea{min-height:60px;resize:vertical}label{display:block;font-size:12px;colo
 .doc .sig{display:flex;justify-content:space-between;margin-top:50px}.doc .sig div{border-top:1px solid #000;width:200px;text-align:center;padding-top:4px}
 @media print{body>*:not(#print-area){display:none!important}#print-area{display:block}body{background:#fff}}
 @media(max-width:800px){.shell{flex-direction:column}.side{width:100%;height:auto;position:static;display:flex;flex-wrap:wrap;padding:6px}.side .brand{width:100%;border:0}.side a{padding:8px 10px}.f2{grid-template-columns:1fr}.main{padding:12px}}
+
+body[data-role=viewer] #add,body[data-role=viewer] #save,body[data-role=viewer] #del,body[data-role=viewer] #void,body[data-role=viewer] #pay,body[data-role=viewer] #cn,body[data-role=viewer] #conv,body[data-role=viewer] #gen,body[data-role=viewer] #fin,body[data-role=viewer] #paid,body[data-role=viewer] .btn.sm{display:none}

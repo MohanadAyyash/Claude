@@ -5,6 +5,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const C = require('./lib/compliance');
+const { sendMail, validEmail } = require('./lib/mailer');
+const { docHtml, toText } = require('./lib/docs');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -32,7 +34,7 @@ CREATE TABLE IF NOT EXISTS site_reports(id INTEGER PRIMARY KEY, project_id INTEG
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, ts TEXT, user TEXT, action TEXT, tbl TEXT, rec INTEGER, detail TEXT);
 `);
 const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
-[['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
+[['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
 
 // Editable columns per table (whitelist) and numeric columns
 const bad = m => { const e = new Error(m); e.status = 400; throw e; };
@@ -93,7 +95,7 @@ function enrich() {
     if (client && !client.trn) warnings.push('customer_trn_missing');
     if (client && !client.address) warnings.push('customer_address_missing');
     return { ...r, items, ...tt, due_now: dueNow, paid, credited, balance, retention_open, status, warnings,
-      project_name: proj?.name, emirate: proj?.emirate, client_id: proj?.client_id, client_name: client?.name, client_trn: client?.trn, client_address: client?.address };
+      project_name: proj?.name, emirate: proj?.emirate, client_id: proj?.client_id, client_name: client?.name, client_trn: client?.trn, client_address: client?.address, client_email: client?.email };
   });
   const bills = all('bills').map(r => {
     const total = round(r.amount + r.vat_amount);
@@ -104,7 +106,7 @@ function enrich() {
   });
   const quotes = all('quotes').map(r => {
     const items = parseItems(r);
-    return { ...r, items, ...docTotals(items, r.vat_pct), client_name: parties[r.client_id]?.name };
+    return { ...r, items, ...docTotals(items, r.vat_pct), client_name: parties[r.client_id]?.name, client_email: parties[r.client_id]?.email };
   });
   const payments = all('payments').map(p => {
     const inv = invoices.find(i => i.id === p.invoice_id), bill = bills.find(b => b.id === p.bill_id);
@@ -232,7 +234,7 @@ function sessionUser(req) {
   const m = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
   if (!m) return null;
   const s = db.prepare('SELECT user_id FROM sessions WHERE token=? AND created>?').get(m[1], Date.now() - 30 * 864e5);
-  return s ? db.prepare('SELECT id,username FROM users WHERE id=?').get(s.user_id) : null;
+  return s ? db.prepare('SELECT id,username,role FROM users WHERE id=?').get(s.user_id) : null;
 }
 
 // ---- http -----------------------------------------------------------------
@@ -260,7 +262,23 @@ function clean(table, body) {
   return out;
 }
 
-const SETTING_KEYS = ['company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban'];
+const ROLES = ['admin', 'accountant', 'manager', 'viewer'];
+const SENSITIVE = ['employees', 'payroll', 'corporate-tax', 'compliance'];
+const OPS_WRITE = ['projects', 'boq_items', 'variations', 'site_reports', 'quotes', 'parties'];
+// admin: everything · accountant: everything except users/settings/backup/audit · manager: operations only, no HR/tax · viewer: read-only, no HR/tax
+function can(role, method, a, b, c) {
+  const read = method === 'GET';
+  if (role === 'admin') return true;
+  if (['users', 'backup', 'audit'].includes(a)) return false;
+  if (a === 'settings') return read && b !== 'test-email';
+  if (a === 'password') return true;
+  if (role === 'accountant') return true;
+  if (SENSITIVE.includes(a)) return false;
+  if (role === 'viewer') return read;
+  if (role === 'manager') return read || (OPS_WRITE.includes(a) && c !== 'progress-invoice');
+  return false;
+}
+const SETTING_KEYS = ['smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -287,7 +305,7 @@ async function api(req, res, url) {
     const { username, password, company } = await readBody(req);
     if (!username || !password || password.length < 6) return send(res, 400, { error: 'password must be at least 6 characters' });
     const salt = crypto.randomBytes(16).toString('hex');
-    const r = db.prepare('INSERT INTO users(username,salt,hash) VALUES(?,?,?)').run(username, salt, hashPw(password, salt));
+    const r = db.prepare('INSERT INTO users(username,salt,hash,role) VALUES(?,?,?,?)').run(username, salt, hashPw(password, salt), 'admin');
     const ins = db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)');
     ins.run('company_name', company || ''); ins.run('vat_pct', '5'); ins.run('currency', 'AED');
     ins.run('terms', '1. Payment: 30 days from invoice date.\n2. Prices exclude VAT unless stated.\n3. Variations to be agreed in writing.');
@@ -307,7 +325,75 @@ async function api(req, res, url) {
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, '', 0) });
   }
 
-  if (!sessionUser(req)) return send(res, 401, { error: 'unauthorized' });
+  const me = sessionUser(req);
+  if (!me) return send(res, 401, { error: 'unauthorized' });
+  if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
+
+  const mailCfg = () => {
+    const st = getSettings();
+    if (!st.smtp_host || !st.smtp_from) bad('Email is not configured — set the SMTP details in Settings');
+    return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
+  };
+  if (a === 'settings' && b === 'test-email' && method === 'POST') {
+    const { to } = await readBody(req);
+    if (!validEmail(to)) bad('Enter a valid email address');
+    await sendMail(mailCfg(), { to, subject: 'Test email / رسالة تجريبية', html: '<p>Email settings are working. / إعدادات البريد تعمل بنجاح.</p>', text: 'Email settings are working.' });
+    audit(req, 'email', 'settings', 0, `test to ${to}`);
+    return send(res, 200, { ok: 1 });
+  }
+  if (['invoices', 'quotes'].includes(a) && c === 'email' && method === 'POST') {
+    const { to, message, reminder } = await readBody(req), e = enrich();
+    const doc = (a === 'invoices' ? e.invoices : e.quotes).find(x => x.id === +b);
+    if (!doc) return send(res, 404, { error: 'not found' });
+    if (doc.voided) bad('Cannot email a voided document');
+    if (!validEmail(to)) bad('Enter a valid email address');
+    const st = getSettings(), html = docHtml({ kind: a, doc: { ...doc, client_trn: e.parties[doc.client_id]?.trn }, settings: st, message, reminder: !!reminder && a === 'invoices' });
+    const label = a === 'quotes' ? 'Quotation' : doc.kind === 'credit_note' ? 'Credit note' : reminder ? 'Payment reminder — Invoice' : 'Tax invoice';
+    await sendMail(mailCfg(), { to, subject: `${label} ${doc.number} — ${st.company_name || ''}`, html, text: toText(html) });
+    audit(req, 'email', a, doc.id, `${doc.number} to ${to}${reminder ? ' (reminder)' : ''}`);
+    return send(res, 200, { ok: 1 });
+  }
+
+  // ---- users (admin only, enforced by can()) ----
+  if (a === 'users') {
+    const admins = () => db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n;
+    if (method === 'GET') return send(res, 200, db.prepare('SELECT id,username,role FROM users ORDER BY id').all());
+    const body = ['POST', 'PUT'].includes(method) ? await readBody(req) : {};
+    if (method === 'POST') {
+      if (!body.username || !/^[\w.@-]{3,40}$/.test(body.username)) bad('Username must be 3–40 characters (letters, digits, . _ - @)');
+      if (!body.password || body.password.length < 6) bad('Password must be at least 6 characters');
+      if (!ROLES.includes(body.role)) bad('Invalid role');
+      if (db.prepare('SELECT 1 FROM users WHERE username=?').get(body.username)) bad('Username already exists');
+      const salt = crypto.randomBytes(16).toString('hex');
+      const r = db.prepare('INSERT INTO users(username,salt,hash,role) VALUES(?,?,?,?)').run(body.username, salt, hashPw(body.password, salt), body.role);
+      audit(req, 'create', 'users', Number(r.lastInsertRowid), `${body.username} (${body.role})`);
+      return send(res, 200, { id: Number(r.lastInsertRowid) });
+    }
+    const u = db.prepare('SELECT * FROM users WHERE id=?').get(+b);
+    if (!u) return send(res, 404, { error: 'not found' });
+    if (method === 'PUT') {
+      if (body.role) {
+        if (!ROLES.includes(body.role)) bad('Invalid role');
+        if (u.role === 'admin' && body.role !== 'admin' && admins() <= 1) bad('There must be at least one admin');
+        db.prepare('UPDATE users SET role=? WHERE id=?').run(body.role, u.id);
+      }
+      if (body.password) {
+        if (body.password.length < 6) bad('Password must be at least 6 characters');
+        const salt = crypto.randomBytes(16).toString('hex');
+        db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(body.password, salt), u.id);
+        db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
+      }
+      audit(req, 'update', 'users', u.id, `${u.username}${body.role ? ' role=' + body.role : ''}${body.password ? ' password reset' : ''}`);
+      return send(res, 200, { ok: 1 });
+    }
+    if (method === 'DELETE') {
+      if (u.id === me.id) bad('You cannot delete your own account');
+      if (u.role === 'admin' && admins() <= 1) bad('There must be at least one admin');
+      db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id); db.prepare('DELETE FROM users WHERE id=?').run(u.id);
+      audit(req, 'delete', 'users', u.id, u.username);
+      return send(res, 200, { ok: 1 });
+    }
+  }
 
   if (a === 'settings') {
     if (method === 'PUT') {
@@ -317,9 +403,12 @@ async function api(req, res, url) {
       if (body.employer_routing && !C.validRouting(body.employer_routing)) return send(res, 400, { error: 'Routing code must be 9 digits' });
       if (body.employer_iban && !C.validIban(body.employer_iban)) return send(res, 400, { error: 'Invalid UAE IBAN' });
       for (const k of SETTING_KEYS) if (k in body) ins.run(k, String(body[k] ?? '').trim());
+      if (body.smtp_pass) ins.run('smtp_pass', String(body.smtp_pass));                // password only changes when a new one is typed
+      if (body.smtp_from && !validEmail(body.smtp_from)) return send(res, 400, { error: 'SMTP "from" must be a valid email address' });
       audit(req, 'update', 'settings', 0, 'company settings');
     }
-    return send(res, 200, getSettings());
+    const st = getSettings(); st.smtp_pass_set = st.smtp_pass ? '1' : ''; delete st.smtp_pass;       // never send the SMTP password back
+    return send(res, 200, st);
   }
   if (a === 'password' && method === 'POST') {
     const { password } = await readBody(req);
@@ -328,7 +417,7 @@ async function api(req, res, url) {
     db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(password, salt), sessionUser(req).id);
     return send(res, 200, { ok: 1 });
   }
-  if (a === 'dashboard') return send(res, 200, dashboard());
+  if (a === 'dashboard') { const d = dashboard(); if (!['admin', 'accountant'].includes(me.role)) d.alerts = []; return send(res, 200, d); }
   if (a === 'vat') return send(res, 200, vatReport(url.searchParams.get('from'), url.searchParams.get('to')));
   if (a === 'project-summary') return send(res, 200, projectRows());
   if (a === 'backup') {

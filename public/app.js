@@ -1,6 +1,7 @@
 // Contractor ERP — frontend (vanilla JS, Arabic/English)
 let lang = localStorage.lang || 'ar';
 let S = {};            // company settings
+let ME = {};           // current user {username, role}
 let route = location.hash.slice(1) || 'dashboard';
 const tr = (ar, en) => (lang === 'ar' ? ar : en);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -31,6 +32,7 @@ const CATS = { materials: ['مواد', 'Materials'], labour: ['عمالة', 'Lab
 const PTYPE = { client: ['عميل', 'Client'], supplier: ['مورد', 'Supplier'], subcontractor: ['مقاول باطن', 'Subcontractor'] };
 const EMIRATES = { abu_dhabi: ['أبوظبي', 'Abu Dhabi'], dubai: ['دبي', 'Dubai'], sharjah: ['الشارقة', 'Sharjah'], ajman: ['عجمان', 'Ajman'], uaq: ['أم القيوين', 'Umm Al Quwain'], rak: ['رأس الخيمة', 'Ras Al Khaimah'], fujairah: ['الفجيرة', 'Fujairah'] };
 const VATC = { std: ['خاضع 5%', 'Standard 5%'], zero: ['صفري', 'Zero-rated'], exempt: ['معفى', 'Exempt'] };
+const ROLE = { admin: ['مدير النظام', 'Admin'], accountant: ['محاسب', 'Accountant'], manager: ['مدير مشاريع', 'Project manager'], viewer: ['عرض فقط', 'Viewer'] };
 const METHODS = { bank: ['تحويل بنكي', 'Bank transfer'], cheque: ['شيك', 'Cheque'], cash: ['نقد', 'Cash'], card: ['بطاقة', 'Card'] };
 const opts = (map, sel) => Object.entries(map).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(tr(...v))}</option>`).join('');
 
@@ -40,6 +42,7 @@ async function boot() {
   document.documentElement.lang = lang; document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   if (st.setup) return setupScreen();
   if (!st.user) return loginScreen();
+  ME = st.user; document.body.dataset.role = ME.role;
   S = await api('GET', 'settings');
   document.title = S.company_name || tr('نظام إدارة المقاولات', 'Contractor ERP');
   shell();
@@ -68,8 +71,9 @@ const NAV = [
   ['parties', 'العملاء والموردون', 'Clients & suppliers'], ['vat', 'ضريبة القيمة المضافة', 'VAT report'], ['ctax', 'ضريبة الشركات', 'Corporate tax'], ['compliance', 'الامتثال والتدقيق', 'Compliance & audit'], ['settings', 'الإعدادات', 'Settings'],
 ];
 function shell() {
-  $('#app').innerHTML = `<div class="shell"><nav class="side"><div class="brand">${esc(S.company_name || tr('نظام المقاولات', 'Contractor ERP'))}</div>
-    ${NAV.map(n => `<a data-r="${n[0]}" class="${route.split('/')[0] === n[0] ? 'on' : ''}">${tr(n[1], n[2])}</a>`).join('')}
+  const HIDDEN = { admin: [], accountant: [], manager: ['employees', 'payroll', 'ctax', 'compliance', 'vat'], viewer: ['employees', 'payroll', 'ctax', 'compliance'] }[ME.role] || [];
+  $('#app').innerHTML = `<div class="shell"><nav class="side"><div class="brand">${esc(S.company_name || tr('نظام المقاولات', 'Contractor ERP'))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
+    ${NAV.filter(n => !HIDDEN.includes(n[0])).map(n => `<a data-r="${n[0]}" class="${route.split('/')[0] === n[0] ? 'on' : ''}">${tr(n[1], n[2])}</a>`).join('')}
     <div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
     <main class="main" id="main"></main></div>`;
   document.querySelectorAll('.side a').forEach(a => a.onclick = () => go(a.dataset.r));
@@ -248,6 +252,7 @@ async function docModal(kind, row, preset = {}) {
     <div class="f2" style="margin-top:10px">${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}${isQ ? field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms) : ''}</div>
     <div class="acts">${dead ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}
     ${row ? `<button class="btn sec" id="print">${tr('طباعة / PDF', 'Print / PDF')}</button>` : ''}
+    ${row && !dead ? `<button class="btn sec" id="mail">${tr('إرسال بالإيميل', 'Email')}</button>` : ''}${row && !isQ && !isCN && !dead && row.balance > 0 && row.status === 'overdue' ? `<button class="btn sec" id="remind">${tr('تذكير بالسداد', 'Payment reminder')}</button>` : ''}
     ${row && !isQ && !isCN && !dead ? `<button class="btn sec" id="pay">${tr('تسجيل دفعة', 'Record payment')}</button><button class="btn sec" id="cn">${tr('إصدار إشعار دائن', 'Issue credit note')}</button>` : ''}
     ${row && isQ && !row.project_id ? `<button class="btn sec" id="conv">${tr('تحويل إلى مشروع', 'Convert to project')}</button>` : ''}
     <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && isQ ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}${row && !isQ && !dead ? `<button class="btn bad" id="void">${tr('إلغاء الفاتورة', 'Void')}</button>` : ''}</div>`, true);
@@ -264,6 +269,12 @@ async function docModal(kind, row, preset = {}) {
   if (row) {
     $('#print', m).onclick = () => printDoc(kind, row);
     if (isQ) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${kind}/${row.id}`); closeModal(); render(); } });
+    const sendMailTo = (reminder) => guard(async () => {
+      const to = prompt(tr('أرسل إلى البريد:', 'Send to email:'), row.client_email || ''); if (!to) return;
+      await api('POST', `${kind}/${row.id}/email`, { to, reminder }); toast(tr('تم الإرسال', 'Email sent'));
+    });
+    if ($('#mail', m)) $('#mail', m).onclick = sendMailTo(false);
+    if ($('#remind', m)) $('#remind', m).onclick = sendMailTo(true);
     if ($('#void', m)) $('#void', m).onclick = guard(async () => {
       const reason = prompt(tr('سبب الإلغاء (إلزامي — لا يمكن حذف الفاتورة الضريبية):', 'Reason for voiding (required — tax invoices cannot be deleted):'));
       if (reason) { await api('POST', `invoices/${row.id}/void`, { reason }); closeModal(); render(); }
@@ -530,18 +541,41 @@ PAGES.compliance = async () => {
 
 // ---- settings ---------------------------------------------------------------
 PAGES.settings = async () => {
-  const s = await api('GET', 'settings');
+  const s = await api('GET', 'settings'), admin = ME.role === 'admin';
   const F = [['company_name', 'اسم الشركة', 'Company name'], ['trn', 'الرقم الضريبي للقيمة المضافة (TRN) — ١٥ رقم', 'VAT TRN (15 digits)'], ['ct_trn', 'رقم تسجيل ضريبة الشركات', 'Corporate tax TRN'], ['phone', 'الهاتف', 'Phone'], ['email', 'البريد', 'Email'], ['address', 'العنوان', 'Address'],
     ['vat_pct', 'نسبة الضريبة الافتراضية %', 'Default VAT %'], ['currency', 'العملة', 'Currency'], ['license_no', 'رقم الرخصة التجارية', 'Trade licence no.'], ['license_expiry', 'انتهاء الرخصة', 'Licence expiry', 'date'],
     ['mohre_id', 'رقم المنشأة — وزارة الموارد البشرية (١٣ رقم)', 'MOHRE establishment ID (13 digits)'], ['employer_bank', 'بنك الشركة', 'Company bank'], ['employer_routing', 'رمز توجيه بنك الشركة (٩ أرقام)', 'Company bank routing code (9 digits)'], ['employer_iban', 'آيبان الشركة', 'Company IBAN']];
-  main(`<h1>${tr('الإعدادات', 'Settings')}</h1><div class="card" id="sf"><div class="f2">${F.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, s[k])).join('')}
+  const E = [['smtp_host', 'خادم البريد (SMTP)', 'SMTP server'], ['smtp_port', 'المنفذ (587 أو 465)', 'Port (587 or 465)'], ['smtp_user', 'اسم مستخدم البريد', 'SMTP username'], ['smtp_pass', 'كلمة مرور البريد', 'SMTP password', 'password'], ['smtp_from', 'عنوان المرسِل (مثل accounts@شركتك.com)', 'From address (e.g. accounts@yourco.com)']];
+  const users = admin ? await api('GET', 'users') : [];
+  main(`<h1>${tr('الإعدادات', 'Settings')}</h1>
+  ${admin ? `<div class="card" id="sf"><div class="f2">${F.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, s[k])).join('')}
     ${field({ k: 'vat_registered', ar: 'مسجّل في ضريبة القيمة المضافة؟', en: 'VAT registered?', type: 'select', options: [['1', tr('نعم', 'Yes')], ['0', tr('لا', 'No')]] }, s.vat_registered ?? '1')}
     ${field({ k: 'bank_details', ar: 'بيانات البنك (تظهر في الفاتورة)', en: 'Bank details (shown on invoices)', type: 'textarea', full: 1 }, s.bank_details)}${field({ k: 'terms', ar: 'الشروط الافتراضية لعروض الأسعار', en: 'Default quotation terms', type: 'textarea', full: 1 }, s.terms)}</div>
     <button class="btn" id="save">${tr('حفظ', 'Save')}</button></div>
+  <div class="card" id="ef"><h2>${tr('إرسال البريد الإلكتروني', 'Email sending')}</h2><p class="muted">${tr('استخدم بيانات SMTP من مزوّد بريد شركتك (Microsoft 365 أو Google Workspace أو استضافة الدومين). المنفذ 587 للتشفير STARTTLS و465 للتشفير المباشر.', 'Use the SMTP details from your company mail provider (Microsoft 365, Google Workspace or your domain host). Port 587 uses STARTTLS, 465 uses implicit TLS.')}</p>
+    <div class="f2">${E.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, k === 'smtp_pass' ? '' : s[k])).join('')}${field({ k: 'smtp_secure', ar: 'التشفير', en: 'Encryption', type: 'select', options: [['0', 'STARTTLS (587)'], ['1', 'SSL/TLS (465)']] }, s.smtp_secure ?? '0')}</div>
+    ${s.smtp_pass_set ? `<p class="muted">${tr('كلمة المرور محفوظة — اتركها فارغة للإبقاء عليها.', 'Password saved — leave blank to keep it.')}</p>` : ''}
+    <button class="btn" id="saveE">${tr('حفظ', 'Save')}</button> <input id="testTo" placeholder="${tr('بريد لإرسال رسالة تجريبية', 'Email for a test message')}" style="width:260px;margin-inline-start:10px"> <button class="btn sec" id="test">${tr('إرسال تجربة', 'Send test')}</button></div>
+  <div class="card"><div class="bar"><h2 style="margin:0">${tr('المستخدمون والصلاحيات', 'Users & roles')}</h2><span class="sp"></span><button class="btn sm" id="addU">+ ${tr('مستخدم', 'User')}</button></div>
+    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
+    <p class="muted">${tr('مدير النظام: كل شيء • محاسب: كل شيء عدا المستخدمين والإعدادات • مدير مشاريع: المشاريع والجداول والتقارير اليومية وعروض الأسعار دون الرواتب والضرائب • عرض فقط: قراءة فقط.', 'Admin: everything • Accountant: everything except users & settings • Project manager: projects, BOQ, site diary, quotes — no payroll or tax • Viewer: read-only.')}</p></div>` : ''}
     <div class="card"><h2>${tr('تغيير كلمة المرور', 'Change password')}</h2><div class="f"><input type="password" id="np" minlength="6" placeholder="${tr('كلمة مرور جديدة', 'New password')}"></div><button class="btn sec" id="cp">${tr('تغيير', 'Change')}</button></div>
-    <div class="card"><h2>${tr('نسخة احتياطية', 'Backup')}</h2><p class="muted">${tr('حمّل نسخة من قاعدة البيانات واحتفظ بها بشكل دوري (السجلات المالية يجب حفظها ٥–٧ سنوات).', 'Download a copy of your database and keep it safe regularly (financial records must be kept 5–7 years).')}</p><a class="btn sec" href="/api/backup" style="text-decoration:none;display:inline-block">${tr('تحميل النسخة الاحتياطية', 'Download backup')}</a></div>`);
-  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'bank_details', 'terms'].forEach(k => b[k] = val($('#sf'), k)); S = await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); });
+    ${admin ? `<div class="card"><h2>${tr('نسخة احتياطية', 'Backup')}</h2><p class="muted">${tr('حمّل نسخة من قاعدة البيانات واحتفظ بها بشكل دوري (السجلات المالية يجب حفظها ٥–٧ سنوات). تحتوي النسخة على كلمة مرور البريد فاحفظها في مكان آمن.', 'Download a copy of your database and keep it safe regularly (financial records must be kept 5–7 years). The copy contains the SMTP password — store it securely.')}</p><a class="btn sec" href="/api/backup" style="text-decoration:none;display:inline-block">${tr('تحميل النسخة الاحتياطية', 'Download backup')}</a></div>` : ''}`);
   $('#cp').onclick = guard(async () => { await api('POST', 'password', { password: $('#np').value }); $('#np').value = ''; toast(tr('تم التغيير', 'Password changed')); });
+  if (!admin) return;
+  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'bank_details', 'terms'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
+  $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure'].forEach(k => b[k] = val($('#ef'), k)); await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
+  $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });
+  const roleList = Object.keys(ROLE).map(k => `${k} = ${tr(...ROLE[k])}`).join('\n');
+  $('#addU').onclick = guard(async () => {
+    const username = prompt(tr('اسم المستخدم:', 'Username:')); if (!username) return;
+    const password = prompt(tr('كلمة المرور (6 أحرف على الأقل):', 'Password (min 6 chars):')); if (!password) return;
+    const role = prompt(tr('الدور:\n', 'Role:\n') + roleList, 'accountant'); if (!role) return;
+    await api('POST', 'users', { username, password, role }); render();
+  });
+  document.querySelectorAll('[data-pw]').forEach(b => b.onclick = guard(async () => { const p = prompt(tr('كلمة المرور الجديدة:', 'New password:')); if (p) { await api('PUT', 'users/' + b.dataset.pw, { password: p }); toast(tr('تم', 'Done')); } }));
+  document.querySelectorAll("[data-urole]").forEach(b => b.onclick = guard(async () => { const r = prompt(tr('الدور:\n', 'Role:\n') + roleList); if (r) { await api('PUT', 'users/' + b.dataset.urole, { role: r }); render(); } }));
+  document.querySelectorAll('[data-du]').forEach(b => b.onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'users/' + b.dataset.du); render(); } }));
 };
 
 boot();

@@ -1,7 +1,28 @@
 // End-to-end API test: node --no-warnings test.js
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-'));
+const net = require('net');
 const { server } = require('./server.js');
+// tiny fake SMTP server that records the message
+const mails = [];
+const smtp = net.createServer(sock => {
+  let inData = false, authStage = 0, cur = { rcpt: [], auth: [] };
+  sock.write('220 fake ESMTP\r\n');
+  sock.on('data', d => {
+    for (const line of d.toString().split('\r\n')) {
+      if (inData) { if (line === '.') { inData = false; mails.push(cur); cur = { rcpt: [], auth: [] }; sock.write('250 queued\r\n'); } else cur.body = (cur.body || '') + line + '\n'; continue; }
+      if (!line) continue;
+      if (authStage) { cur.auth.push(Buffer.from(line, 'base64').toString()); sock.write(authStage++ === 1 ? '334 UGFzc3dvcmQ6\r\n' : '235 ok\r\n'); if (authStage === 3) authStage = 0; continue; }
+      if (/^EHLO/.test(line)) sock.write('250-fake\r\n250 AUTH LOGIN\r\n');
+      else if (line === 'AUTH LOGIN') { authStage = 1; sock.write('334 VXNlcm5hbWU6\r\n'); }
+      else if (/^MAIL FROM/.test(line)) { cur.from = line; sock.write('250 ok\r\n'); }
+      else if (/^RCPT TO/.test(line)) { cur.rcpt.push(line); sock.write('250 ok\r\n'); }
+      else if (line === 'DATA') { inData = true; sock.write('354 go\r\n'); }
+      else if (line === 'QUIT') sock.end('221 bye\r\n');
+    }
+  });
+});
+smtp.listen(0);
 server.listen(0, async () => {
   const base = `http://localhost:${server.address().port}/api/`;
   let cookie = '';
@@ -102,10 +123,51 @@ server.listen(0, async () => {
     assert.ok((await call('GET', 'audit')).j.length > 5);
     assert.equal((await call('POST', 'login', { username: 'a', password: 'bad' })).s, 401);
     assert.equal((await call('POST', 'login', { username: 'a', password: '123456' })).s, 200);
+    // ---- roles & users ----
+    const mk = async (u, role) => (await call('POST', 'users', { username: u, password: 'pass123', role })).s;
+    assert.equal(await mk('acc1', 'accountant'), 200); assert.equal(await mk('pm1', 'manager'), 200); assert.equal(await mk('view1', 'viewer'), 200);
+    assert.equal(await mk('acc1', 'viewer'), 400); assert.equal(await mk('bad1', 'root'), 400);
+    const adminCookie = cookie;
+    const as = async (u, fn) => { cookie = ''; await call('POST', 'login', { username: u, password: 'pass123' }); const r = await fn(); return r; };
+    assert.equal((await as('view1', () => call('GET', 'projects'))).s, 200);
+    assert.equal((await call('POST', 'parties', { name: 'x' })).s, 403);
+    assert.equal((await call('GET', 'employees')).s, 403);
+    assert.equal((await call('GET', 'users')).s, 403);
+    assert.equal((await call('GET', 'settings')).j.smtp_pass, undefined);
+    assert.equal((await as('pm1', () => call('POST', 'site_reports', { project_id: pid, date: '2026-09-02' }))).s, 200);
+    assert.equal((await call('POST', 'invoices', { project_id: pid, items: [] })).s, 403);
+    assert.equal((await call('GET', 'payroll?month=2026-09')).s, 403);
+    assert.equal((await as('acc1', () => call('GET', 'payroll?month=2026-09'))).s, 200);
+    assert.equal((await call('PUT', 'settings', { company_name: 'hack' })).s, 403);
+    assert.equal((await call('GET', 'backup')).s, 403);
+    cookie = adminCookie;
+    const me = (await call('GET', 'users')).j; const adminId = me.find(u => u.username === 'a').id;
+    assert.equal((await call('DELETE', 'users/' + adminId)).s, 400);                 // cannot delete self / last admin
+    assert.equal((await call('PUT', 'users/' + adminId, { role: 'viewer' })).s, 400);
+    const v1 = me.find(u => u.username === 'view1').id;
+    await call('PUT', 'users/' + v1, { password: 'newpass1' });
+    cookie = ''; assert.equal((await call('POST', 'login', { username: 'view1', password: 'pass123' })).s, 401);
+    cookie = adminCookie;
+
+    // ---- email (fake SMTP) ----
+    assert.equal((await call('POST', `invoices/${i2.id}/email`, { to: 'c@x.com' })).s, 400);   // SMTP not configured / voided
+    assert.equal((await call('PUT', 'settings', { smtp_host: '127.0.0.1', smtp_port: smtp.address().port, smtp_user: 'mailuser', smtp_pass: 's3cret', smtp_from: 'accounts@grc-uae.com' })).j.smtp_pass, undefined);
+    assert.equal((await call('GET', 'settings')).j.smtp_pass_set, '1');
+    assert.equal((await call('POST', 'settings/test-email', { to: 'not-an-email' })).s, 400);
+    assert.equal((await call('POST', 'settings/test-email', { to: 'me@example.com' })).s, 200);
+    const inv3 = (await call('POST', 'invoices', { project_id: pid, due_date: '2020-01-01', items: [{ description: 'Mail me', qty: 1, rate: 100 }] })).j.id;
+    assert.equal((await call('POST', `invoices/${inv3}/email`, { to: 'client@example.com\r\nBcc: evil@x.com' })).s, 400);   // header injection blocked
+    assert.equal((await call('POST', `invoices/${inv3}/email`, { to: 'client@example.com', reminder: true, message: 'Dear client' })).s, 200);
+    assert.equal(mails.length, 2); const m = mails[1];
+    assert.deepEqual(m.auth, ['mailuser', 's3cret']); assert.match(m.from, /accounts@grc-uae\.com/); assert.match(m.rcpt[0], /client@example\.com/);
+    const subj = /Subject: =\?UTF-8\?B\?(.+?)\?=/.exec(m.body); assert.match(Buffer.from(subj[1], 'base64').toString(), /^Payment reminder — Invoice INV-/);
+    const html = Buffer.from(m.body.split('text/html')[1].split('\n\n')[1].split('--')[0].replace(/\s/g, ''), 'base64').toString();
+    assert.match(html, /INV-\d{4}-\d+/); assert.match(html, /Payment reminder/);
+
     // login lockout after repeated failures
     for (let k = 0; k < 8; k++) await call('POST', 'login', { username: 'a', password: 'wrong' });
     assert.equal((await call('POST', 'login', { username: 'a', password: '123456' })).s, 429);
     console.log('ALL TESTS PASSED');
   } catch (e) { console.error('FAIL', e); process.exitCode = 1; }
-  server.close(); process.exit(process.exitCode || 0);
+  server.close(); smtp.close(); process.exit(process.exitCode || 0);
 });
