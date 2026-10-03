@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE, s
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER, created INTEGER);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS parties(id INTEGER PRIMARY KEY, type TEXT DEFAULT 'client', name TEXT NOT NULL, trn TEXT, phone TEXT, email TEXT, address TEXT, notes TEXT, bank_name TEXT, iban TEXT);
-CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY, code TEXT, name TEXT NOT NULL, client_id INTEGER, location TEXT, contract_value REAL DEFAULT 0, start_date TEXT, end_date TEXT, status TEXT DEFAULT 'active', notes TEXT, emirate TEXT DEFAULT 'dubai');
+CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY, code TEXT, name TEXT NOT NULL, client_id INTEGER, location TEXT, contract_value REAL DEFAULT 0, start_date TEXT, end_date TEXT, status TEXT DEFAULT 'active', notes TEXT, emirate TEXT DEFAULT 'dubai', retention_pct REAL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS quotes(id INTEGER PRIMARY KEY, number TEXT, date TEXT, client_id INTEGER, project_name TEXT, validity_days INTEGER DEFAULT 30, status TEXT DEFAULT 'draft', items TEXT DEFAULT '[]', vat_pct REAL DEFAULT 5, notes TEXT, terms TEXT, project_id INTEGER);
 CREATE TABLE IF NOT EXISTS invoices(id INTEGER PRIMARY KEY, number TEXT, date TEXT, due_date TEXT, project_id INTEGER, items TEXT DEFAULT '[]', vat_pct REAL DEFAULT 5, retention_pct REAL DEFAULT 0, notes TEXT, kind TEXT DEFAULT 'invoice', original_id INTEGER, voided INTEGER DEFAULT 0, void_reason TEXT);
 CREATE TABLE IF NOT EXISTS bills(id INTEGER PRIMARY KEY, date TEXT, party_id INTEGER, project_id INTEGER, category TEXT DEFAULT 'materials', description TEXT, amount REAL DEFAULT 0, vat_amount REAL DEFAULT 0, reference TEXT);
@@ -26,17 +26,23 @@ CREATE TABLE IF NOT EXISTS employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL,
   basic REAL DEFAULT 0, housing REAL DEFAULT 0, other_allowance REAL DEFAULT 0, bank_name TEXT, routing_code TEXT, iban TEXT, project_id INTEGER, eid_expiry TEXT, visa_expiry TEXT, passport_expiry TEXT, card_expiry TEXT, notes TEXT);
 CREATE TABLE IF NOT EXISTS payroll(id INTEGER PRIMARY KEY, month TEXT, employee_id INTEGER, project_id INTEGER, days_worked REAL DEFAULT 30, leave_days REAL DEFAULT 0, ot_normal_hours REAL DEFAULT 0, ot_special_hours REAL DEFAULT 0,
   bonus REAL DEFAULT 0, deductions REAL DEFAULT 0, fixed REAL DEFAULT 0, overtime REAL DEFAULT 0, gross REAL DEFAULT 0, net REAL DEFAULT 0, status TEXT DEFAULT 'draft', paid_date TEXT, notes TEXT, UNIQUE(month, employee_id));
+CREATE TABLE IF NOT EXISTS boq_items(id INTEGER PRIMARY KEY, project_id INTEGER, section TEXT, description TEXT, unit TEXT, qty REAL DEFAULT 0, rate REAL DEFAULT 0, cost_rate REAL DEFAULT 0, done_pct REAL DEFAULT 0, billed_pct REAL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS variations(id INTEGER PRIMARY KEY, project_id INTEGER, number TEXT, date TEXT, description TEXT, amount REAL DEFAULT 0, status TEXT DEFAULT 'pending');
+CREATE TABLE IF NOT EXISTS site_reports(id INTEGER PRIMARY KEY, project_id INTEGER, date TEXT, weather TEXT, labour_count INTEGER DEFAULT 0, work_done TEXT, issues TEXT, notes TEXT);
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, ts TEXT, user TEXT, action TEXT, tbl TEXT, rec INTEGER, detail TEXT);
 `);
 const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
-[['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
+[['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
 
 // Editable columns per table (whitelist) and numeric columns
 const bad = m => { const e = new Error(m); e.status = 400; throw e; };
 const TABLES = {
   parties:  { cols: ['type','name','trn','phone','email','address','notes','bank_name','iban'],
     check: r => { if (r.trn && !C.validTrn(r.trn)) bad('TRN must be 15 digits'); if (r.iban && !C.validIban(r.iban)) bad('Invalid UAE IBAN'); } },
-  projects: { cols: ['code','name','client_id','location','emirate','contract_value','start_date','end_date','status','notes'], num: ['contract_value'] },
+  projects: { cols: ['code','name','client_id','location','emirate','contract_value','retention_pct','start_date','end_date','status','notes'], num: ['contract_value','retention_pct'] },
+  boq_items: { cols: ['project_id','section','description','unit','qty','rate','cost_rate','done_pct'], num: ['qty','rate','cost_rate','done_pct'], check: r => { if (r.done_pct !== undefined && (r.done_pct < 0 || r.done_pct > 100)) bad('Completion % must be between 0 and 100'); } },
+  variations: { cols: ['project_id','number','date','description','amount','status'], num: ['amount'] },
+  site_reports: { cols: ['project_id','date','weather','labour_count','work_done','issues','notes'], num: ['labour_count'] },
   quotes:   { cols: ['number','date','client_id','project_name','validity_days','status','items','vat_pct','notes','terms'], num: ['validity_days','vat_pct'], json: ['items'], prefix: 'QT' },
   invoices: { cols: ['number','date','due_date','project_id','items','vat_pct','retention_pct','notes'], num: ['vat_pct','retention_pct'], json: ['items'], prefix: 'INV' },
   bills:    { cols: ['date','party_id','project_id','category','description','amount','vat_amount','reference'], num: ['amount','vat_amount'] },
@@ -123,11 +129,16 @@ function projectRows() {
     const byCat = {};
     bl.forEach(b => byCat[b.category] = round((byCat[b.category] || 0) + b.amount));
     if (pr) byCat.payroll = round(pr);
-    return { ...p, invoiced, collected, receivable: round(inv.reduce((s, i) => s + i.balance + i.retention_open, 0)),
+    const vars = round(db.prepare("SELECT COALESCE(SUM(amount),0) a FROM variations WHERE project_id=? AND status='approved'").get(p.id).a);
+    const boq = db.prepare('SELECT * FROM boq_items WHERE project_id=?').all(p.id);
+    const boqValue = round(boq.reduce((x, i) => x + i.qty * i.rate, 0)), boqCost = round(boq.reduce((x, i) => x + i.qty * i.cost_rate, 0));
+    const earned = round(boq.reduce((x, i) => x + i.qty * i.rate * i.done_pct / 100, 0));
+    const revised = round(p.contract_value + vars);
+    return { ...p, variations: vars, revised_value: revised, boq_value: boqValue, boq_budget_cost: boqCost, boq_earned: earned, boq_progress: boqValue ? round(earned / boqValue * 100) : 0, invoiced, collected, receivable: round(inv.reduce((s, i) => s + i.balance + i.retention_open, 0)),
       retention_held: round(inv.reduce((s, i) => s + i.retention_open, 0)),
       cost, payable: round(bl.reduce((s, b) => s + b.balance, 0)), profit: round(invoiced - cost),
       margin: invoiced ? round((invoiced - cost) / invoiced * 100) : 0,
-      billed_pct: p.contract_value ? round(invoiced / p.contract_value * 100) : 0, cost_by_category: byCat };
+      billed_pct: revised ? round(invoiced / revised * 100) : 0, cost_by_category: byCat };
   });
 }
 
@@ -145,7 +156,7 @@ function dashboard() {
   }
   return {
     active_projects: projs.filter(p => p.status === 'active').length,
-    contract_value: round(projs.filter(p => p.status !== 'cancelled').reduce((s, p) => s + p.contract_value, 0)),
+    contract_value: round(projs.filter(p => p.status !== 'cancelled').reduce((s, p) => s + p.revised_value, 0)),
     invoiced: round(invoices.reduce((s, i) => s + i.subtotal, 0)),
     expenses: round(bills.reduce((s, b) => s + b.amount, 0) + db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final'").get().g),
     receivable: round(invoices.reduce((s, i) => s + i.balance, 0)),
@@ -206,6 +217,11 @@ function compliance() {
 }
 
 // ---- auth -----------------------------------------------------------------
+const isHttps = req => req.headers['x-forwarded-proto'] === 'https' || process.env.SECURE_COOKIES === '1';
+const cookie = (req, token, maxAge) => `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
+const fails = new Map();                                    // ip -> [timestamps of failed logins]
+const clientIp = req => (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+const locked = ip => { const t = (fails.get(ip) || []).filter(x => Date.now() - x < 15 * 60e3); fails.set(ip, t); return t.length >= 8; };
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32).toString('hex');
 function createSession(userId) {
   const token = crypto.randomBytes(24).toString('hex');
@@ -275,18 +291,20 @@ async function api(req, res, url) {
     const ins = db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)');
     ins.run('company_name', company || ''); ins.run('vat_pct', '5'); ins.run('currency', 'AED');
     ins.run('terms', '1. Payment: 30 days from invoice date.\n2. Prices exclude VAT unless stated.\n3. Variations to be agreed in writing.');
-    return send(res, 200, { ok: 1 }, { 'Set-Cookie': `sid=${createSession(r.lastInsertRowid)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000` });
+    return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(r.lastInsertRowid), 2592000) });
   }
   if (a === 'login' && method === 'POST') {
-    const { username, password } = await readBody(req);
+    const { username, password } = await readBody(req), ip = clientIp(req);
+    if (locked(ip)) return send(res, 429, { error: 'too many failed attempts — try again in 15 minutes' });
     const u = db.prepare('SELECT * FROM users WHERE username=?').get(username || '');
-    if (!u || !crypto.timingSafeEqual(Buffer.from(hashPw(password || '', u.salt)), Buffer.from(u.hash))) return send(res, 401, { error: 'invalid credentials' });
-    return send(res, 200, { ok: 1 }, { 'Set-Cookie': `sid=${createSession(u.id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000` });
+    if (!u || !crypto.timingSafeEqual(Buffer.from(hashPw(password || '', u.salt)), Buffer.from(u.hash))) { fails.get(ip).push(Date.now()); return send(res, 401, { error: 'invalid credentials' }); }
+    fails.delete(ip);
+    return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(u.id), 2592000) });
   }
   if (a === 'logout') {
     const m = /sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
     if (m) db.prepare('DELETE FROM sessions WHERE token=?').run(m[1]);
-    return send(res, 200, { ok: 1 }, { 'Set-Cookie': 'sid=; Path=/; Max-Age=0' });
+    return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, '', 0) });
   }
 
   if (!sessionUser(req)) return send(res, 401, { error: 'unauthorized' });
@@ -407,6 +425,19 @@ async function api(req, res, url) {
     }
   }
 
+  if (a === 'projects' && c === 'progress-invoice' && method === 'POST') {
+    const proj = db.prepare('SELECT * FROM projects WHERE id=?').get(+b);
+    if (!proj) return send(res, 404, { error: 'not found' });
+    const st = getSettings(); if (st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
+    const lines = db.prepare('SELECT * FROM boq_items WHERE project_id=? AND done_pct>billed_pct+0.0001 ORDER BY id').all(+b);
+    if (!lines.length) bad('No unbilled progress — update the completion % on the BOQ first');
+    const items = lines.map(i => ({ description: `${i.description} (${i.billed_pct}% → ${i.done_pct}%)`, unit: i.unit, qty: round(i.qty * (i.done_pct - i.billed_pct) / 100), rate: i.rate, vat: 'std' }));
+    const r = db.prepare('INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes) VALUES(?,?,?,?,?,?,?)')
+      .run(nextNumber('invoices', 'INV'), today(), proj.id, JSON.stringify(items), +st.vat_pct || 5, proj.retention_pct || 0, 'Progress invoice');
+    db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=?').run(+b);
+    audit(req, 'create', 'progress_invoice', Number(r.lastInsertRowid), `project ${proj.name}`);
+    return send(res, 200, { id: Number(r.lastInsertRowid) });
+  }
   if (a === 'quotes' && c === 'convert' && method === 'POST') {
     const q = enrich().quotes.find(x => x.id === +b);
     if (!q) return send(res, 404, { error: 'not found' });
@@ -414,6 +445,8 @@ async function api(req, res, url) {
     const code = nextNumber('projects', 'PRJ', 'code');
     const r = db.prepare('INSERT INTO projects(code,name,client_id,contract_value,start_date,status) VALUES(?,?,?,?,?,?)')
       .run(code, q.project_name || q.number, q.client_id, q.subtotal, today(), 'active');
+    const ins = db.prepare('INSERT INTO boq_items(project_id,section,description,unit,qty,rate) VALUES(?,?,?,?,?,?)');
+    for (const i of q.items) ins.run(r.lastInsertRowid, '', i.description, i.unit || '', +i.qty || 0, +i.rate || 0);
     db.prepare("UPDATE quotes SET status='accepted', project_id=? WHERE id=?").run(r.lastInsertRowid, q.id);
     return send(res, 200, { project_id: Number(r.lastInsertRowid) });
   }
@@ -422,6 +455,7 @@ async function api(req, res, url) {
     const spec = TABLES[a], id = b ? +b : null;
     if (method === 'GET') {
       const e = enrich();
+      if (['boq_items','variations','site_reports'].includes(a)) { const pid = url.searchParams.get('project_id'); const rows = pid ? db.prepare(`SELECT * FROM ${a} WHERE project_id=? ORDER BY ${a === 'site_reports' ? 'date DESC,' : ''} id`).all(+pid) : all(a); return send(res, 200, id ? rows.find(x => x.id === id) || null : rows); }
       if (e[a] && Array.isArray(e[a]) ) return send(res, 200, id ? e[a].find(x => x.id === id) || null : e[a]);
       return send(res, 200, id ? db.prepare(`SELECT * FROM ${a} WHERE id=?`).get(id) : all(a));
     }
@@ -454,6 +488,7 @@ async function api(req, res, url) {
       if (a === 'projects') {
         const used = db.prepare('SELECT (SELECT COUNT(*) FROM invoices WHERE project_id=?)+(SELECT COUNT(*) FROM bills WHERE project_id=?) n').get(id, id).n;
         if (used) return send(res, 409, { error: 'project has invoices or expenses' });
+        for (const t of ['boq_items', 'variations', 'site_reports']) db.prepare(`DELETE FROM ${t} WHERE project_id=?`).run(id);
       }
       if (a === 'parties') {
         const used = db.prepare('SELECT (SELECT COUNT(*) FROM projects WHERE client_id=?)+(SELECT COUNT(*) FROM bills WHERE party_id=?)+(SELECT COUNT(*) FROM quotes WHERE client_id=?) n').get(id, id, id).n;
@@ -469,6 +504,8 @@ async function api(req, res, url) {
 const PUB = path.join(__dirname, 'public');
 const server = http.createServer(async (req, res) => {
   try {
+    res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('X-Frame-Options', 'DENY'); res.setHeader('Referrer-Policy', 'same-origin');
+    if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     let p = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
@@ -481,5 +518,5 @@ const server = http.createServer(async (req, res) => {
     if (!e.status) console.error(e); send(res, e.status || 500, { error: String(e.message || e) });
   }
 });
-if (require.main === module) server.listen(PORT, () => console.log(`Contractor ERP running → http://localhost:${PORT}`));
+if (require.main === module) server.listen(PORT, process.env.HOST || '0.0.0.0', () => console.log(`Contractor ERP running → http://localhost:${PORT}`));
 module.exports = { server };

@@ -57,6 +57,24 @@ server.listen(0, async () => {
     assert.equal((await call('GET', 'invoices/' + inv2)).j.status, 'void');
     assert.equal((await call('GET', 'invoices/' + inv2)).j.total, 0);
 
+    // ---- BOQ, progress billing, variations, site diary ----
+    const boq = (await call('GET', `boq_items?project_id=${pid}`)).j; assert.equal(boq.length, 1); assert.equal(boq[0].qty, 10);   // copied from quote
+    assert.equal((await call('PUT', 'boq_items/' + boq[0].id, { done_pct: 150 })).s, 400);
+    await call('PUT', 'boq_items/' + boq[0].id, { done_pct: 30, cost_rate: 700 });
+    const pi = (await call('POST', `projects/${pid}/progress-invoice`)).j.id, pii = (await call('GET', 'invoices/' + pi)).j;
+    assert.equal(pii.subtotal, 3000); assert.equal(pii.vat, 150);                       // 10 x 1000 x 30%
+    assert.equal((await call('POST', `projects/${pid}/progress-invoice`)).s, 400);     // nothing new to bill
+    await call('PUT', 'boq_items/' + boq[0].id, { done_pct: 50 });
+    const pi2 = (await call('GET', 'invoices/' + (await call('POST', `projects/${pid}/progress-invoice`)).j.id)).j; assert.equal(pi2.subtotal, 2000);
+    await call('POST', 'invoices/' + pi + '/void', { reason: 'cleanup' }); await call('POST', 'invoices/' + pi2.id + '/void', { reason: 'cleanup' });
+    const vo = (await call('POST', 'variations', { project_id: pid, description: 'Extra', amount: 2000, status: 'approved' })).j.id;
+    let ps2 = (await call('GET', 'project-summary')).j.find(p => p.id === pid);
+    assert.equal(ps2.revised_value, 12000); assert.equal(ps2.boq_budget_cost, 7000); assert.equal(ps2.boq_progress, 50);
+    await call('PUT', 'variations/' + vo, { status: 'rejected' });
+    assert.equal((await call('GET', 'project-summary')).j.find(p => p.id === pid).revised_value, 10000);
+    assert.equal((await call('POST', 'site_reports', { project_id: pid, date: '2026-09-01', work_done: 'Blockwork', labour_count: 12 })).s, 200);
+    assert.equal((await call('GET', `site_reports?project_id=${pid}`)).j.length, 1);
+
     // ---- payroll / WPS ----
     const emp = (await call('POST', 'employees', { name: 'Worker 1', person_code: '12345678901234', routing_code: '302620122', iban: 'AE070331234567890123456', join_date: '2020-01-01', basic: 1500, housing: 500, other_allowance: 200, project_id: pid })).j.id;
     assert.equal((await call('POST', 'employees', { name: 'Bad', iban: 'AE000000000000000000000' })).s, 400);
@@ -84,6 +102,9 @@ server.listen(0, async () => {
     assert.ok((await call('GET', 'audit')).j.length > 5);
     assert.equal((await call('POST', 'login', { username: 'a', password: 'bad' })).s, 401);
     assert.equal((await call('POST', 'login', { username: 'a', password: '123456' })).s, 200);
+    // login lockout after repeated failures
+    for (let k = 0; k < 8; k++) await call('POST', 'login', { username: 'a', password: 'wrong' });
+    assert.equal((await call('POST', 'login', { username: 'a', password: '123456' })).s, 429);
     console.log('ALL TESTS PASSED');
   } catch (e) { console.error('FAIL', e); process.exitCode = 1; }
   server.close(); process.exit(process.exitCode || 0);

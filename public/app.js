@@ -21,7 +21,7 @@ const guard = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(
 const fmtIssues = e => e.message;
 
 // ---- vocab ----------------------------------------------------------------
-const STATUS = {
+const STATUS = { approved: ['معتمد', 'Approved'], pending_v: ['قيد الاعتماد', 'Pending'],
   active: ['نشط', 'Active'], completed: ['منتهي', 'Completed'], hold: ['متوقف', 'On hold'], cancelled: ['ملغي', 'Cancelled'],
   draft: ['مسودة', 'Draft'], sent: ['مُرسل', 'Sent'], accepted: ['مقبول', 'Accepted'], rejected: ['مرفوض', 'Rejected'],
   paid: ['مدفوع', 'Paid'], unpaid: ['غير مدفوع', 'Unpaid'], partial: ['جزئي', 'Partial'], overdue: ['متأخر', 'Overdue'], credit: ['إشعار دائن', 'Credit note'], void: ['ملغاة', 'Void'], final: ['معتمد', 'Final'], pending: ['قيد التحصيل', 'Pending'], cleared: ['تم صرفه', 'Cleared'], bounced: ['مرتجع', 'Bounced'], left: ['ترك العمل', 'Left'], retention: ['محتجز', 'Retention held'],
@@ -63,7 +63,7 @@ const setupScreen = () => authBox(tr('إعداد النظام لأول مرة', 
 // ---- shell ------------------------------------------------------------------
 const NAV = [
   ['dashboard', 'لوحة التحكم', 'Dashboard'], ['projects', 'المشاريع', 'Projects'], ['quotes', 'عروض الأسعار', 'Quotations'],
-  ['invoices', 'فواتير العملاء', 'Sales invoices'], ['bills', 'المصروفات والمشتريات', 'Expenses & purchases'], ['payments', 'المدفوعات والمقبوضات', 'Payments'],
+  ['invoices', 'فواتير العملاء', 'Sales invoices'], ['bills', 'المصروفات والمشتريات', 'Expenses & purchases'], ['payments', 'المدفوعات والمقبوضات', 'Payments'], ['sitediary', 'يومية الموقع', 'Site diary'],
   ['employees', 'الموظفون', 'Employees'], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS'],
   ['parties', 'العملاء والموردون', 'Clients & suppliers'], ['vat', 'ضريبة القيمة المضافة', 'VAT report'], ['ctax', 'ضريبة الشركات', 'Corporate tax'], ['compliance', 'الامتثال والتدقيق', 'Compliance & audit'], ['settings', 'الإعدادات', 'Settings'],
 ];
@@ -93,6 +93,7 @@ function modal(html, wide) {
 const closeModal = () => { $('#modal-root').innerHTML = ''; };
 const val = (el, k) => { const x = el.querySelector(`[name="${k}"]`); return x ? x.value : undefined; };
 function field(f, v) {
+  if (f.type === 'hidden') return `<input type="hidden" name="${f.k}" value="${esc(v ?? '')}">`;
   const lbl = `<label>${tr(f.ar, f.en)}${f.req ? ' *' : ''}</label>`;
   let inp;
   if (f.type === 'select') inp = `<select name="${f.k}">${f.options.map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(v ?? '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
@@ -169,7 +170,7 @@ PAGES.projects = async id => {
       { k: 'code', ar: 'رمز المشروع', en: 'Code', def: '' }, { k: 'name', ar: 'اسم المشروع', en: 'Project name', req: 1 },
       { k: 'client_id', ar: 'العميل', en: 'Client', type: 'select', options: await partyOpts(['client']) }, { k: 'location', ar: 'الموقع', en: 'Location' },
       { k: 'emirate', ar: 'الإمارة (لإقرار الضريبة)', en: 'Emirate (for VAT return)', type: 'select', options: Object.entries(EMIRATES).map(([k, v]) => [k, tr(...v)]) },
-      { k: 'contract_value', ar: 'قيمة العقد (بدون ضريبة)', en: 'Contract value (ex VAT)', type: 'number', def: 0 },
+      { k: 'contract_value', ar: 'قيمة العقد (بدون ضريبة)', en: 'Contract value (ex VAT)', type: 'number', def: 0 }, { k: 'retention_pct', ar: 'نسبة المحتجزات % (للفواتير)', en: 'Retention % (on invoices)', type: 'number', def: 0 },
       { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: ['active', 'completed', 'hold', 'cancelled'].map(k => [k, tr(...STATUS[k])]) },
       { k: 'start_date', ar: 'تاريخ البدء', en: 'Start date', type: 'date' }, { k: 'end_date', ar: 'تاريخ الانتهاء', en: 'End date', type: 'date' },
       { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }],
@@ -179,16 +180,23 @@ PAGES.projects = async id => {
   c.setRow(id => go('projects/' + id));
 };
 async function projectDetail(id) {
-  const [rows, inv, bills] = await Promise.all([api('GET', 'project-summary'), api('GET', 'invoices'), api('GET', 'bills')]);
+  const [rows, inv, bills, boq, vars] = await Promise.all([api('GET', 'project-summary'), api('GET', 'invoices'), api('GET', 'bills'), api('GET', 'boq_items?project_id=' + id), api('GET', 'variations?project_id=' + id)]);
   const p = rows.find(r => r.id === id); if (!p) return go('projects');
   const mine = inv.filter(i => i.project_id === id), bl = bills.filter(b => b.project_id === id);
   const kpi = (l, v, c = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${c}">${money(v)}</div></div>`;
   main(`<div class="bar"><button class="btn sec" onclick="go('projects')">←</button><h1 style="margin:0">${esc(p.code || '')} ${esc(p.name)} ${tag(p.status)}</h1><span class="sp"></span>
-    <button class="btn sec" onclick="newInvoiceFor(${id})">+ ${tr('فاتورة', 'Invoice')}</button><button class="btn sec" onclick="newBillFor(${id})">+ ${tr('مصروف', 'Expense')}</button></div>
-    <div class="grid">${kpi(tr('قيمة العقد', 'Contract value'), p.contract_value)}${kpi(tr('المفوتر', 'Invoiced'), p.invoiced)}${kpi(tr('نسبة الفوترة', 'Billed %'), p.billed_pct).replace(money(p.billed_pct), p.billed_pct + '%')}
+    <button class="btn sec" onclick="progressInvoice(${id})">${tr('فاتورة إنجاز من الجدول', 'Progress invoice from BOQ')}</button><button class="btn sec" onclick="newInvoiceFor(${id})">+ ${tr('فاتورة', 'Invoice')}</button><button class="btn sec" onclick="newBillFor(${id})">+ ${tr('مصروف', 'Expense')}</button></div>
+    <div class="grid">${kpi(tr('قيمة العقد', 'Contract value'), p.contract_value)}${kpi(tr('أوامر التغيير المعتمدة', 'Approved variations'), p.variations)}${kpi(tr('القيمة المعدّلة', 'Revised value'), p.revised_value)}${kpi(tr('المفوتر', 'Invoiced'), p.invoiced)}${kpi(tr('نسبة الفوترة', 'Billed %'), p.billed_pct).replace(money(p.billed_pct), p.billed_pct + '%')}
     ${kpi(tr('المحصّل', 'Collected'), p.collected, 'ok')}${kpi(tr('مستحق التحصيل', 'Receivable'), p.receivable, 'warn')}${kpi(tr('التكلفة', 'Cost'), p.cost)}
     ${kpi(tr('الربح', 'Profit'), p.profit, p.profit >= 0 ? 'ok' : 'bad')}${kpi(tr('هامش الربح', 'Margin'), p.margin).replace(money(p.margin), p.margin + '%')}</div>
-    <div class="card"><h2>${tr('التكلفة حسب البند', 'Cost by category')}</h2><div class="tw"><table><tbody>${Object.entries(p.cost_by_category).map(([k, v]) => `<tr><td>${tr(...(CATS[k] || [k, k]))}</td><td class="n">${money(v)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div></div>
+    <div class="bar" style="margin-top:6px"><h2 style="margin:0">${tr('جدول الكميات (BOQ) ونسبة الإنجاز', 'Bill of quantities (BOQ) & progress')}</h2><span class="sp"></span><button class="btn sm" onclick="boqModal(${id})">+ ${tr('بند', 'Item')}</button></div>
+    <div class="tw"><table><thead><tr><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th class="n">${tr('الكمية', 'Qty')}</th><th class="n">${tr('السعر', 'Rate')}</th><th class="n">${tr('القيمة', 'Value')}</th><th class="n">${tr('تكلفة مقدّرة', 'Budget cost')}</th><th class="n">${tr('إنجاز %', 'Done %')}</th><th class="n">${tr('مفوتر %', 'Billed %')}</th></tr></thead><tbody>
+    ${boq.map(i => `<tr class="click" onclick="boqModal(${id},${i.id})"><td>${esc(i.section ? i.section + ' — ' : '')}${esc(i.description)}</td><td>${esc(i.unit)}</td><td class="n">${money(i.qty)}</td><td class="n">${money(i.rate)}</td><td class="n">${money(i.qty * i.rate)}</td><td class="n">${money(i.qty * i.cost_rate)}</td><td class="n">${i.done_pct}%</td><td class="n">${i.billed_pct}%</td></tr>`).join('') || `<tr><td colspan="8" class="muted">${tr('لا توجد بنود — تُنسخ تلقائياً من عرض السعر عند التحويل لمشروع', 'No items — copied automatically from the quote when converted to a project')}</td></tr>`}</tbody>
+    <tfoot><tr><td colspan="4"><b>${tr('الإجمالي', 'Total')}</b></td><td class="n"><b>${money(p.boq_value)}</b></td><td class="n"><b>${money(p.boq_budget_cost)}</b></td><td class="n"><b>${p.boq_progress}%</b></td><td></td></tr></tfoot></table></div>
+    <p class="muted">${tr('الميزانية مقابل الفعلي', 'Budget vs actual')}: ${tr('التكلفة المقدّرة', 'budget cost')} ${money(p.boq_budget_cost)} — ${tr('التكلفة الفعلية', 'actual cost')} ${money(p.cost)} — <b class="${p.cost <= p.boq_budget_cost ? 'pos' : 'neg'}">${money(p.boq_budget_cost - p.cost)}</b></p>
+    <div class="bar" style="margin-top:6px"><h2 style="margin:0">${tr('أوامر التغيير (Variations)', 'Variation orders')}</h2><span class="sp"></span><button class="btn sm" onclick="varModal(${id})">+ ${tr('أمر تغيير', 'Variation')}</button></div>
+    <div class="tw"><table><tbody>${vars.map(v => `<tr class="click" onclick="varModal(${id},${v.id})"><td>${esc(v.number || '')}</td><td>${esc(v.date || '')}</td><td>${esc(v.description || '')}</td><td class="n">${money(v.amount)}</td><td>${tag(v.status)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>
+    <div class="card" style="margin-top:16px"><h2>${tr('التكلفة حسب البند', 'Cost by category')}</h2><div class="tw"><table><tbody>${Object.entries(p.cost_by_category).map(([k, v]) => `<tr><td>${tr(...(CATS[k] || (k === 'payroll' ? ['رواتب', 'Payroll'] : [k, k])))}</td><td class="n">${money(v)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div></div>
     <h2>${tr('الفواتير', 'Invoices')}</h2><div class="tw"><table><tbody>${mine.map(i => `<tr class="click" onclick="openInvoice(${i.id})"><td>${esc(i.number)}</td><td>${esc(i.date)}</td><td class="n">${money(i.total)}</td><td class="n">${money(i.balance)}</td><td>${tag(i.status)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>
     <h2 style="margin-top:16px">${tr('المصروفات', 'Expenses')}</h2><div class="tw"><table><tbody>${bl.map(b => `<tr class="click" onclick="openBill(${b.id})"><td>${esc(b.date)}</td><td>${esc(b.party_name || '')}</td><td>${esc(b.description || '')}</td><td>${tr(...(CATS[b.category] || [b.category, b.category]))}</td><td class="n">${money(b.amount)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>`);
 }
@@ -302,6 +310,37 @@ async function printDoc(kind, r) {
     <div class="sig"><div>${tr('المستلم', 'Received by')}</div><div>${tr('الشركة', 'Authorised signatory')}</div></div></div>`;
   window.print();
 }
+
+// ---- BOQ / variations / site diary ----------------------------------------------
+async function simpleModal({ title, table, fields, row, after }) {
+  const m = modal(`<h2>${title}</h2><div class="f2">${fields.map(f => field(f, row?.[f.k] ?? f.def)).join('')}</div>
+    <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button><span class="sp"></span>${row ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`);
+  $('#cancel', m).onclick = closeModal;
+  $('#save', m).onclick = guard(async () => { const b = {}; fields.forEach(f => b[f.k] = val(m, f.k)); row ? await api('PUT', `${table}/${row.id}`, b) : await api('POST', table, b); closeModal(); after(); });
+  if (row) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${table}/${row.id}`); closeModal(); after(); } });
+}
+window.boqModal = guard(async (pid, id) => simpleModal({ title: tr('بند جدول الكميات', 'BOQ item'), table: 'boq_items', after: render, row: id ? await api('GET', `boq_items/${id}`) : null, fields: [
+  { k: 'project_id', ar: '', en: '', type: 'hidden', def: pid }, { k: 'section', ar: 'القسم', en: 'Section' }, { k: 'description', ar: 'الوصف', en: 'Description', full: 1 }, { k: 'unit', ar: 'الوحدة', en: 'Unit' },
+  { k: 'qty', ar: 'الكمية', en: 'Quantity', type: 'number', def: 1 }, { k: 'rate', ar: 'سعر البيع للوحدة', en: 'Sell rate / unit', type: 'number', def: 0 }, { k: 'cost_rate', ar: 'التكلفة المقدّرة للوحدة', en: 'Budget cost / unit', type: 'number', def: 0 },
+  { k: 'done_pct', ar: 'نسبة الإنجاز %', en: 'Completion %', type: 'number', def: 0 }] }));
+window.varModal = guard(async (pid, id) => simpleModal({ title: tr('أمر تغيير', 'Variation order'), table: 'variations', after: render, row: id ? await api('GET', `variations/${id}`) : null, fields: [
+  { k: 'project_id', type: 'hidden', def: pid }, { k: 'number', ar: 'الرقم', en: 'Number' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date', def: today() }, { k: 'description', ar: 'الوصف', en: 'Description', full: 1 },
+  { k: 'amount', ar: 'المبلغ (بدون ضريبة، سالب للتخفيض)', en: 'Amount (ex VAT, negative for omission)', type: 'number', def: 0 },
+  { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['pending', tr('قيد الاعتماد', 'Pending')], ['approved', tr(...STATUS.approved)], ['rejected', tr(...STATUS.rejected)]] }] }));
+window.progressInvoice = guard(async pid => { const r = await api('POST', `projects/${pid}/progress-invoice`); go('invoices'); setTimeout(() => openInvoice(r.id), 400); });
+
+PAGES.sitediary = async () => {
+  const [rows, projects] = await Promise.all([api('GET', 'site_reports'), api('GET', 'projects')]);
+  const pn = id => projects.find(p => p.id === id)?.name || '';
+  const edit = guard(async id => simpleModal({ title: tr('تقرير يومي للموقع', 'Daily site report'), table: 'site_reports', after: render, row: id ? rows.find(r => r.id === id) : null, fields: [
+    { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`, false) }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date', def: today() },
+    { k: 'weather', ar: 'الطقس', en: 'Weather' }, { k: 'labour_count', ar: 'عدد العمال', en: 'Labour on site', type: 'number', def: 0 },
+    { k: 'work_done', ar: 'الأعمال المنجزة', en: 'Work done', type: 'textarea', full: 1 }, { k: 'issues', ar: 'المعوقات / السلامة', en: 'Issues / safety', type: 'textarea', full: 1 }, { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }] }));
+  main(`<div class="bar"><h1>${tr('يومية الموقع', 'Site diary')}</h1><span class="sp"></span><button class="btn" id="add">+ ${tr('تقرير جديد', 'New report')}</button></div>
+  <div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('المشروع', 'Project')}</th><th>${tr('الطقس', 'Weather')}</th><th class="n">${tr('العمال', 'Labour')}</th><th>${tr('الأعمال المنجزة', 'Work done')}</th><th>${tr('المعوقات', 'Issues')}</th></tr></thead><tbody>
+  ${rows.map(r => `<tr class="click" data-id="${r.id}"><td>${esc(r.date)}</td><td>${esc(pn(r.project_id))}</td><td>${esc(r.weather || '')}</td><td class="n">${r.labour_count}</td><td>${esc(r.work_done || '')}</td><td>${esc(r.issues || '')}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد تقارير', 'No reports yet')}</td></tr>`}</tbody></table></div>`);
+  $('#add').onclick = () => edit(); document.querySelectorAll('tr.click').forEach(t => t.onclick = () => edit(+t.dataset.id));
+};
 
 // ---- bills / payments -------------------------------------------------------
 const billFields = async (pre = {}) => [
