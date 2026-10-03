@@ -84,7 +84,16 @@ function shell() {
 const go = r => { location.hash = r; };
 window.onhashchange = () => { route = location.hash.slice(1) || 'dashboard'; if ($('#main')) shell(); };
 const PAGES = {};
-const render = () => { const [p, id] = route.split('/'); $('#main').innerHTML = ''; guard(PAGES[p] || PAGES.dashboard)(id); };
+const render = async () => {
+  const [p, id] = route.split('/'); $('#main').innerHTML = '';
+  try { await (PAGES[p] || PAGES.dashboard)(id); }
+  catch (e) {
+    if (e.message === 'unauthorized') return;
+    const stale = /not found/i.test(e.message);
+    $('#main').innerHTML = `<div class="card"><h2 class="neg">${tr('تعذّر تحميل الصفحة', 'This page could not be loaded')}</h2><p>${esc(e.message)}</p>
+      ${stale ? `<p>${tr('غالباً الخادم يعمل بنسخة قديمة. أغلق نافذة PowerShell (Ctrl+C) ثم شغّل npm.cmd start من جديد، وبعدها حدّث الصفحة (Ctrl+F5).', 'The server is probably running an old version. Stop it in PowerShell (Ctrl+C), start it again with npm.cmd start, then hard-refresh the page (Ctrl+F5).')}</p>` : ''}</div>`;
+  }
+};
 const main = html => { $('#main').innerHTML = html; };
 
 // ---- modal & form helpers ---------------------------------------------------
