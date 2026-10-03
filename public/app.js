@@ -41,7 +41,7 @@ const opts = (map, sel) => Object.entries(map).map(([k, v]) => `<option value="$
 async function boot() {
   const st = await (await fetch('/api/status')).json();
   document.documentElement.lang = lang; document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
-  if (st.setup) return setupScreen();
+  if (st.setup) return setupScreen(st.token_required);
   if (!st.user) return loginScreen();
   ME = st.user; document.body.dataset.role = ME.role; route = location.hash.slice(1) || landing();
   if (!allowedNav().some(n => n[0] === route.split('/')[0])) route = landing();
@@ -62,8 +62,8 @@ function authBox(title, extra, btn, onsubmit) {
   };
 }
 const loginScreen = () => authBox(tr('تسجيل الدخول', 'Sign in'), '', tr('دخول', 'Sign in'), d => api('POST', 'login', d));
-const setupScreen = () => authBox(tr('إعداد النظام لأول مرة', 'First-time setup'),
-  `<div class="f"><label>${tr('اسم الشركة', 'Company name')}</label><input name="company"></div>`, tr('إنشاء الحساب', 'Create account'), d => api('POST', 'setup', d));
+const setupScreen = needToken => authBox(tr('إعداد النظام لأول مرة', 'First-time setup'),
+  `<div class="f"><label>${tr('اسم الشركة', 'Company name')}</label><input name="company"></div>${needToken ? `<div class="f"><label>${tr('رمز الإعداد السري (من ملف .env على الخادم)', 'Setup token (from the .env file on the server)')}</label><input name="token" required></div>` : ''}`, tr('إنشاء الحساب', 'Create account'), d => api('POST', 'setup', d));
 
 // ---- shell ------------------------------------------------------------------
 const FINR = ['admin', 'accountant'], READR = ['admin', 'accountant', 'manager', 'viewer'], HRR = ['admin', 'hr'], EMPR = ['admin', 'accountant', 'hr'];

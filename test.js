@@ -2,6 +2,7 @@
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-'));
 const net = require('net');
+process.env.SETUP_TOKEN = 'tok-123456-secret';
 const round2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const { server } = require('./server.js');
 // tiny fake SMTP server that records the message
@@ -34,7 +35,10 @@ server.listen(0, async () => {
   };
   try {
     assert.equal((await call('GET', 'projects')).s, 401);
-    assert.equal((await call('POST', 'setup', { username: 'a', password: '123456', company: 'GRC' })).s, 200);
+    assert.equal((await call('POST', 'setup', { username: 'a', password: '123456', company: 'GRC' })).s, 403);                     // setup token required on public servers
+    assert.equal((await call('POST', 'setup', { username: 'a', password: '123456', company: 'GRC', token: 'wrong-token-value' })).s, 403);
+    assert.equal((await call('GET', 'status')).j.token_required, true);
+    assert.equal((await call('POST', 'setup', { username: 'a', password: '123456', company: 'GRC', token: 'tok-123456-secret' })).s, 200);
     assert.equal((await call('POST', 'setup', { username: 'b', password: '123456' })).s, 403);
     // tax invoices require the company TRN
     const q0 = (await call('POST', 'parties', { type: 'client', name: 'Tmp' })).j.id;

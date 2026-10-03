@@ -310,10 +310,11 @@ async function api(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean).slice(1); // after /api
   const [a, b, c] = parts, method = req.method;
 
-  if (a === 'status') return send(res, 200, { setup: db.prepare('SELECT COUNT(*) n FROM users').get().n === 0, user: sessionUser(req) });
+  if (a === 'status') return send(res, 200, { setup: db.prepare('SELECT COUNT(*) n FROM users').get().n === 0, token_required: !!process.env.SETUP_TOKEN, user: sessionUser(req) });
   if (a === 'setup' && method === 'POST') {
     if (db.prepare('SELECT COUNT(*) n FROM users').get().n) return send(res, 403, { error: 'already set up' });
-    const { username, password, company } = await readBody(req);
+    const { username, password, company, token } = await readBody(req);
+    if (process.env.SETUP_TOKEN && !(typeof token === 'string' && token.length === process.env.SETUP_TOKEN.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(process.env.SETUP_TOKEN)))) return send(res, 403, { error: 'invalid setup token' });
     if (!username || !password || password.length < 6) return send(res, 400, { error: 'password must be at least 6 characters' });
     const salt = crypto.randomBytes(16).toString('hex');
     const r = db.prepare('INSERT INTO users(username,salt,hash,role) VALUES(?,?,?,?)').run(username, salt, hashPw(password, salt), 'admin');

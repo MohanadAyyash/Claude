@@ -1,0 +1,31 @@
+# Production stack: the ERP (internal only) behind Caddy, which obtains and renews the HTTPS certificate automatically.
+services:
+  app:
+    build: ..
+    restart: always
+    environment:
+      TRUST_PROXY: "1"
+      SECURE_COOKIES: "1"
+      SETUP_TOKEN: ${SETUP_TOKEN}
+    volumes:
+      - erp-data:/data
+    expose:
+      - "3000"
+  caddy:
+    image: caddy:2
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+volumes:
+  erp-data:
+  caddy-data:
+  caddy-config:

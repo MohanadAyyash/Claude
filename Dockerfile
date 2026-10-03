@@ -3,7 +3,7 @@ FROM node:22-alpine
 RUN apk add --no-cache chromium font-noto font-noto-arabic
 WORKDIR /app
 COPY . .
-ENV PORT=3000 DATA_DIR=/data TRUST_PROXY=1 CHROME_PATH=/usr/bin/chromium-browser
+ENV PORT=3000 HOST=0.0.0.0 DATA_DIR=/data TRUST_PROXY=1 CHROME_PATH=/usr/bin/chromium-browser
 VOLUME /data
 EXPOSE 3000
 CMD ["node", "--no-warnings", "server.js"]
