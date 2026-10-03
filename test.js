@@ -47,7 +47,7 @@ server.listen(0, async () => {
     const sup = (await call('POST', 'parties', { type: 'supplier', name: 'Supplier S' })).j.id;
     const q = (await call('POST', 'quotes', { client_id: client, project_name: 'Villa', items: [{ description: 'Works', qty: 10, rate: 1000 }] })).j.id;
     const qq = (await call('GET', 'quotes/' + q)).j;
-    assert.match(qq.number, /^QT-\d{4}-001$/); assert.equal(qq.subtotal, 10000); assert.equal(qq.vat, 500); assert.equal(qq.total, 10500);
+    assert.match(qq.number, /^TC\d\d\/01-CLIENT$/); assert.equal(qq.subtotal, 10000); assert.equal(qq.vat, 500); assert.equal(qq.total, 10500);
     const pid = (await call('POST', `quotes/${q}/convert`)).j.project_id;
     assert.equal((await call('POST', `quotes/${q}/convert`)).s, 400);
     const inv = (await call('POST', 'invoices', { project_id: pid, retention_pct: 10, due_date: '2020-01-01', items: [{ description: 'Phase 1', qty: 1, rate: 4000 }] })).j.id;
@@ -187,7 +187,7 @@ server.listen(0, async () => {
     assert.equal((await call('PUT', `hr/leave/${lv}/decide`, { status: 'approved' })).s, 200);
     assert.equal((await call('PUT', `hr/leave/${lv}/decide`, { status: 'approved' })).s, 400);                                            // already decided
     bal = (await call('GET', 'hr/balances')).j.find(x => x.employee_id === e2); assert.equal(bal.used, 5);
-    const lt = (await call('POST', 'hr/letters', { type: 'salary_certificate', employee_id: e2, request_id: rq, purpose: 'bank' })).j; assert.match(lt.number, /\/HR\/\d{4}\/001$/);
+    const lt = (await call('POST', 'hr/letters', { type: 'salary_certificate', employee_id: e2, request_id: rq, purpose: 'bank' })).j; assert.match(lt.number, /^TC\d\d\/01-HR$/);
     assert.equal((await call('GET', 'hr/requests')).j.find(x => x.id === rq).status, 'approved');                         // issuing the letter approves the request
     assert.equal((await call('PUT', `hr/requests/${rq}/decide`, { status: 'approved' })).s, 400);
     const letterHtml = await (await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).text();
@@ -213,7 +213,8 @@ server.listen(0, async () => {
     assert.equal((await call('PUT', 'brand/logo', { data: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' })).s, 400);
     await call('PUT', 'settings', { company_name: 'Trigon Civil Contracting LLC', company_name_ar: 'تريجون سيفيل للمقاولات ذ م م' });
     const invHtml = await (await fetch(base + 'doc/invoices/' + inv3, { headers: { cookie } })).text();
-    assert.match(invHtml, /Trigon Civil Contracting LLC/); assert.match(invHtml, /تريجون سيفيل/); assert.match(invHtml, /data:image\/png;base64/); assert.match(invHtml, /Tax Invoice/);
+    assert.match(invHtml, /Trigon Civil Contracting LLC/); assert.ok(!/class="logo-ar"/.test(invHtml)); assert.match(invHtml, /data:image\/png;base64/); assert.match(invHtml, /Tax Invoice/); assert.match(invHtml, /\/fonts\/fonts\.css/);
+    const offHtml = await (await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).text(); assert.match(offHtml, /تريجون سيفيل/); assert.match(offHtml, /Ref: <b>TC\d\d\/01-HR/);   // HR letters use the official bilingual letterhead
     const { findBrowser } = require('./lib/pdf');
     if (findBrowser()) { const r = await fetch(base + `doc/invoices/${inv3}/pdf`, { headers: { cookie } }); const b = Buffer.from(await r.arrayBuffer()); assert.equal(r.status, 200); assert.equal(b.slice(0, 4).toString(), '%PDF'); console.log('PDF generated:', b.length, 'bytes'); }
     // emailed invoice carries the PDF
@@ -286,6 +287,20 @@ server.listen(0, async () => {
     assert.equal((await fetch(base + 'export/trial_balance?from=2026-01-01&to=2026-12-31', { headers: { cookie } })).status, 200);
     assert.ok((await call('GET', 'einvoice')).j.invoices > 0);
     await loginAs('hr1'); assert.equal((await call('GET', 'financials')).s, 403); assert.equal((await fetch(base + 'export/invoices', { headers: { cookie } })).status, 403); cookie = adminCookie;
+
+    // ---- Trigon brand pack, profile and branded e-mail signature ----
+    assert.equal((await call('PUT', 'profile', { display_name: 'Mohanad Ayyash', job_title: 'Managing Partner', mobile: '+971 50 000 0000' })).j.display_name, 'Mohanad Ayyash');
+    assert.equal((await call('POST', 'brand/pack')).s, 200);
+    const stg = (await call('GET', 'settings')).j; assert.equal(stg.company_name_ar, 'تريجون سيفيل للمقاولات ذ.م.م'); assert.equal(stg.license_no, '1656279'); assert.equal(stg.po_box, '334112');
+    for (const n of ['logo', 'logo_ar', 'logo_white', 'logo_line', 'mark', 'stamp']) assert.equal((await fetch(base + 'brand/' + n, { headers: { cookie } })).status, 200);
+    const m3 = mails.length; await call('POST', `invoices/${inv3}/email`, { to: 'client@example.com' });
+    const sigMail = mails[m3].body; assert.match(sigMail, /multipart\/related/); assert.match(sigMail, /Content-ID: <brandlogo>/);
+    const sh = Buffer.from(sigMail.split('multipart/related')[1].split('text/html')[1].split('\n\n')[1].split('--')[0].replace(/\s/g, ''), 'base64').toString(); assert.match(sh, /Mohanad Ayyash/); assert.match(sh, /Managing Partner/); assert.match(sh, /cid:brandlogo/);
+    // quotation printed with the brand cover page; letters on the official bilingual letterhead
+    const qh = await (await fetch(base + 'doc/quotes/' + q, { headers: { cookie } })).text(); assert.match(qh, /class="cover"/); assert.match(qh, /Quotation for Villa/); assert.match(qh, /class="rules"/);
+    assert.ok(!/class="cover"/.test(await (await fetch(base + 'doc/quotes/' + q + '?cover=0', { headers: { cookie } })).text()));
+    assert.equal((await call('POST', 'brand/pack')).s, 200);                                                                                  // idempotent
+    await loginAs('pm1'); assert.equal((await call('POST', 'brand/pack')).s, 403); cookie = adminCookie;
 
     // login lockout after repeated failures
     for (let k = 0; k < 8; k++) await call('POST', 'login', { username: 'a', password: 'wrong' });

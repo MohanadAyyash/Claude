@@ -53,9 +53,7 @@ module.exports = ctx => {
   function newLetter(type, employee_id, b, user) {
     if (!LETTER_TYPES.includes(type)) bad('Invalid letter type');
     if (!emp(employee_id)) bad('Employee not found');
-    const year = new Date().getFullYear(), n = db.prepare('SELECT COUNT(*) n FROM letters WHERE number LIKE ?').get(`%/HR/${year}/%`).n + 1;
-    const code = String(getSettings().company_name || 'CO').split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 4) || 'CO';
-    const number = `${code}/HR/${year}/${String(n).padStart(3, '0')}`;
+    const number = ctx.brandRef('letters', 'number', b.addressed_to || 'HR');
     const r = db.prepare('INSERT INTO letters(number,type,employee_id,date,addressed_to,purpose,created_by) VALUES(?,?,?,?,?,?,?)').run(number, type, employee_id, today(), b.addressed_to || '', b.purpose || '', user);
     return { id: Number(r.lastInsertRowid), number };
   }
@@ -64,7 +62,7 @@ module.exports = ctx => {
   ctx.renderers.letter = id => {
     const l = db.prepare('SELECT * FROM letters WHERE id=?').get(id); if (!l) { const e = new Error('not found'); e.status = 404; throw e; }
     const out = letterBody(l.type, { emp: emp(l.employee_id), S: getSettings(), letter: l });
-    return { title: out.title, filename: l.number.replace(/\//g, '-'), body: out.html, label: 'For the Company / عن الشركة' };
+    return { title: out.title, filename: l.number.replace(/\//g, '-'), body: out.html, label: 'For the Company / عن الشركة', style: 'official', ref: l.number, date: l.date };
   };
   ctx.renderers.payslips = id => {
     const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(id); if (!row) { const e = new Error('not found'); e.status = 404; throw e; }

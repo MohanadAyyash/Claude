@@ -93,7 +93,8 @@ module.exports = ctx => {
         const st = getSettings(); let attachments = [];
         try { attachments = [{ filename: `${po.number}.pdf`, mime: 'application/pdf', content: await ctx.pdf(ctx.renderPage('purchase_orders', po.id, me).html) }]; } catch { /* no browser: send text only */ }
         const v = poView(po), html = `<div style="font-family:Arial,sans-serif;font-size:13px">${message ? `<p>${esc(message).replace(/\n/g, '<br>')}</p>` : ''}<p>Please find purchase order <b>${esc(po.number)}</b> from ${esc(st.company_name)}. Total: ${esc(st.currency || 'AED')} ${money(v.total)}.${attachments.length ? '' : ' (PDF unavailable — please contact us for the full document.)'}</p></div>`;
-        await ctx.sendMail(ctx.mailCfg(), { to, subject: `Purchase Order ${po.number} — ${st.company_name || ''}`, html, text: ctx.toText(html), attachments });
+        const sig = ctx.signature(me), full = html + sig.html;
+        await ctx.sendMail(ctx.mailCfg(), { to, subject: `Purchase Order ${po.number} — ${st.company_name || ''}`, html: full, text: ctx.toText(full), attachments, inline: sig.inline });
         audit(req, 'email', 'purchase_orders', po.id, `${po.number} to ${to}`);
         return send(res, 200, { ok: 1 }), true;
       }

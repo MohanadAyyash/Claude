@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS site_reports(id INTEGER PRIMARY KEY, project_id INTEG
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, ts TEXT, user TEXT, action TEXT, tbl TEXT, rec INTEGER, detail TEXT);
 `);
 const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
-[['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
+[['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
 
 // Editable columns per table (whitelist) and numeric columns
 const bad = m => { const e = new Error(m); e.status = 400; throw e; };
@@ -63,6 +63,13 @@ const all = (t) => db.prepare(`SELECT * FROM ${t} ORDER BY id DESC`).all();
 const docTotals = C.docTotals;
 const parseItems = r => { try { return JSON.parse(r.items || '[]'); } catch { return []; } };
 
+// Brand-guideline reference: TC26/01-CLIENT  (company prefix + 2-digit year / sequence in year - short client or entity code)
+function brandRef(table, col, entity) {
+  const pre = (db.prepare("SELECT value FROM settings WHERE key='doc_prefix'").get()?.value || 'TC').toUpperCase(), yy = String(new Date().getFullYear()).slice(2), head = `${pre}${yy}/`;
+  const max = db.prepare(`SELECT ${col} v FROM ${table} WHERE ${col} LIKE ?`).all(head + '%').reduce((m, r) => Math.max(m, parseInt(String(r.v).slice(head.length), 10) || 0), 0);
+  const code = String(entity || '').split(/[\s,.-]+/).filter(w => !/^(the|al|llc|l\.l\.c|co|ltd|est|trading|general)$/i.test(w))[0] || '';
+  return `${head}${String(max + 1).padStart(2, '0')}${code ? '-' + code.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) : ''}`;
+}
 function nextNumber(table, prefix, col = 'number') {
   const year = new Date().getFullYear();
   const like = `${prefix}-${year}-%`;
@@ -242,7 +249,7 @@ function sessionUser(req) {
 }
 
 // ---- http -----------------------------------------------------------------
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME = { '.woff2': 'font/woff2', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const send = (res, code, body, headers = {}) => {
   const isObj = typeof body === 'object' && !Buffer.isBuffer(body);
   res.writeHead(code, { 'Content-Type': isObj ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8', ...headers });
@@ -267,7 +274,7 @@ function clean(table, body) {
 }
 
 const { ROLES } = ACLX, can = ACLX.can;
-const SETTING_KEYS = ['company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban'];
+const SETTING_KEYS = ['address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -290,7 +297,12 @@ const mailCfgFor = () => {
   if (!st.smtp_host || !st.smtp_from) bad('Email is not configured — set the SMTP details in Settings');
   return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
 };
-const ctx = { vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+// brand e-mail signature: Arial text block + the one-line logo as an inline image
+ctx.signature = user => {
+  const S = getSettings(), prof = db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(user.id) || user, logo = ctx.brandBuf && ctx.brandBuf('logo_line');
+  return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
+};
 const MODULES = ['brand', 'documents', 'print', 'hr', 'procurement', 'assets', 'accounting'].map(n => require('./modules/' + n)(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
@@ -324,6 +336,7 @@ async function api(req, res, url) {
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, '', 0) });
   }
 
+  if (a === 'brand' && method === 'GET' && ['logo', 'logo_white', 'mark'].includes(b)) return void await MODULES[0].handle(req, res, url, parts, null);   // logos are public (login screen)
   const me = sessionUser(req);
   if (!me) return send(res, 401, { error: 'unauthorized' });
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
@@ -336,7 +349,8 @@ async function api(req, res, url) {
   if (a === 'settings' && b === 'test-email' && method === 'POST') {
     const { to } = await readBody(req);
     if (!validEmail(to)) bad('Enter a valid email address');
-    await sendMail(mailCfg(), { to, subject: 'Test email / رسالة تجريبية', html: '<p>Email settings are working. / إعدادات البريد تعمل بنجاح.</p>', text: 'Email settings are working.' });
+    const sig = ctx.signature(me), tHtml = '<p>Email settings are working. / إعدادات البريد تعمل بنجاح.</p>' + sig.html;
+    await sendMail(mailCfg(), { to, subject: 'Test email / رسالة تجريبية', html: tHtml, text: toText(tHtml), inline: sig.inline });
     audit(req, 'email', 'settings', 0, `test to ${to}`);
     return send(res, 200, { ok: 1 });
   }
@@ -350,7 +364,8 @@ async function api(req, res, url) {
     const label = a === 'quotes' ? 'Quotation' : doc.kind === 'credit_note' ? 'Credit note' : reminder ? 'Payment reminder — Invoice' : 'Tax invoice';
     let attachments = [];
     try { attachments = [{ filename: `${doc.number}.pdf`, mime: 'application/pdf', content: await ctx.pdf(ctx.renderPage(a, doc.id, me).html) }]; } catch { /* no browser available: send the HTML body only */ }
-    await sendMail(mailCfg(), { to, subject: `${label} ${doc.number} — ${st.company_name || ''}`, html, text: toText(html), attachments });
+    const sig = ctx.signature(me), full = html + sig.html;
+    await sendMail(mailCfg(), { to, subject: `${label} ${doc.number} — ${st.company_name || ''}`, html: full, text: toText(full), attachments, inline: sig.inline });
     audit(req, 'email', a, doc.id, `${doc.number} to ${to}${reminder ? ' (reminder)' : ''}`);
     return send(res, 200, { ok: 1 });
   }
@@ -415,6 +430,10 @@ async function api(req, res, url) {
     const st = getSettings(); st.smtp_pass_set = st.smtp_pass ? '1' : ''; delete st.smtp_pass;       // never send the SMTP password back
     if (me.role === 'employee') return send(res, 200, { company_name: st.company_name, company_name_ar: st.company_name_ar, currency: st.currency });
     return send(res, 200, st);
+  }
+  if (a === 'profile') {
+    if (method === 'PUT') { const x = await readBody(req); db.prepare('UPDATE users SET display_name=?, job_title=?, mobile=? WHERE id=?').run(String(x.display_name || '').slice(0, 80), String(x.job_title || '').slice(0, 80), String(x.mobile || '').slice(0, 30), me.id); }
+    return send(res, 200, db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(me.id)), true;
   }
   if (a === 'password' && method === 'POST') {
     const { password } = await readBody(req);
@@ -560,7 +579,8 @@ async function api(req, res, url) {
     if (method === 'POST') {
       const row = clean(a, await readBody(req));
       guardInvoice(); spec.check?.(row);
-      if (spec.prefix && !row.number) row.number = nextNumber(a, spec.prefix);
+      if (a === 'quotes' && !row.number) row.number = brandRef('quotes', 'number', db.prepare('SELECT name FROM parties WHERE id=?').get(+row.client_id)?.name);
+      else if (spec.prefix && !row.number) row.number = nextNumber(a, spec.prefix);
       if (a === 'projects' && !row.code) row.code = nextNumber('projects', 'PRJ', 'code');
       if (['quotes','invoices'].includes(a) && row.vat_pct === undefined) row.vat_pct = +getSettings().vat_pct || 5;
       if (!row.date && spec.cols.includes('date')) row.date = today();

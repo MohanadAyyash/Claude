@@ -2,6 +2,7 @@
 let lang = localStorage.lang || 'ar';
 let S = {};            // company settings
 let ME = {};           // current user {username, role}
+let BR = new Set();    // brand assets that exist (logo, stamp, …)
 let route = location.hash.slice(1) || 'dashboard';
 const tr = (ar, en) => (lang === 'ar' ? ar : en);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -44,12 +45,12 @@ async function boot() {
   if (!st.user) return loginScreen();
   ME = st.user; document.body.dataset.role = ME.role; route = location.hash.slice(1) || landing();
   if (!allowedNav().some(n => n[0] === route.split('/')[0])) route = landing();
-  S = await api('GET', 'settings');
+  S = await api('GET', 'settings'); BR = new Set((await api('GET', 'brand').catch(() => [])).map(b => b.name));
   document.title = S.company_name || tr('نظام إدارة المقاولات', 'Contractor ERP');
   shell();
 }
 function authBox(title, extra, btn, onsubmit) {
-  $('#app').innerHTML = `<form class="login"><h2>${title}</h2>
+  $('#app').innerHTML = `<form class="login"><img class="logo" src="/api/brand/logo" alt="" onerror="this.remove()"><h2>${title}</h2>
     <div class="f"><label>${tr('اسم المستخدم', 'Username')}</label><input name="username" required autofocus></div>
     <div class="f"><label>${tr('كلمة المرور', 'Password')}</label><input name="password" type="password" required minlength="6"></div>${extra}
     <div class="err" id="err"></div><button class="btn" style="width:100%">${btn}</button>
@@ -88,7 +89,7 @@ function shell() {
     if (!okSet.has(n[0])) continue;
     links += pending + `<a data-r="${n[0]}" class="${route.split('/')[0] === n[0] ? 'on' : ''}">${tr(n[1], n[2])}</a>`; pending = '';
   }
-  $('#app').innerHTML = `<div class="shell"><nav class="side"><div class="brand">${esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
+  $('#app').innerHTML = `<div class="shell"><nav class="side"><div class="brand">${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="${esc(S.company_name || '')}">` : esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
     ${links}
     <div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
     <main class="main" id="main"></main></div>`;
@@ -121,10 +122,12 @@ function printReport() {
   const el = $('#main').cloneNode(true);
   el.querySelectorAll('input,select,textarea').forEach(i => i.replaceWith(document.createTextNode(i.tagName === 'SELECT' ? (i.selectedOptions[0]?.text || '') : i.value)));
   el.querySelectorAll('.noprint,button,a.btn,.sp').forEach(x => x.remove());
-  const names = `<h1 style="margin:0;font-size:17px">${esc(S.company_name || '')}</h1>${S.company_name_ar ? `<div style="font-size:15px;font-weight:700" dir="rtl">${esc(S.company_name_ar)}</div>` : ''}<div style="font-size:11px">${[S.address, S.phone, S.email, S.website].filter(Boolean).map(esc).join(' · ')}</div>${S.trn ? `<div style="font-size:11px">TRN: ${esc(S.trn)}</div>` : ''}`;
-  $('#print-area').innerHTML = `<div class="doc rep"><div class="hd"><div><img src="/api/brand/logo" style="max-height:64px;max-width:180px" onerror="this.remove()"></div><div style="text-align:end">${names}</div></div>${el.innerHTML}
-    <div class="sig"><div></div><div style="border:0;position:relative;min-height:80px"><img src="/api/brand/stamp" style="max-height:80px" onerror="this.remove()"><img src="/api/brand/signature" style="max-height:50px;position:absolute;inset-inline-start:40px;top:20px" onerror="this.remove()"></div></div>
-    <div style="font-size:10px;color:#555;margin-top:8px">${tr('طُبع بتاريخ', 'Printed on')} ${today()} — ${esc(ME.username)}</div></div>`;
+  const contact = [S.phone, S.email, S.website].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+  $('#print-area').innerHTML = `<div class="doc rep"><div class="hd" style="display:flex;justify-content:space-between;align-items:flex-start"><div><img src="/api/brand/logo" style="width:60mm" alt="${esc(S.company_name || '')}" onerror="this.replaceWith(Object.assign(document.createElement('b'),{textContent:'${esc(S.company_name || '')}'}))"></div>
+    <div style="text-align:end;font:7.5pt 'IBM Plex Mono',monospace;color:#8A8578;line-height:1.7"><div>${contact}</div>${S.trn ? `<div>TRN ${esc(S.trn)}</div>` : ''}</div></div><div class="rules"><i></i><i></i><i></i></div>
+    <div style="font:8pt 'IBM Plex Mono',monospace;color:#8A8578;margin:2mm 0 4mm;display:flex;justify-content:space-between"><span>${esc(location.hash.slice(1) || '')}</span><span>${tr('طُبع بتاريخ', 'Printed')} ${today()} · ${esc(ME.username)}</span></div>${el.innerHTML}
+    <div class="sign"><div></div><div style="border:0;position:relative;min-height:26mm"><img src="/api/brand/stamp" style="height:25mm" onerror="this.remove()"><img src="/api/brand/signature" style="height:17mm;position:absolute;inset-inline-start:18mm;top:5mm" onerror="this.remove()"></div></div>
+    <div style="font:6.5pt 'IBM Plex Mono',monospace;color:#8A8578;border-top:.5pt solid #D6D2C8;padding-top:2mm;margin-top:6mm">${esc(S.company_name || '')}${S.address ? ' · ' + esc(S.address) : ''}${S.po_box ? ' · P.O. Box ' + esc(S.po_box) : ''}${S.license_no ? ' · Lic. ' + esc(S.license_no) : ''}</div></div>`;
   setTimeout(() => window.print(), 450);                                  // let the logo load first
 }
 
@@ -181,7 +184,7 @@ PAGES.dashboard = async () => {
   const mx = Math.max(1, ...d.months.flatMap(m => [m.in, m.out]));
   const kpi = (l, v, cls = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${cls}">${typeof v === 'number' ? money(v) : v}</div></div>`;
   main(`<h1>${tr('لوحة التحكم', 'Dashboard')}</h1>
-  <div class="grid">${kpi(tr('مشاريع نشطة', 'Active projects'), d.active_projects)}${kpi(tr('إجمالي قيمة العقود', 'Total contract value'), d.contract_value)}
+  <div class="grid">${kpi(tr('مشاريع نشطة', 'Active projects'), String(d.active_projects))}${kpi(tr('إجمالي قيمة العقود', 'Total contract value'), d.contract_value)}
    ${kpi(tr('إجمالي الفواتير (بدون ضريبة)', 'Invoiced (ex VAT)'), d.invoiced)}${kpi(tr('إجمالي المصروفات (بدون ضريبة)', 'Expenses (ex VAT)'), d.expenses)}
    ${kpi(tr('الربح التشغيلي', 'Operating profit'), d.invoiced - d.expenses, d.invoiced - d.expenses >= 0 ? 'ok' : 'bad')}
    ${kpi(tr('الرصيد النقدي', 'Cash balance'), d.cash, d.cash >= 0 ? 'ok' : 'bad')}
@@ -546,21 +549,21 @@ PAGES.compliance = async () => {
 PAGES.settings = async () => {
   const s = await api('GET', 'settings'), admin = ME.role === 'admin';
   const F = [['company_name', 'اسم الشركة (إنجليزي)', 'Company name (English)'], ['company_name_ar', 'اسم الشركة (عربي)', 'Company name (Arabic)'], ['trn', 'الرقم الضريبي للقيمة المضافة (TRN) — ١٥ رقم', 'VAT TRN (15 digits)'], ['ct_trn', 'رقم تسجيل ضريبة الشركات', 'Corporate tax TRN'],
-    ['phone', 'الهاتف', 'Phone'], ['email', 'البريد', 'Email'], ['website', 'الموقع الإلكتروني', 'Website'], ['po_box', 'ص.ب', 'P.O. Box'], ['address', 'العنوان', 'Address'],
-    ['vat_pct', 'نسبة الضريبة الافتراضية %', 'Default VAT %'], ['currency', 'العملة', 'Currency'], ['license_no', 'رقم الرخصة التجارية', 'Trade licence no.'], ['license_expiry', 'انتهاء الرخصة', 'Licence expiry', 'date'],
+    ['phone', 'الهاتف', 'Phone'], ['email', 'البريد', 'Email'], ['website', 'الموقع الإلكتروني', 'Website'], ['po_box', 'ص.ب', 'P.O. Box'], ['address', 'العنوان (إنجليزي)', 'Address (English)'], ['address_ar', 'العنوان (عربي)', 'Address (Arabic)'],
+    ['doc_prefix', 'بادئة أرقام المستندات (مثل TC)', 'Document reference prefix (e.g. TC)'], ['license_authority', 'جهة إصدار الرخصة', 'Licence authority'], ['vat_pct', 'نسبة الضريبة الافتراضية %', 'Default VAT %'], ['currency', 'العملة', 'Currency'], ['license_no', 'رقم الرخصة التجارية', 'Trade licence no.'], ['license_expiry', 'انتهاء الرخصة', 'Licence expiry', 'date'],
     ['mohre_id', 'رقم المنشأة — وزارة الموارد البشرية (١٣ رقم)', 'MOHRE establishment ID (13 digits)'], ['employer_bank', 'بنك الشركة', 'Company bank'], ['employer_routing', 'رمز توجيه بنك الشركة (٩ أرقام)', 'Company bank routing code (9 digits)'], ['employer_iban', 'آيبان الشركة', 'Company IBAN'],
     ['footer_text', 'نص تذييل المستندات', 'Document footer text']];
   const E = [['smtp_host', 'خادم البريد (SMTP)', 'SMTP server'], ['smtp_port', 'المنفذ (587 أو 465)', 'Port (587 or 465)'], ['smtp_user', 'اسم مستخدم البريد', 'SMTP username'], ['smtp_pass', 'كلمة مرور البريد', 'SMTP password', 'password'], ['smtp_from', 'عنوان المرسِل (مثل accounts@شركتك.com)', 'From address (e.g. accounts@yourco.com)']];
-  const users = admin ? await api('GET', 'users') : [];
+  const users = admin ? await api('GET', 'users') : [], prof = ME.role !== 'employee' ? await api('GET', 'profile') : {};
   const brands = admin ? await api('GET', 'brand') : [], has = n => brands.some(b => b.name === n);
-  const BR = [['logo', 'الشعار', 'Logo'], ['stamp', 'الختم', 'Company stamp'], ['signature', 'التوقيع المعتمد', 'Authorised signature']];
+  const BRX = [['logo', 'الشعار الأساسي', 'Primary logo'], ['logo_ar', 'الشعار العربي (الترويسة الرسمية)', 'Arabic logo (official letterhead)'], ['logo_white', 'الشعار المعكوس (للخلفيات الزرقاء)', 'Reversed logo (for blue backgrounds)'], ['logo_line', 'سطر الشعار (توقيع الإيميل)', 'Logo line (e-mail signature)'], ['mark', 'العلامة فقط', 'Mark only'], ['stamp', 'الختم الرسمي', 'Official stamp'], ['signature', 'التوقيع المعتمد', 'Authorised signature']];
   main(`<h1>${tr('الإعدادات', 'Settings')}</h1>
   ${admin ? `<div class="card" id="sf"><div class="f2">${F.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, s[k])).join('')}
     ${field({ k: 'vat_registered', ar: 'مسجّل في ضريبة القيمة المضافة؟', en: 'VAT registered?', type: 'select', options: [['1', tr('نعم', 'Yes')], ['0', tr('لا', 'No')]] }, s.vat_registered ?? '1')}
     ${field({ k: 'bank_details', ar: 'بيانات البنك (تظهر في الفاتورة)', en: 'Bank details (shown on invoices)', type: 'textarea', full: 1 }, s.bank_details)}${field({ k: 'terms', ar: 'الشروط الافتراضية لعروض الأسعار', en: 'Default quotation terms', type: 'textarea', full: 1 }, s.terms)}</div>
     <button class="btn" id="save">${tr('حفظ', 'Save')}</button></div>
   <div class="card"><h2>${tr('هوية الشركة: الشعار والختم والتوقيع', 'Company identity: logo, stamp & signature')}</h2><p class="muted">${tr('تظهر تلقائياً في عروض الأسعار والفواتير وأوامر الشراء والخطابات والتقارير المطبوعة. استخدم صورة PNG بخلفية شفافة للختم والتوقيع (حتى ٢ ميجابايت). الختم والتوقيع يُطبعان فقط على المستندات الصادرة من النظام، فاحرص على صلاحيات المستخدمين.', 'Used automatically on quotations, invoices, purchase orders, letters and printed reports. Use a transparent PNG for the stamp and signature (up to 2 MB). The stamp and signature are applied to documents issued by the system — keep user roles tight.')}</p>
-    <div class="grid">${BR.map(([k, a, e]) => `<div class="kpi"><div class="l">${tr(a, e)}</div><div style="height:90px;display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#f1f1f1 0 25%,#fff 0 50%) 0 0/16px 16px;margin:8px 0">${has(k) ? `<img src="/api/brand/${k}?t=${Date.now()}" style="max-height:84px;max-width:100%">` : `<span class="muted">${tr('لم يُرفع', 'not uploaded')}</span>`}</div>
+    <div class="bar"><button type="button" class="btn" id="pack">${tr('تركيب هوية تريجون الجاهزة (الشعار والختم والبيانات القانونية)', 'Install the Trigon brand pack (logos, stamp, legal details)')}</button></div><div class="grid">${BRX.map(([k, a, e]) => `<div class="kpi"><div class="l">${tr(a, e)}</div><div style="height:90px;display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#e6e3dc 0 25%,#fff 0 50%) 0 0/16px 16px;margin:8px 0">${has(k) ? `<img src="/api/brand/${k}?t=${Date.now()}" style="max-height:84px;max-width:100%">` : `<span class="muted">${tr('لم يُرفع', 'not uploaded')}</span>`}</div>
       <input type="file" accept="image/png,image/jpeg,image/webp" data-brand="${k}">${has(k) ? `<button class="btn sec sm" data-brand-del="${k}" style="margin-top:6px">${tr('حذف', 'Remove')}</button>` : ''}</div>`).join('')}</div></div>
   <div class="card" id="ef"><h2>${tr('إرسال البريد الإلكتروني', 'Email sending')}</h2><p class="muted">${tr('استخدم بيانات SMTP من مزوّد بريد شركتك (Microsoft 365 أو Google Workspace أو استضافة الدومين). المنفذ 587 للتشفير STARTTLS و465 للتشفير المباشر.', 'Use the SMTP details from your company mail provider (Microsoft 365, Google Workspace or your domain host). Port 587 uses STARTTLS, 465 uses implicit TLS.')}</p>
     <div class="f2">${E.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, k === 'smtp_pass' ? '' : s[k])).join('')}${field({ k: 'smtp_secure', ar: 'التشفير', en: 'Encryption', type: 'select', options: [['0', 'STARTTLS (587)'], ['1', 'SSL/TLS (465)']] }, s.smtp_secure ?? '0')}</div>
@@ -569,10 +572,13 @@ PAGES.settings = async () => {
   <div class="card"><div class="bar"><h2 style="margin:0">${tr('المستخدمون والصلاحيات', 'Users & roles')}</h2><span class="sp"></span><button class="btn sm" id="addU">+ ${tr('مستخدم', 'User')}</button></div>
     <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}${u.employee_name ? ` <span class="muted">(${esc(u.employee_name)})</span>` : ''}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
     <p class="muted">${tr('مدير النظام: كل شيء • محاسب: المالية والمحاسبة دون المستخدمين والإعدادات • مدير مشاريع: المشاريع والمشتريات والحضور دون الرواتب والضرائب • موارد بشرية: الموظفون والإجازات والطلبات والرواتب والخطابات دون الحسابات • عرض فقط: قراءة فقط • موظف: بوابته الخاصة فقط.', 'Admin: everything • Accountant: finance & accounting, no users/settings • Project manager: projects, purchasing, attendance — no payroll or tax • HR: employees, leave, requests, payroll, letters — no finance • Viewer: read-only • Employee: own portal only.')}</p></div>` : ''}
+    ${ME.role !== 'employee' ? `<div class="card" id="pf"><h2>${tr('ملفي الشخصي (يظهر في توقيع الإيميل)', 'My profile (shown in my e-mail signature)')}</h2><div class="f2">${field({ k: 'display_name', ar: 'الاسم الكامل', en: 'Full name' }, prof.display_name)}${field({ k: 'job_title', ar: 'المسمى الوظيفي', en: 'Job title' }, prof.job_title)}${field({ k: 'mobile', ar: 'الجوال', en: 'Mobile' }, prof.mobile)}</div><button class="btn sec" id="savepf">${tr('حفظ', 'Save')}</button></div>` : ''}
     <div class="card"><h2>${tr('تغيير كلمة المرور', 'Change password')}</h2><div class="f"><input type="password" id="np" minlength="6" placeholder="${tr('كلمة مرور جديدة', 'New password')}"></div><button class="btn sec" id="cp">${tr('تغيير', 'Change')}</button></div>
     ${admin ? `<div class="card"><h2>${tr('نسخة احتياطية', 'Backup')}</h2><p class="muted">${tr('حمّل نسخة من قاعدة البيانات (تشمل المستندات المرفقة والشعار) واحتفظ بها بشكل دوري. السجلات المالية يجب حفظها ٥–٧ سنوات، وتحتوي النسخة على كلمة مرور البريد فاحفظها في مكان آمن.', 'Download a copy of the database (it includes attached documents and your logo) and keep it safe regularly. Financial records must be kept 5–7 years; the copy contains the SMTP password — store it securely.')}</p><a class="btn sec" href="/api/backup" style="text-decoration:none;display:inline-block">${tr('تحميل النسخة الاحتياطية', 'Download backup')}</a></div>` : ''}`);
   $('#cp').onclick = guard(async () => { await api('POST', 'password', { password: $('#np').value }); $('#np').value = ''; toast(tr('تم التغيير', 'Password changed')); });
+  if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
+  $('#pack').onclick = guard(async () => { if (!confirm(tr('سيُركَّب الشعار والختم وتُحدَّث بيانات الشركة القانونية (الاسم، الرخصة، العنوان، ص.ب). متابعة؟', 'This installs the logos and stamp and sets the legal company details (name, licence, address, P.O. Box). Continue?'))) return; await api('POST', 'brand/pack'); S = { ...S, ...(await api('GET', 'settings')) }; toast(tr('تم تركيب الهوية', 'Brand pack installed')); boot(); });
   $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'bank_details', 'terms'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
   $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure'].forEach(k => b[k] = val($('#ef'), k)); await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
   $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });
