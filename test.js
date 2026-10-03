@@ -2,6 +2,7 @@
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-'));
 const net = require('net');
+const round2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const { server } = require('./server.js');
 // tiny fake SMTP server that records the message
 const mails = [];
@@ -163,6 +164,122 @@ server.listen(0, async () => {
     const subj = /Subject: =\?UTF-8\?B\?(.+?)\?=/.exec(m.body); assert.match(Buffer.from(subj[1], 'base64').toString(), /^Payment reminder — Invoice INV-/);
     const html = Buffer.from(m.body.split('text/html')[1].split('\n\n')[1].split('--')[0].replace(/\s/g, ''), 'base64').toString();
     assert.match(html, /INV-\d{4}-\d+/); assert.match(html, /Payment reminder/);
+
+    // ---- HR: leave, requests, attendance, letters, payslips, employee portal ----
+    const hrId = (await call('POST', 'users', { username: 'hr1', password: 'pass123', role: 'hr' })).s; assert.equal(hrId, 200);
+    const loginAs = async u => { cookie = ''; assert.equal((await call('POST', 'login', { username: u, password: 'pass123' })).s, 200); };
+    cookie = adminCookie;
+    const e2 = (await call('POST', 'employees', { name: 'Ahmed Ali', person_code: '99999999999999', routing_code: '302620122', iban: 'AE070331234567890123456', join_date: '2024-01-01', basic: 3000, housing: 1000, other_allowance: 500, nationality: 'Egypt', passport_no: 'A123', designation: 'Foreman' })).j.id;
+    await loginAs('hr1');
+    assert.equal((await call('GET', 'invoices')).s, 403);                                    // HR cannot see finance
+    assert.equal((await call('POST', 'users', { username: 'emp1', password: 'pass123', role: 'employee', employee_id: e2 })).s, 200);
+    assert.equal((await call('POST', 'users', { username: 'x', password: 'pass123', role: 'accountant' })).s, 400);   // HR may only create employee accounts
+    assert.equal((await call('POST', 'users', { username: 'emp2', password: 'pass123', role: 'employee', employee_id: e2 })).s, 400);  // one account per employee
+    let bal = (await call('GET', 'hr/balances')).j.find(x => x.employee_id === e2); assert.ok(bal.accrued >= 30 && bal.balance === bal.accrued);
+    await loginAs('emp1');
+    const mine = (await call('GET', 'me')).j; assert.equal(mine.employee.name, 'Ahmed Ali'); assert.equal(mine.employee.basic, undefined);       // no salary data on profile
+    assert.equal((await call('GET', 'employees')).s, 403); assert.equal((await call('GET', 'projects')).s, 403); assert.equal((await call('GET', 'hr/leave')).s, 403);
+    const lv = (await call('POST', 'me/leave', { type: 'annual', start_date: '2026-10-10', end_date: '2026-10-14', reason: 'family' })).j.id;
+    assert.equal((await call('POST', 'me/leave', { type: 'annual', start_date: '2026-10-12', end_date: '2026-10-20' })).s, 400);       // overlap
+    const rq = (await call('POST', 'me/request', { type: 'salary_certificate', details: 'for bank' })).j.id;
+    assert.equal((await call('POST', 'hr/leave/' + lv + '/decide', { status: 'approved' })).s, 403);                                        // employee cannot approve
+    await loginAs('hr1');
+    assert.equal((await call('PUT', `hr/leave/${lv}/decide`, { status: 'approved' })).s, 200);
+    assert.equal((await call('PUT', `hr/leave/${lv}/decide`, { status: 'approved' })).s, 400);                                            // already decided
+    bal = (await call('GET', 'hr/balances')).j.find(x => x.employee_id === e2); assert.equal(bal.used, 5);
+    const lt = (await call('POST', 'hr/letters', { type: 'salary_certificate', employee_id: e2, request_id: rq, purpose: 'bank' })).j; assert.match(lt.number, /\/HR\/\d{4}\/001$/);
+    assert.equal((await call('PUT', `hr/requests/${rq}/decide`, { status: 'approved' })).s, 200);
+    const letterHtml = await (await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).text();
+    assert.match(letterHtml, /Salary Certificate/); assert.match(letterHtml, /4,500\.00/); assert.match(letterHtml, /Ahmed Ali/);
+    await loginAs('emp1');
+    assert.equal((await fetch(base + 'me/letter/' + lt.id, { headers: { cookie } })).status, 200);
+    assert.equal((await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).status, 403);
+    // unpaid leave + attendance overtime flow into payroll
+    await loginAs('hr1');
+    await call('POST', 'hr/leave', { employee_id: e2, type: 'unpaid', start_date: '2026-11-03', end_date: '2026-11-05' });
+    const ul = (await call('GET', 'hr/leave')).j.find(x => x.type === 'unpaid'); await call('PUT', `hr/leave/${ul.id}/decide`, { status: 'approved' });
+    assert.equal((await call('PUT', 'hr/attendance', { employee_id: e2, date: '2026-11-10', status: 'present', ot_normal_hours: 4 })).s, 200);
+    await call('POST', 'payroll/generate', { month: '2026-11' });
+    const pr2 = (await call('GET', 'payroll?month=2026-11')).j.find(x => x.employee_id === e2);
+    assert.equal(pr2.days_worked, 27); assert.equal(pr2.leave_days, 3); assert.equal(pr2.fixed, 4050); assert.equal(pr2.overtime, 62.5);   // 4500*27/30 ; 3000/30/8*1.25*4
+    cookie = adminCookie;
+
+    // ---- letterhead, brand assets, PDF ----
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    assert.equal((await call('PUT', 'brand/logo', { data: png })).s, 200); assert.equal((await call('PUT', 'brand/stamp', { data: png })).s, 200);
+    assert.equal((await call('PUT', 'brand/logo', { data: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' })).s, 400);
+    await call('PUT', 'settings', { company_name: 'Trigon Civil Contracting LLC', company_name_ar: 'تريجون سيفيل للمقاولات ذ م م' });
+    const invHtml = await (await fetch(base + 'doc/invoices/' + inv3, { headers: { cookie } })).text();
+    assert.match(invHtml, /Trigon Civil Contracting LLC/); assert.match(invHtml, /تريجون سيفيل/); assert.match(invHtml, /data:image\/png;base64/); assert.match(invHtml, /Tax Invoice/);
+    const { findBrowser } = require('./lib/pdf');
+    if (findBrowser()) { const r = await fetch(base + `doc/invoices/${inv3}/pdf`, { headers: { cookie } }); const b = Buffer.from(await r.arrayBuffer()); assert.equal(r.status, 200); assert.equal(b.slice(0, 4).toString(), '%PDF'); console.log('PDF generated:', b.length, 'bytes'); }
+    // emailed invoice carries the PDF
+    const mails0 = mails.length; await call('POST', `invoices/${inv3}/email`, { to: 'client@example.com' });
+    if (findBrowser()) assert.match(mails[mails0].body, /filename="INV-\d{4}-\d+\.pdf"/);
+
+    // ---- documents ----
+    const doc = (await call('POST', 'documents', { entity: 'company', entity_id: 0, name: 'trade-licence.pdf', category: 'licence', expiry_date: '2020-01-01', data: 'data:application/pdf;base64,JVBERi0xLjQK' })).j.id;
+    assert.ok(doc); assert.equal((await call('GET', 'documents?entity=company&entity_id=0')).j.length, 1);
+    assert.equal((await call('POST', 'documents', { entity: 'company', name: 'x.exe', data: 'data:application/x-msdownload;base64,AAAA' })).s, 400);
+    const dl = await fetch(base + `documents/${doc}/download`, { headers: { cookie } }); assert.equal(dl.headers.get('content-disposition').includes('trade-licence.pdf'), true);
+    await loginAs('hr1'); assert.equal((await call('POST', 'documents', { entity: 'project', entity_id: pid, name: 'a.pdf', data: 'data:application/pdf;base64,JVBERi0xLjQK' })).s, 403);
+    cookie = adminCookie;
+
+    // ---- procurement: RFQ -> PO -> bill, subcontract certificates, stock, assets, petty cash ----
+    const sup2 = (await call('POST', 'parties', { type: 'supplier', name: 'Supplier T', trn: '100111111100003' })).j.id;
+    const rfq = (await call('POST', 'rfqs', { project_id: pid, description: 'Steel', items: [{ description: 'Rebar 12mm', unit: 'ton', qty: 10 }, { description: 'Tie wire', unit: 'kg', qty: 100 }],
+      quotes: [{ party_id: sup, rates: [2500, 8] }, { party_id: sup2, rates: [2400, 9], delivery_days: 7 }] })).j.id;
+    let rv = (await call('GET', 'rfqs/' + rfq)).j; assert.match(rv.number, /^RFQ-\d{4}-001$/); assert.equal(rv.quotes[0].total, 25800); assert.equal(rv.quotes[1].total, 24900); assert.equal(rv.quotes[1].lowest, true);
+    assert.equal((await call('POST', `rfqs/${rfq}/award`, { party_id: 9999 })).s, 400);
+    const po = (await call('POST', `rfqs/${rfq}/award`, { party_id: sup2 })).j.id; let pov = (await call('GET', 'purchase_orders/' + po)).j;
+    assert.equal(pov.subtotal, 24900); assert.equal(pov.vat, 1245); assert.equal(pov.supplier_name, 'Supplier T'); assert.equal((await call('POST', `rfqs/${rfq}/award`, { party_id: sup2 })).s, 400);
+    const rcv = (await call('POST', `purchase_orders/${po}/receive`, { category: 'materials' })).j.bill_id; const bl2 = (await call('GET', 'bills/' + rcv)).j; assert.equal(bl2.amount, 24900); assert.equal(bl2.vat_amount, 1245);
+    assert.equal((await call('POST', `purchase_orders/${po}/receive`, {})).s, 400);
+    assert.match(await (await fetch(base + 'doc/purchase_orders/' + po, { headers: { cookie } })).text(), /Purchase Order/);
+    const sc = (await call('POST', 'subcontracts', { project_id: pid, party_id: sup2, description: 'Plastering', contract_value: 50000, retention_pct: 10, advance: 5000 })).j.id;
+    const c1 = (await call('POST', 'sub_certs', { subcontract_id: sc, cumulative: 20000, advance_recovery: 1000 })).j.id; let cv = (await call('GET', 'sub_certs/' + c1)).j;
+    assert.equal(cv.gross_this, 20000); assert.equal(cv.retention, 2000); assert.equal(cv.vat, 1000); assert.equal(cv.payable_now, 20000 - 2000 - 1000 + 1000);
+    const c2 = (await call('POST', 'sub_certs', { subcontract_id: sc, cumulative: 15000 })).s; assert.equal(c2, 400);       // cumulative cannot go backwards
+    assert.equal((await call('POST', `sub_certs/${c1}/approve`)).s, 200); assert.equal((await call('POST', `sub_certs/${c1}/approve`)).s, 400);
+    const sbill = (await call('GET', 'sub_certs/' + c1)).j.bill_id, sb = (await call('GET', 'bills/' + sbill)).j; assert.equal(sb.amount, 20000); assert.equal(sb.category, 'subcontract'); assert.equal(sb.paid, 1000);
+    assert.equal((await call('PUT', 'sub_certs/' + c1, { cumulative: 30000 })).s, 400);                                        // approved = locked
+    const c3 = (await call('POST', 'sub_certs', { subcontract_id: sc, cumulative: 35000 })).j.id; cv = (await call('GET', 'sub_certs/' + c3)).j; assert.equal(cv.previous, 20000); assert.equal(cv.gross_this, 15000);
+    const sv = (await call('GET', 'subcontracts/' + sc)).j; assert.equal(sv.certified, 20000); assert.equal(sv.retention_held, 2000);
+    const it = (await call('POST', 'stock_items', { name: 'Cement', unit: 'bag', min_qty: 20 })).j.id;
+    await call('POST', 'stock_moves', { item_id: it, type: 'in', qty: 100, unit_cost: 10 }); await call('POST', 'stock_moves', { item_id: it, type: 'in', qty: 100, unit_cost: 20 });
+    assert.equal((await call('POST', 'stock_moves', { item_id: it, type: 'out', qty: 500 })).s, 400);
+    await call('POST', 'stock_moves', { item_id: it, type: 'out', qty: 150, project_id: pid }); const st1 = (await call('GET', 'stock_items/' + it)).j; assert.equal(st1.qty, 50); assert.equal(st1.avg_cost, 15); assert.equal(st1.value, 750);
+    const fa = (await call('POST', 'fixed_assets', { name: 'Excavator', purchase_date: '2026-01-15', cost: 120000, salvage: 0, life_years: 5 })).j.id; const far = (await call('GET', 'fixed_assets?as_of=2026-12-31')).j.find(x => x.id === fa);
+    assert.equal(far.accumulated, 24000); assert.equal(far.nbv, 96000); assert.equal(far.annual, 24000);
+    assert.equal((await call('GET', 'corporate-tax?from=2026-01-01&to=2026-12-31')).j.depreciation, 24000);
+    await call('POST', 'petty_topups', { date: '2026-10-01', amount: 500, note: 'float' });
+    assert.equal((await call('POST', 'petty_topups/expense', { description: 'Site water', amount: 600 })).s, 400);               // over the float
+    assert.equal((await call('POST', 'petty_topups/expense', { description: 'Site water', amount: 100, vat_amount: 5, project_id: pid })).s, 200);
+    assert.equal((await call('GET', 'petty_topups')).j.balance, 395);
+
+    // ---- accounting ----
+    let fin = (await call('GET', 'financials?from=2026-01-01&to=2026-12-31')).j;
+    assert.equal(fin.tb_debit, fin.tb_credit); assert.ok(fin.tb_debit > 0);                                                         // books balance
+    assert.equal(fin.balance_sheet.total_assets, round2(fin.balance_sheet.total_liabilities + fin.balance_sheet.total_equity));    // A = L + E
+    assert.equal(fin.net_profit, round2(fin.revenue - fin.expenses)); const dep = fin.pl.find(x => x.code === '6100'); assert.ok(dep && dep.amount > 0 && dep.amount <= 24000 && dep.amount % 2000 === 0);   // monthly depreciation posted up to the current month
+    const jv = (await call('POST', 'journal_entries', { date: '2026-01-01', memo: 'Opening capital', lines: [{ account: '1000', debit: 100000 }, { account: '3000', credit: 100000 }] })).j.id; assert.ok(jv);
+    assert.equal((await call('POST', 'journal_entries', { date: '2026-01-01', lines: [{ account: '1000', debit: 10 }, { account: '3000', credit: 9 }] })).s, 400);   // unbalanced
+    assert.equal((await call('POST', 'journal_entries', { date: '2026-01-01', lines: [{ account: '9999', debit: 10 }, { account: '3000', credit: 10 }] })).s, 400);  // unknown account
+    const fin2 = (await call('GET', 'financials?from=2026-01-01&to=2026-12-31')).j; assert.equal(fin2.tb_debit, fin2.tb_credit); assert.equal(fin2.trial_balance.find(x => x.code === '3000').credit, 100000);
+    const led = (await call('GET', 'ledger?account=3000&from=2026-01-01&to=2026-12-31')).j; assert.equal(led.lines.at(-1).balance, -100000);
+    assert.equal((await call('POST', 'accounts', { code: '5800', name: 'Insurance', type: 'expense' })).s, 200); assert.equal((await call('DELETE', 'accounts/1000')).s, 400); assert.equal((await call('POST', 'accounts', { code: 'x', name: 'bad', type: 'expense' })).s, 400);
+    // bank reconciliation
+    const pay1 = (await call('POST', 'payments', { kind: 'in', amount: 777, invoice_id: inv3, method: 'bank', date: '2026-10-02' })).j.id; assert.ok(pay1);
+    const imp = (await call('POST', 'bank/import', { csv: 'date,description,amount\n2026-10-03,TRANSFER CLIENT A,777.00\n2026-10-04,BANK FEES,-25.00\n' })).j; assert.equal(imp.added, 2);
+    assert.equal((await call('POST', 'bank/import', { csv: '2026-10-03,TRANSFER CLIENT A,777.00' })).j.added, 0);                       // duplicates skipped
+    assert.equal((await call('POST', 'bank/auto-match')).j.matched, 1);
+    const bk = (await call('GET', 'bank')).j; assert.equal(bk.lines.filter(l => l.payment_id).length, 1); assert.equal(bk.summary.unmatched_lines, -25);
+    // exports
+    const exp = await fetch(base + 'export/invoices', { headers: { cookie } }), raw = Buffer.from(await exp.arrayBuffer()), body = raw.toString('utf8'); assert.match(exp.headers.get('content-type'), /text\/csv/); assert.deepEqual([...raw.slice(0, 3)], [0xef, 0xbb, 0xbf]); assert.match(body, /Number,Type/); assert.match(body, /INV-\d{4}-\d+/);
+    assert.equal((await fetch(base + 'export/nothing', { headers: { cookie } })).status, 404);
+    assert.equal((await fetch(base + 'export/trial_balance?from=2026-01-01&to=2026-12-31', { headers: { cookie } })).status, 200);
+    assert.ok((await call('GET', 'einvoice')).j.invoices > 0);
+    await loginAs('hr1'); assert.equal((await call('GET', 'financials')).s, 403); assert.equal((await fetch(base + 'export/invoices', { headers: { cookie } })).status, 403); cookie = adminCookie;
 
     // login lockout after repeated failures
     for (let k = 0; k < 8; k++) await call('POST', 'login', { username: 'a', password: 'wrong' });

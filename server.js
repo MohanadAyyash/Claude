@@ -7,6 +7,7 @@ const { DatabaseSync } = require('node:sqlite');
 const C = require('./lib/compliance');
 const { sendMail, validEmail } = require('./lib/mailer');
 const { docHtml, toText } = require('./lib/docs');
+const ACLX = require('./lib/acl');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -34,7 +35,7 @@ CREATE TABLE IF NOT EXISTS site_reports(id INTEGER PRIMARY KEY, project_id INTEG
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, ts TEXT, user TEXT, action TEXT, tbl TEXT, rec INTEGER, detail TEXT);
 `);
 const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
-[['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
+[['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
 
 // Editable columns per table (whitelist) and numeric columns
 const bad = m => { const e = new Error(m); e.status = 400; throw e; };
@@ -117,7 +118,7 @@ function enrich() {
   return { parties, projects, invoices, bills, quotes, payments };
 }
 // cash that has really moved: pending/bounced cheques excluded
-const inCash = p => p.method !== 'cheque' || p.cheque_status === 'cleared' || !p.cheque_status;
+const inCash = p => p.method !== 'offset' && (p.method !== 'cheque' || p.cheque_status === 'cleared' || !p.cheque_status);
 const payrollCost = (from, to) => db.prepare("SELECT * FROM payroll WHERE status='final' AND month>=? AND month<=?").all((from || '0000-00').slice(0, 7), (to || '9999-99').slice(0, 7));
 
 function projectRows() {
@@ -127,9 +128,10 @@ function projectRows() {
     const invoiced = round(inv.reduce((s, i) => s + i.subtotal, 0));
     const collected = round(inv.reduce((s, i) => s + i.paid, 0) + inv.reduce((s, i) => s + (i.retention - i.retention_open), 0));
     const pr = db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final' AND project_id=?").get(p.id).g;
-    const cost = round(bl.reduce((s, b) => s + b.amount, 0) + pr);
+    const costBills = bl.filter(b => b.category !== 'asset');
+    const cost = round(costBills.reduce((s, b) => s + b.amount, 0) + pr);
     const byCat = {};
-    bl.forEach(b => byCat[b.category] = round((byCat[b.category] || 0) + b.amount));
+    costBills.forEach(b => byCat[b.category] = round((byCat[b.category] || 0) + b.amount));
     if (pr) byCat.payroll = round(pr);
     const vars = round(db.prepare("SELECT COALESCE(SUM(amount),0) a FROM variations WHERE project_id=? AND status='approved'").get(p.id).a);
     const boq = db.prepare('SELECT * FROM boq_items WHERE project_id=?').all(p.id);
@@ -160,7 +162,7 @@ function dashboard() {
     active_projects: projs.filter(p => p.status === 'active').length,
     contract_value: round(projs.filter(p => p.status !== 'cancelled').reduce((s, p) => s + p.revised_value, 0)),
     invoiced: round(invoices.reduce((s, i) => s + i.subtotal, 0)),
-    expenses: round(bills.reduce((s, b) => s + b.amount, 0) + db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final'").get().g),
+    expenses: round(bills.filter(b => b.category !== 'asset').reduce((s, b) => s + b.amount, 0) + db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final'").get().g),
     receivable: round(invoices.reduce((s, i) => s + i.balance, 0)),
     retention_held: round(invoices.reduce((s, i) => s + i.retention_open, 0)),
     payable: round(bills.reduce((s, b) => s + b.balance, 0)),
@@ -189,10 +191,11 @@ function corporateTaxReport(from, to) {
   const { invoices, bills } = enrich();
   const inR = dt => (!from || dt >= from) && (!to || dt <= to);
   const revenue = round(invoices.filter(i => !i.voided && inR(i.date)).reduce((s, i) => s + i.subtotal, 0));
-  const billCost = round(bills.filter(b => inR(b.date)).reduce((s, b) => s + b.amount, 0));
+  const billCost = round(bills.filter(b => inR(b.date) && b.category !== 'asset').reduce((s, b) => s + b.amount, 0));
+  const depreciation = ctx.depreciation(from, to || today());
   const payroll = round(payrollCost(from, to).reduce((s, r) => s + r.gross, 0));
-  const r = C.corporateTax({ revenue, expenses: billCost + payroll, periodEnd: to });
-  return { from, to, ...r, bills_cost: billCost, payroll_cost: payroll };
+  const r = C.corporateTax({ revenue, expenses: billCost + payroll + depreciation, periodEnd: to });
+  return { from, to, ...r, bills_cost: billCost, payroll_cost: payroll, depreciation };
 }
 
 function compliance() {
@@ -210,6 +213,7 @@ function compliance() {
     const due = new Date(+m.month.slice(0, 4), +m.month.slice(5, 7), 15).toISOString().slice(0, 10);
     if (due < t) add('bad', 'wps_late', { month: m.month });
   }
+  for (const d of db.prepare('SELECT name,entity,expiry_date FROM documents WHERE expiry_date IS NOT NULL AND expiry_date<? ORDER BY expiry_date').all(soon)) add(d.expiry_date < t ? 'bad' : 'warn', 'doc_file', { who: d.name, date: d.expiry_date });
   const bounced = db.prepare("SELECT COUNT(*) n FROM payments WHERE cheque_status='bounced'").get().n;
   if (bounced) add('bad', 'bounced', { count: bounced });
   const { invoices } = enrich();
@@ -234,7 +238,7 @@ function sessionUser(req) {
   const m = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
   if (!m) return null;
   const s = db.prepare('SELECT user_id FROM sessions WHERE token=? AND created>?').get(m[1], Date.now() - 30 * 864e5);
-  return s ? db.prepare('SELECT id,username,role FROM users WHERE id=?').get(s.user_id) : null;
+  return s ? db.prepare('SELECT id,username,role,employee_id FROM users WHERE id=?').get(s.user_id) : null;
 }
 
 // ---- http -----------------------------------------------------------------
@@ -244,8 +248,8 @@ const send = (res, code, body, headers = {}) => {
   res.writeHead(code, { 'Content-Type': isObj ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8', ...headers });
   res.end(isObj ? JSON.stringify(body) : body);
 };
-const readBody = req => new Promise((ok, no) => {
-  let b = ''; req.on('data', c => { b += c; if (b.length > 5e6) req.destroy(); });
+const readBody = (req, max = 5e6) => new Promise((ok, no) => {
+  let b = ''; req.on('data', c => { b += c; if (b.length > max) req.destroy(); });
   req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch (e) { no(e); } });
 });
 
@@ -262,23 +266,8 @@ function clean(table, body) {
   return out;
 }
 
-const ROLES = ['admin', 'accountant', 'manager', 'viewer'];
-const SENSITIVE = ['employees', 'payroll', 'corporate-tax', 'compliance'];
-const OPS_WRITE = ['projects', 'boq_items', 'variations', 'site_reports', 'quotes', 'parties'];
-// admin: everything · accountant: everything except users/settings/backup/audit · manager: operations only, no HR/tax · viewer: read-only, no HR/tax
-function can(role, method, a, b, c) {
-  const read = method === 'GET';
-  if (role === 'admin') return true;
-  if (['users', 'backup', 'audit'].includes(a)) return false;
-  if (a === 'settings') return read && b !== 'test-email';
-  if (a === 'password') return true;
-  if (role === 'accountant') return true;
-  if (SENSITIVE.includes(a)) return false;
-  if (role === 'viewer') return read;
-  if (role === 'manager') return read || (OPS_WRITE.includes(a) && c !== 'progress-invoice');
-  return false;
-}
-const SETTING_KEYS = ['smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban'];
+const { ROLES } = ACLX, can = ACLX.can;
+const SETTING_KEYS = ['company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -295,6 +284,16 @@ function applyPayroll(id, inp) {
     .run(m.days_worked, m.leave_days, m.ot_normal_hours, m.ot_special_hours, m.bonus, m.deductions, c.fixed, c.overtime, c.gross, c.net, m.notes ?? null, id);
 }
 
+// ---- feature modules ------------------------------------------------------------
+const mailCfgFor = () => {
+  const st = getSettings();
+  if (!st.smtp_host || !st.smtp_from) bad('Email is not configured — set the SMTP details in Settings');
+  return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
+};
+const ctx = { vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+const MODULES = ['brand', 'documents', 'print', 'hr', 'procurement', 'assets', 'accounting'].map(n => require('./modules/' + n)(ctx));
+for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
+
 async function api(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean).slice(1); // after /api
   const [a, b, c] = parts, method = req.method;
@@ -307,7 +306,7 @@ async function api(req, res, url) {
     const salt = crypto.randomBytes(16).toString('hex');
     const r = db.prepare('INSERT INTO users(username,salt,hash,role) VALUES(?,?,?,?)').run(username, salt, hashPw(password, salt), 'admin');
     const ins = db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)');
-    ins.run('company_name', company || ''); ins.run('vat_pct', '5'); ins.run('currency', 'AED');
+    ins.run('company_name', company || 'Trigon Civil Contracting LLC'); ins.run('company_name_ar', company ? '' : 'تريجون سيفيل للمقاولات ذ م م'); ins.run('vat_pct', '5'); ins.run('currency', 'AED');
     ins.run('terms', '1. Payment: 30 days from invoice date.\n2. Prices exclude VAT unless stated.\n3. Variations to be agreed in writing.');
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(r.lastInsertRowid), 2592000) });
   }
@@ -349,31 +348,37 @@ async function api(req, res, url) {
     if (!validEmail(to)) bad('Enter a valid email address');
     const st = getSettings(), html = docHtml({ kind: a, doc: { ...doc, client_trn: e.parties[doc.client_id]?.trn }, settings: st, message, reminder: !!reminder && a === 'invoices' });
     const label = a === 'quotes' ? 'Quotation' : doc.kind === 'credit_note' ? 'Credit note' : reminder ? 'Payment reminder — Invoice' : 'Tax invoice';
-    await sendMail(mailCfg(), { to, subject: `${label} ${doc.number} — ${st.company_name || ''}`, html, text: toText(html) });
+    let attachments = [];
+    try { attachments = [{ filename: `${doc.number}.pdf`, mime: 'application/pdf', content: await ctx.pdf(ctx.renderPage(a, doc.id, me).html) }]; } catch { /* no browser available: send the HTML body only */ }
+    await sendMail(mailCfg(), { to, subject: `${label} ${doc.number} — ${st.company_name || ''}`, html, text: toText(html), attachments });
     audit(req, 'email', a, doc.id, `${doc.number} to ${to}${reminder ? ' (reminder)' : ''}`);
     return send(res, 200, { ok: 1 });
   }
 
-  // ---- users (admin only, enforced by can()) ----
+  // ---- users: admin manages all; HR may only manage employee-portal accounts ----
   if (a === 'users') {
     const admins = () => db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n;
-    if (method === 'GET') return send(res, 200, db.prepare('SELECT id,username,role FROM users ORDER BY id').all());
+    const hrOnly = me.role === 'hr';
+    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all());
     const body = ['POST', 'PUT'].includes(method) ? await readBody(req) : {};
     if (method === 'POST') {
       if (!body.username || !/^[\w.@-]{3,40}$/.test(body.username)) bad('Username must be 3–40 characters (letters, digits, . _ - @)');
       if (!body.password || body.password.length < 6) bad('Password must be at least 6 characters');
       if (!ROLES.includes(body.role)) bad('Invalid role');
+      if (hrOnly && body.role !== 'employee') bad('HR can only create employee accounts');
+      if (body.role === 'employee') { if (!db.prepare('SELECT 1 FROM employees WHERE id=?').get(+body.employee_id)) bad('Select the employee this account belongs to'); if (db.prepare('SELECT 1 FROM users WHERE employee_id=?').get(+body.employee_id)) bad('This employee already has an account'); }
       if (db.prepare('SELECT 1 FROM users WHERE username=?').get(body.username)) bad('Username already exists');
       const salt = crypto.randomBytes(16).toString('hex');
-      const r = db.prepare('INSERT INTO users(username,salt,hash,role) VALUES(?,?,?,?)').run(body.username, salt, hashPw(body.password, salt), body.role);
+      const r = db.prepare('INSERT INTO users(username,salt,hash,role,employee_id) VALUES(?,?,?,?,?)').run(body.username, salt, hashPw(body.password, salt), body.role, body.role === 'employee' ? +body.employee_id : null);
       audit(req, 'create', 'users', Number(r.lastInsertRowid), `${body.username} (${body.role})`);
       return send(res, 200, { id: Number(r.lastInsertRowid) });
     }
     const u = db.prepare('SELECT * FROM users WHERE id=?').get(+b);
     if (!u) return send(res, 404, { error: 'not found' });
+    if (hrOnly && u.role !== 'employee') return send(res, 403, { error: 'your role does not allow this action' });
     if (method === 'PUT') {
       if (body.role) {
-        if (!ROLES.includes(body.role)) bad('Invalid role');
+        if (!ROLES.includes(body.role) || (hrOnly && body.role !== 'employee')) bad('Invalid role');
         if (u.role === 'admin' && body.role !== 'admin' && admins() <= 1) bad('There must be at least one admin');
         db.prepare('UPDATE users SET role=? WHERE id=?').run(body.role, u.id);
       }
@@ -408,6 +413,7 @@ async function api(req, res, url) {
       audit(req, 'update', 'settings', 0, 'company settings');
     }
     const st = getSettings(); st.smtp_pass_set = st.smtp_pass ? '1' : ''; delete st.smtp_pass;       // never send the SMTP password back
+    if (me.role === 'employee') return send(res, 200, { company_name: st.company_name, company_name_ar: st.company_name_ar, currency: st.currency });
     return send(res, 200, st);
   }
   if (a === 'password' && method === 'POST') {
@@ -468,7 +474,7 @@ async function api(req, res, url) {
         const from = e.join_date && e.join_date > first ? e.join_date : first, to = e.end_date && e.end_date < last ? e.end_date : last;
         const days = Math.min(30, Math.round((new Date(to) - new Date(from)) / 864e5) + 1);
         const r = db.prepare('INSERT INTO payroll(month,employee_id,project_id,days_worked) VALUES(?,?,?,?)').run(m, e.id, e.project_id, days);
-        applyPayroll(Number(r.lastInsertRowid), {}); n++;
+        applyPayroll(Number(r.lastInsertRowid), ctx.hooks.payrollInputs ? ctx.hooks.payrollInputs(e, m, days) : {}); n++;
       }
       audit(req, 'generate', 'payroll', 0, `${m}: ${n} rows`);
       return send(res, 200, { created: n });
@@ -539,6 +545,8 @@ async function api(req, res, url) {
     db.prepare("UPDATE quotes SET status='accepted', project_id=? WHERE id=?").run(r.lastInsertRowid, q.id);
     return send(res, 200, { project_id: Number(r.lastInsertRowid) });
   }
+
+  for (const m of MODULES) if (m.handle && await m.handle(req, res, url, parts, me)) return;
 
   if (TABLES[a]) {
     const spec = TABLES[a], id = b ? +b : null;
