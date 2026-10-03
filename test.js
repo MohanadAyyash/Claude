@@ -279,6 +279,9 @@ server.listen(0, async () => {
     const bk = (await call('GET', 'bank')).j; assert.equal(bk.lines.filter(l => l.payment_id).length, 1); assert.equal(bk.summary.unmatched_lines, -25);
     // exports
     const exp = await fetch(base + 'export/invoices', { headers: { cookie } }), raw = Buffer.from(await exp.arrayBuffer()), body = raw.toString('utf8'); assert.match(exp.headers.get('content-type'), /text\/csv/); assert.deepEqual([...raw.slice(0, 3)], [0xef, 0xbb, 0xbf]); assert.match(body, /Number,Type/); assert.match(body, /INV-\d{4}-\d+/);
+    await call('POST', 'parties', { type: 'client', name: '=HYPERLINK("http://evil")' });
+    const pcsv = await (await fetch(base + 'export/parties', { headers: { cookie } })).text(); assert.ok(pcsv.includes("'=HYPERLINK")); assert.ok(!/(^|,)"?=HYPERLINK/m.test(pcsv));
+    const csp = (await fetch(base + 'doc/invoices/' + inv3 + '?print=1', { headers: { cookie } })).headers.get('content-security-policy'); assert.match(csp, /script-src 'sha256-/); assert.ok(!/script-src[^;]*unsafe-inline/.test(csp));
     assert.equal((await fetch(base + 'export/nothing', { headers: { cookie } })).status, 404);
     assert.equal((await fetch(base + 'export/trial_balance?from=2026-01-01&to=2026-12-31', { headers: { cookie } })).status, 200);
     assert.ok((await call('GET', 'einvoice')).j.invoices > 0);

@@ -1,5 +1,6 @@
 // HR: leave, requests, attendance, letters, payslips and the employee self-service portal.
 const { letterBody, payslipBody } = require('../lib/letters');
+const { CSP } = require('../lib/render');
 const LEAVE_TYPES = ['annual', 'sick', 'unpaid', 'maternity', 'paternity', 'bereavement', 'other'];
 const REQ_TYPES = ['salary_certificate', 'employment_certificate', 'noc', 'salary_transfer', 'experience', 'advance', 'id_renewal', 'complaint', 'other'];
 const LETTER_TYPES = ['salary_certificate', 'employment_certificate', 'noc', 'salary_transfer', 'experience'];
@@ -125,7 +126,7 @@ module.exports = ctx => {
           if (!ok) return send(res, 404, { error: 'not found' }), true;
           const { html, filename } = ctx.renderPage(b === 'payslip' ? 'payslips' : 'letter', +c, me, url.searchParams.get('print') === '1');
           if (d === 'pdf') { let pdf; try { pdf = await ctx.pdf(html); } catch (x) { return send(res, 503, { error: x.message }), true; } res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${filename.replace(/[^\w.-]/g, '_')}.pdf"` }); return res.end(pdf), true; }
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': CSP });
           return res.end(html), true;
         }
         return false;

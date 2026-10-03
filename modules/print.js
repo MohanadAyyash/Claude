@@ -1,5 +1,5 @@
 // Printable documents with letterhead: HTML (browser print) and PDF (headless Chrome/Edge).
-const { page } = require('../lib/render');
+const { page, CSP } = require('../lib/render');
 const { htmlToPdf } = require('../lib/pdf');
 
 module.exports = ctx => {
@@ -35,7 +35,7 @@ module.exports = ctx => {
         res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${String(filename).replace(/[^\w.-]/g, '_')}.pdf"` });
         return res.end(pdf), true;
       }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': CSP });
       return res.end(html), true;
     },
   };

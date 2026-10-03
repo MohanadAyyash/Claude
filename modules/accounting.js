@@ -72,7 +72,8 @@ module.exports = ctx => {
   const parseCsv = text => String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split(/[,;\t]/).map(x => x.replace(/^"|"$/g, '').trim()))
     .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r[0]) || /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(r[0]))
     .map(r => { let d = r[0]; if (!/^\d{4}/.test(d)) { const [dd, mm, yy] = d.split(/[/-]/); d = `${yy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`; } return { date: d, description: r.slice(1, -1).join(' ') || '', amount: +String(r[r.length - 1]).replace(/,/g, '') }; });
-  const csv = rows => '﻿' + rows.map(r => r.map(v => { v = v ?? ''; v = String(v); return /[",\r\n;]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }).join(',')).join('\r\n') + '\r\n';
+  const csv = rows => '\ufeff' + rows.map(r => r.map(v => { const wasText = typeof v === 'string'; v = String(v ?? ''); if (wasText && /^[=+\-@\t\r]/.test(v)) v = "'" + v;   // stop spreadsheet formula injection
+    return /[",\r\n;]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }).join(',')).join('\r\n') + '\r\n';
 
   return {
     async handle(req, res, url, [a, b, c], me) {
