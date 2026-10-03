@@ -188,17 +188,20 @@ server.listen(0, async () => {
     assert.equal((await call('PUT', `hr/leave/${lv}/decide`, { status: 'approved' })).s, 400);                                            // already decided
     bal = (await call('GET', 'hr/balances')).j.find(x => x.employee_id === e2); assert.equal(bal.used, 5);
     const lt = (await call('POST', 'hr/letters', { type: 'salary_certificate', employee_id: e2, request_id: rq, purpose: 'bank' })).j; assert.match(lt.number, /\/HR\/\d{4}\/001$/);
-    assert.equal((await call('PUT', `hr/requests/${rq}/decide`, { status: 'approved' })).s, 200);
+    assert.equal((await call('GET', 'hr/requests')).j.find(x => x.id === rq).status, 'approved');                         // issuing the letter approves the request
+    assert.equal((await call('PUT', `hr/requests/${rq}/decide`, { status: 'approved' })).s, 400);
     const letterHtml = await (await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).text();
     assert.match(letterHtml, /Salary Certificate/); assert.match(letterHtml, /4,500\.00/); assert.match(letterHtml, /Ahmed Ali/);
     await loginAs('emp1');
     assert.equal((await fetch(base + 'me/letter/' + lt.id, { headers: { cookie } })).status, 200);
     assert.equal((await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).status, 403);
+    // site managers can record attendance but not read HR data
+    await loginAs('pm1'); assert.equal((await call('GET', 'attendance?date=2026-11-10')).s, 200); assert.equal((await call('GET', 'hr/leave')).s, 403); assert.equal((await call('GET', 'employees')).s, 403);
     // unpaid leave + attendance overtime flow into payroll
     await loginAs('hr1');
     await call('POST', 'hr/leave', { employee_id: e2, type: 'unpaid', start_date: '2026-11-03', end_date: '2026-11-05' });
     const ul = (await call('GET', 'hr/leave')).j.find(x => x.type === 'unpaid'); await call('PUT', `hr/leave/${ul.id}/decide`, { status: 'approved' });
-    assert.equal((await call('PUT', 'hr/attendance', { employee_id: e2, date: '2026-11-10', status: 'present', ot_normal_hours: 4 })).s, 200);
+    assert.equal((await call('PUT', 'attendance', { employee_id: e2, date: '2026-11-10', status: 'present', ot_normal_hours: 4 })).s, 200);
     await call('POST', 'payroll/generate', { month: '2026-11' });
     const pr2 = (await call('GET', 'payroll?month=2026-11')).j.find(x => x.employee_id === e2);
     assert.equal(pr2.days_worked, 27); assert.equal(pr2.leave_days, 3); assert.equal(pr2.fixed, 4050); assert.equal(pr2.overtime, 62.5);   // 4500*27/30 ; 3000/30/8*1.25*4

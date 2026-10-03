@@ -28,11 +28,11 @@ const STATUS = { approved: ['معتمد', 'Approved'], pending_v: ['قيد ال�
   paid: ['مدفوع', 'Paid'], unpaid: ['غير مدفوع', 'Unpaid'], partial: ['جزئي', 'Partial'], overdue: ['متأخر', 'Overdue'], credit: ['إشعار دائن', 'Credit note'], void: ['ملغاة', 'Void'], final: ['معتمد', 'Final'], pending: ['قيد التحصيل', 'Pending'], cleared: ['تم صرفه', 'Cleared'], bounced: ['مرتجع', 'Bounced'], left: ['ترك العمل', 'Left'], retention: ['محتجز', 'Retention held'],
 };
 const tag = s => `<span class="tag ${s}">${esc(STATUS[s] ? tr(...STATUS[s]) : s)}</span>`;
-const CATS = { materials: ['مواد', 'Materials'], labour: ['عمالة', 'Labour'], subcontract: ['مقاولو باطن', 'Subcontractor'], equipment: ['معدات', 'Equipment'], transport: ['نقل', 'Transport'], permits: ['رسوم وتراخيص', 'Permits & fees'], overhead: ['مصاريف عامة', 'Overheads'], other: ['أخرى', 'Other'] };
+const CATS = { asset: ['شراء أصل ثابت (يُهلك)', 'Fixed asset purchase (depreciated)'], materials: ['مواد', 'Materials'], labour: ['عمالة', 'Labour'], subcontract: ['مقاولو باطن', 'Subcontractor'], equipment: ['معدات', 'Equipment'], transport: ['نقل', 'Transport'], permits: ['رسوم وتراخيص', 'Permits & fees'], overhead: ['مصاريف عامة', 'Overheads'], other: ['أخرى', 'Other'] };
 const PTYPE = { client: ['عميل', 'Client'], supplier: ['مورد', 'Supplier'], subcontractor: ['مقاول باطن', 'Subcontractor'] };
 const EMIRATES = { abu_dhabi: ['أبوظبي', 'Abu Dhabi'], dubai: ['دبي', 'Dubai'], sharjah: ['الشارقة', 'Sharjah'], ajman: ['عجمان', 'Ajman'], uaq: ['أم القيوين', 'Umm Al Quwain'], rak: ['رأس الخيمة', 'Ras Al Khaimah'], fujairah: ['الفجيرة', 'Fujairah'] };
 const VATC = { std: ['خاضع 5%', 'Standard 5%'], zero: ['صفري', 'Zero-rated'], exempt: ['معفى', 'Exempt'] };
-const ROLE = { admin: ['مدير النظام', 'Admin'], accountant: ['محاسب', 'Accountant'], manager: ['مدير مشاريع', 'Project manager'], viewer: ['عرض فقط', 'Viewer'] };
+const ROLE = { admin: ['مدير النظام', 'Admin'], accountant: ['محاسب', 'Accountant'], manager: ['مدير مشاريع', 'Project manager'], hr: ['موارد بشرية', 'HR'], viewer: ['عرض فقط', 'Viewer'], employee: ['موظف (بوابة الموظف)', 'Employee (portal)'] };
 const METHODS = { bank: ['تحويل بنكي', 'Bank transfer'], cheque: ['شيك', 'Cheque'], cash: ['نقد', 'Cash'], card: ['بطاقة', 'Card'] };
 const opts = (map, sel) => Object.entries(map).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(tr(...v))}</option>`).join('');
 
@@ -42,7 +42,8 @@ async function boot() {
   document.documentElement.lang = lang; document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   if (st.setup) return setupScreen();
   if (!st.user) return loginScreen();
-  ME = st.user; document.body.dataset.role = ME.role;
+  ME = st.user; document.body.dataset.role = ME.role; route = location.hash.slice(1) || landing();
+  if (!allowedNav().some(n => n[0] === route.split('/')[0])) route = landing();
   S = await api('GET', 'settings');
   document.title = S.company_name || tr('نظام إدارة المقاولات', 'Contractor ERP');
   shell();
@@ -64,16 +65,31 @@ const setupScreen = () => authBox(tr('إعداد النظام لأول مرة', 
   `<div class="f"><label>${tr('اسم الشركة', 'Company name')}</label><input name="company"></div>`, tr('إنشاء الحساب', 'Create account'), d => api('POST', 'setup', d));
 
 // ---- shell ------------------------------------------------------------------
-const NAV = [
-  ['dashboard', 'لوحة التحكم', 'Dashboard'], ['projects', 'المشاريع', 'Projects'], ['quotes', 'عروض الأسعار', 'Quotations'],
-  ['invoices', 'فواتير العملاء', 'Sales invoices'], ['bills', 'المصروفات والمشتريات', 'Expenses & purchases'], ['payments', 'المدفوعات والمقبوضات', 'Payments'], ['sitediary', 'يومية الموقع', 'Site diary'],
-  ['employees', 'الموظفون', 'Employees'], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS'],
-  ['parties', 'العملاء والموردون', 'Clients & suppliers'], ['vat', 'ضريبة القيمة المضافة', 'VAT report'], ['ctax', 'ضريبة الشركات', 'Corporate tax'], ['compliance', 'الامتثال والتدقيق', 'Compliance & audit'], ['settings', 'الإعدادات', 'Settings'],
+const FINR = ['admin', 'accountant'], READR = ['admin', 'accountant', 'manager', 'viewer'], HRR = ['admin', 'hr'], EMPR = ['admin', 'accountant', 'hr'];
+const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
+  ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['portal', 'بوابتي', 'My portal', ['employee']],
+  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['projects', 'المشاريع', 'Projects', READR], ['quotes', 'عروض الأسعار', 'Quotations', READR], ['invoices', 'فواتير العملاء', 'Sales invoices', READR], ['sitediary', 'يومية الموقع', 'Site diary', READR],
+  ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', READR], ['po', 'أوامر الشراء', 'Purchase orders', READR], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', READR],
+  ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', READR], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['parties', 'العملاء والموردون', 'Clients & suppliers', READR],
+  ['stock', 'المخزون', 'Stock', READR], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
+  ['#', 'المحاسبة', 'Accounting'], ['financials', 'القوائم المالية', 'Financial statements', FINR], ['ledger', 'دفتر الأستاذ', 'General ledger', FINR], ['journal', 'قيود اليومية', 'Journal entries', FINR], ['coa', 'دليل الحسابات', 'Chart of accounts', FINR], ['bank', 'مطابقة البنك', 'Bank reconciliation', FINR],
+  ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager']],
+  ['leave', 'الإجازات', 'Leave', HRR], ['hrrequests', 'طلبات الموظفين', 'Employee requests', HRR], ['letters', 'الخطابات الرسمية', 'Official letters', HRR], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS', EMPR],
+  ['#', 'الضرائب والامتثال', 'Tax & compliance'], ['vat', 'ضريبة القيمة المضافة', 'VAT report', ['admin', 'accountant', 'viewer']], ['ctax', 'ضريبة الشركات', 'Corporate tax', FINR], ['compliance', 'الامتثال والتدقيق', 'Compliance & audit', FINR], ['documents', 'المستندات', 'Documents', [...READR, 'hr']],
+  ['settings', 'الإعدادات', 'Settings', ['admin', 'accountant', 'manager', 'hr', 'viewer', 'employee']],
 ];
+const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role));
+const landing = () => (ME.role === 'employee' ? 'portal' : ME.role === 'hr' ? 'hrdash' : 'dashboard');
 function shell() {
-  const HIDDEN = { admin: [], accountant: [], manager: ['employees', 'payroll', 'ctax', 'compliance', 'vat'], viewer: ['employees', 'payroll', 'ctax', 'compliance'] }[ME.role] || [];
-  $('#app').innerHTML = `<div class="shell"><nav class="side"><div class="brand">${esc(S.company_name || tr('نظام المقاولات', 'Contractor ERP'))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
-    ${NAV.filter(n => !HIDDEN.includes(n[0])).map(n => `<a data-r="${n[0]}" class="${route.split('/')[0] === n[0] ? 'on' : ''}">${tr(n[1], n[2])}</a>`).join('')}
+  const ok = allowedNav(), okSet = new Set(ok.map(n => n[0]));
+  let links = '', pending = '';
+  for (const n of NAV) {
+    if (n[0] === '#') { pending = `<div class="grp">${tr(n[1], n[2])}</div>`; continue; }
+    if (!okSet.has(n[0])) continue;
+    links += pending + `<a data-r="${n[0]}" class="${route.split('/')[0] === n[0] ? 'on' : ''}">${tr(n[1], n[2])}</a>`; pending = '';
+  }
+  $('#app').innerHTML = `<div class="shell"><nav class="side"><div class="brand">${esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
+    ${links}
     <div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
     <main class="main" id="main"></main></div>`;
   document.querySelectorAll('.side a').forEach(a => a.onclick = () => go(a.dataset.r));
@@ -82,11 +98,14 @@ function shell() {
   render();
 }
 const go = r => { location.hash = r; };
-window.onhashchange = () => { route = location.hash.slice(1) || 'dashboard'; if ($('#main')) shell(); };
+window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };
 const PAGES = {};
 const render = async () => {
   const [p, id] = route.split('/'); $('#main').innerHTML = '';
-  try { await (PAGES[p] || PAGES.dashboard)(id); }
+  try {
+    await (PAGES[p] || PAGES[landing()])(id);
+    if (ME.role !== 'employee' && $('#main').children.length) { let bar = $('#main .bar'); if (!bar) { const h = $('#main h1'); bar = document.createElement('div'); bar.className = 'bar'; if (h) { h.replaceWith(bar); bar.append(h); bar.insertAdjacentHTML('beforeend', '<span class="sp"></span>'); } else $('#main').prepend(bar); } bar.insertAdjacentHTML('beforeend', `<button class="btn sec sm noprint" id="prt">🖨 ${tr('طباعة بالترويسة', 'Print on letterhead')}</button>`); $('#prt').onclick = printReport; }
+  }
   catch (e) {
     if (e.message === 'unauthorized') return;
     const stale = /not found/i.test(e.message);
@@ -95,6 +114,19 @@ const render = async () => {
   }
 };
 const main = html => { $('#main').innerHTML = html; };
+
+// ---- printing any page on the company letterhead ------------------------------------
+const xl = (name, qs = '') => `<a class="btn sec sm noprint" href="/api/export/${name}${qs}" target="_blank">Excel</a>`;
+function printReport() {
+  const el = $('#main').cloneNode(true);
+  el.querySelectorAll('input,select,textarea').forEach(i => i.replaceWith(document.createTextNode(i.tagName === 'SELECT' ? (i.selectedOptions[0]?.text || '') : i.value)));
+  el.querySelectorAll('.noprint,button,a.btn,.sp').forEach(x => x.remove());
+  const names = `<h1 style="margin:0;font-size:17px">${esc(S.company_name || '')}</h1>${S.company_name_ar ? `<div style="font-size:15px;font-weight:700" dir="rtl">${esc(S.company_name_ar)}</div>` : ''}<div style="font-size:11px">${[S.address, S.phone, S.email, S.website].filter(Boolean).map(esc).join(' · ')}</div>${S.trn ? `<div style="font-size:11px">TRN: ${esc(S.trn)}</div>` : ''}`;
+  $('#print-area').innerHTML = `<div class="doc rep"><div class="hd"><div><img src="/api/brand/logo" style="max-height:64px;max-width:180px" onerror="this.remove()"></div><div style="text-align:end">${names}</div></div>${el.innerHTML}
+    <div class="sig"><div></div><div style="border:0;position:relative;min-height:80px"><img src="/api/brand/stamp" style="max-height:80px" onerror="this.remove()"><img src="/api/brand/signature" style="max-height:50px;position:absolute;inset-inline-start:40px;top:20px" onerror="this.remove()"></div></div>
+    <div style="font-size:10px;color:#555;margin-top:8px">${tr('طُبع بتاريخ', 'Printed on')} ${today()} — ${esc(ME.username)}</div></div>`;
+  setTimeout(() => window.print(), 450);                                  // let the logo load first
+}
 
 // ---- modal & form helpers ---------------------------------------------------
 function modal(html, wide) {
@@ -118,17 +150,17 @@ const refOpts = (rows, label, blank = true) => [...(blank ? [['', '—']] : []),
 const confirmDel = () => confirm(tr('هل أنت متأكد من الحذف؟', 'Delete this record?'));
 
 // Generic CRUD list + modal
-async function crud({ title, table, fields, cols, load, intro, extra }) {
+async function crud({ title, table, fields, cols, load, intro, extra, onModal, noAdd }) {
   const data = load ? await load() : await api('GET', table);
   const refresh = () => render();
-  main(`<div class="bar"><h1>${title}</h1><span class="sp"></span>${extra || ''}<button class="btn" id="add">+ ${tr('إضافة', 'Add')}</button></div>${intro || ''}
+  main(`<div class="bar"><h1>${title}</h1><span class="sp"></span>${extra || ''}${noAdd ? '' : `<button class="btn" id="add">+ ${tr('إضافة', 'Add')}</button>`}</div>${intro || ''}
     <div class="tw"><table><thead><tr>${cols.map(c => `<th class="${c.n ? 'n' : ''}">${tr(c.ar, c.en)}</th>`).join('')}</tr></thead>
     <tbody>${data.map(r => `<tr class="click" data-id="${r.id}">${cols.map(c => `<td class="${c.n ? 'n' : ''}">${c.f ? c.f(r) : esc(r[c.k] ?? '')}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${cols.length}" class="muted">${tr('لا توجد بيانات', 'No records yet')}</td></tr>`}</tbody></table></div>`);
   const edit = async row => {
     const fs = await fields(row);
     const m = modal(`<h2>${row ? tr('تعديل', 'Edit') : tr('إضافة', 'Add')} — ${title}</h2><div class="f2">${fs.map(f => field(f, row?.[f.k] ?? f.def)).join('')}</div>
       <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button><span class="sp"></span>${row ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`);
-    $('#cancel', m).onclick = closeModal;
+    $('#cancel', m).onclick = closeModal; if (onModal) onModal(m, row);
     $('#save', m).onclick = guard(async () => {
       const body = {}; fs.forEach(f => body[f.k] = val(m, f.k));
       for (const f of fs) if (f.req && !body[f.k]) throw new Error(tr('أكمل الحقول المطلوبة', 'Fill the required fields'));
@@ -137,7 +169,7 @@ async function crud({ title, table, fields, cols, load, intro, extra }) {
     });
     if (row) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${table}/${row.id}`); closeModal(); refresh(); } });
   };
-  $('#add').onclick = guard(() => edit(null));
+  if ($('#add')) $('#add').onclick = guard(() => edit(null));
   document.querySelectorAll('tr.click').forEach(tr_ => tr_.onclick = guard(() => (extra_row ? extra_row(+tr_.dataset.id) : edit(data.find(d => d.id === +tr_.dataset.id)))));
   let extra_row = null;
   return { data, edit, setRow: f => (extra_row = f) };
@@ -170,7 +202,7 @@ const partyFields = async () => [
   { k: 'phone', ar: 'الهاتف', en: 'Phone' }, { k: 'email', ar: 'البريد', en: 'Email', type: 'email' }, { k: 'address', ar: 'العنوان (مطلوب في الفاتورة الضريبية)', en: 'Address (required on tax invoices)' },
   { k: 'bank_name', ar: 'اسم البنك', en: 'Bank name' }, { k: 'iban', ar: 'رقم الآيبان IBAN', en: 'IBAN' },
   { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }];
-PAGES.parties = () => crud({ title: tr('العملاء والموردون', 'Clients & suppliers'), table: 'parties', fields: partyFields,
+PAGES.parties = () => crud({ title: tr('العملاء والموردون', 'Clients & suppliers'), table: 'parties', fields: partyFields, extra: xl('parties'), onModal: (m, row) => row && window.docsPanel && docsPanel(m, 'party', row.id, ['admin', 'accountant', 'manager'].includes(ME.role)),
   cols: [{ ar: 'الاسم', en: 'Name', k: 'name' }, { ar: 'النوع', en: 'Type', f: r => tr(...PTYPE[r.type] || ['', '']) }, { ar: 'TRN', en: 'TRN', k: 'trn' }, { ar: 'الهاتف', en: 'Phone', k: 'phone' }, { ar: 'البريد', en: 'Email', k: 'email' }] });
 
 const partyOpts = async types => refOpts((await api('GET', 'parties')).filter(p => !types || types.includes(p.type)), p => p.name);
@@ -178,7 +210,7 @@ const partyOpts = async types => refOpts((await api('GET', 'parties')).filter(p 
 PAGES.projects = async id => {
   if (id) return projectDetail(+id);
   const rows = await api('GET', 'project-summary');
-  const c = await crud({ title: tr('المشاريع', 'Projects'), table: 'projects', load: async () => rows,
+  const c = await crud({ title: tr('المشاريع', 'Projects'), table: 'projects', load: async () => rows, extra: xl('projects'),
     fields: async () => [
       { k: 'code', ar: 'رمز المشروع', en: 'Code', def: '' }, { k: 'name', ar: 'اسم المشروع', en: 'Project name', req: 1 },
       { k: 'client_id', ar: 'العميل', en: 'Client', type: 'select', options: await partyOpts(['client']) }, { k: 'location', ar: 'الموقع', en: 'Location' },
@@ -211,7 +243,9 @@ async function projectDetail(id) {
     <div class="tw"><table><tbody>${vars.map(v => `<tr class="click" onclick="varModal(${id},${v.id})"><td>${esc(v.number || '')}</td><td>${esc(v.date || '')}</td><td>${esc(v.description || '')}</td><td class="n">${money(v.amount)}</td><td>${tag(v.status)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>
     <div class="card" style="margin-top:16px"><h2>${tr('التكلفة حسب البند', 'Cost by category')}</h2><div class="tw"><table><tbody>${Object.entries(p.cost_by_category).map(([k, v]) => `<tr><td>${tr(...(CATS[k] || (k === 'payroll' ? ['رواتب', 'Payroll'] : [k, k])))}</td><td class="n">${money(v)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div></div>
     <h2>${tr('الفواتير', 'Invoices')}</h2><div class="tw"><table><tbody>${mine.map(i => `<tr class="click" onclick="openInvoice(${i.id})"><td>${esc(i.number)}</td><td>${esc(i.date)}</td><td class="n">${money(i.total)}</td><td class="n">${money(i.balance)}</td><td>${tag(i.status)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>
+    <div class="card" id="pdocs" style="margin-top:16px"></div>
     <h2 style="margin-top:16px">${tr('المصروفات', 'Expenses')}</h2><div class="tw"><table><tbody>${bl.map(b => `<tr class="click" onclick="openBill(${b.id})"><td>${esc(b.date)}</td><td>${esc(b.party_name || '')}</td><td>${esc(b.description || '')}</td><td>${tr(...(CATS[b.category] || [b.category, b.category]))}</td><td class="n">${money(b.amount)}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>`);
+  if (window.docsPanel) docsPanel($('#pdocs'), 'project', id, ['admin', 'accountant', 'manager'].includes(ME.role));
 }
 
 // ---- documents (quotes & invoices) ------------------------------------------
@@ -260,7 +294,7 @@ async function docModal(kind, row, preset = {}) {
     ${e.html}<div class="totals" id="tot"></div>
     <div class="f2" style="margin-top:10px">${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}${isQ ? field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms) : ''}</div>
     <div class="acts">${dead ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}
-    ${row ? `<button class="btn sec" id="print">${tr('طباعة / PDF', 'Print / PDF')}</button>` : ''}
+    ${row && !dead ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}
     ${row && !dead ? `<button class="btn sec" id="mail">${tr('إرسال بالإيميل', 'Email')}</button>` : ''}${row && !isQ && !isCN && !dead && row.balance > 0 && row.status === 'overdue' ? `<button class="btn sec" id="remind">${tr('تذكير بالسداد', 'Payment reminder')}</button>` : ''}
     ${row && !isQ && !isCN && !dead ? `<button class="btn sec" id="pay">${tr('تسجيل دفعة', 'Record payment')}</button><button class="btn sec" id="cn">${tr('إصدار إشعار دائن', 'Issue credit note')}</button>` : ''}
     ${row && isQ && !row.project_id ? `<button class="btn sec" id="conv">${tr('تحويل إلى مشروع', 'Convert to project')}</button>` : ''}
@@ -276,7 +310,7 @@ async function docModal(kind, row, preset = {}) {
     closeModal(); render();
   });
   if (row) {
-    $('#print', m).onclick = () => printDoc(kind, row);
+    if ($('#print', m)) { $('#print', m).onclick = () => printDoc(kind, row); $('#pdf', m).onclick = () => pdfDoc(kind, row); }
     if (isQ) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${kind}/${row.id}`); closeModal(); render(); } });
     const sendMailTo = (reminder) => guard(async () => {
       const to = prompt(tr('أرسل إلى البريد:', 'Send to email:'), row.client_email || ''); if (!to) return;
@@ -302,7 +336,7 @@ window.newInvoiceFor = guard(async pid => docModal('invoices', null, { project_i
 
 async function docPage(kind) {
   const isQ = kind === 'quotes', rows = await api('GET', kind);
-  main(`<div class="bar"><h1>${isQ ? tr('عروض الأسعار', 'Quotations') : tr('فواتير العملاء', 'Sales invoices')}</h1><span class="sp"></span><button class="btn" id="add">+ ${tr('جديد', 'New')}</button></div>
+  main(`<div class="bar"><h1>${isQ ? tr('عروض الأسعار', 'Quotations') : tr('فواتير العملاء', 'Sales invoices')}</h1><span class="sp"></span>${isQ ? '' : xl('invoices')}<button class="btn" id="add">+ ${tr('جديد', 'New')}</button></div>
   <div class="tw"><table><thead><tr><th>${tr('الرقم', 'No.')}</th><th>${tr('التاريخ', 'Date')}</th><th>${tr('العميل', 'Client')}</th><th>${isQ ? tr('المشروع', 'Project') : tr('المشروع', 'Project')}</th>
    <th class="n">${tr('الإجمالي', 'Total')}</th>${isQ ? '' : `<th class="n">${tr('الرصيد', 'Balance')}</th>`}<th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
    ${rows.map(r => `<tr class="click" data-id="${r.id}"><td>${esc(r.number)}</td><td>${esc(r.date)}</td><td>${esc(r.client_name || '')}</td><td>${esc((isQ ? r.project_name : r.project_name) || '')}</td><td class="n">${money(r.total)}</td>${isQ ? '' : `<td class="n">${money(r.balance + r.retention_open)}</td>`}<td>${tag(r.status)}</td></tr>`).join('') || `<tr><td colspan="7" class="muted">${tr('لا توجد بيانات', 'No records yet')}</td></tr>`}</tbody></table></div>`);
@@ -312,55 +346,8 @@ async function docPage(kind) {
 PAGES.quotes = () => docPage('quotes');
 PAGES.invoices = () => docPage('invoices');
 
-async function printDoc(kind, r) {
-  const isQ = kind === 'quotes', isCN = r.kind === 'credit_note', sg = isCN ? -1 : 1;
-  const parties = await api('GET', 'parties'), client = parties.find(p => p.id === r.client_id);
-  const vatLbl = { std: tr('5%', '5%'), zero: tr('0%', '0%'), exempt: tr('معفى', 'Exempt') };
-  const rows = r.items.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.description)}</td><td>${esc(i.unit)}</td><td class="n">${money(i.qty)}</td><td class="n">${money(i.rate)}</td>${isQ ? '' : `<td>${vatLbl[i.vat || 'std']}</td>`}<td class="n">${money(sg * i.qty * i.rate)}</td></tr>`).join('');
-  const title = isQ ? 'QUOTATION / عرض سعر' : isCN ? 'TAX CREDIT NOTE / إشعار دائن ضريبي' : 'TAX INVOICE / فاتورة ضريبية';
-  $('#print-area').innerHTML = `<div class="doc" dir="${lang === 'ar' ? 'rtl' : 'ltr'}"><div class="hd"><div><h1>${esc(S.company_name || '')}</h1><div>${esc(S.address || '')}</div><div>${esc(S.phone || '')} ${esc(S.email || '')}</div>${S.trn ? `<div><b>TRN / الرقم الضريبي:</b> ${esc(S.trn)}</div>` : ''}</div>
-    <div style="text-align:end"><h1>${title}</h1><div><b>${isCN ? 'Credit note no.' : 'No.'} / الرقم:</b> ${esc(r.number)}</div><div><b>${tr('التاريخ', 'Date')}:</b> ${esc(r.date)}</div>${isQ ? `<div>${tr('صالح لمدة', 'Valid for')} ${r.validity_days} ${tr('يوم', 'days')}</div>` : r.due_date ? `<div>${tr('الاستحقاق', 'Due')}: ${esc(r.due_date)}</div>` : ''}</div></div>
-    <div style="margin-bottom:10px"><b>${tr('العميل', 'Client')}:</b> ${esc(r.client_name || client?.name || '')}<br>${client?.address ? `<b>${tr('العنوان', 'Address')}:</b> ${esc(client.address)}<br>` : ''}${client?.trn ? `<b>TRN:</b> ${esc(client.trn)}<br>` : ''}<b>${tr('المشروع', 'Project')}:</b> ${esc(r.project_name || '')}</div>
-    <table><thead><tr><th>#</th><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('سعر الوحدة', 'Unit price')}</th>${isQ ? '' : `<th>${tr('الضريبة', 'VAT rate')}</th>`}<th>${tr('المبلغ', 'Amount')} (${cur()})</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="tot"><div><span>${tr('الإجمالي قبل الضريبة', 'Total excl. VAT')}</span><span>${cur()} ${money(r.subtotal)}</span></div><div><span>${tr('ضريبة القيمة المضافة', 'VAT')} ${r.vat_pct}%</span><span>${cur()} ${money(r.vat)}</span></div>
-    <div class="t"><span>${tr('الإجمالي شامل الضريبة', 'Total incl. VAT')}</span><span>${cur()} ${money(r.total)}</span></div>${!isQ && !isCN && r.retention ? `<div><span>${tr('محتجزات', 'Retention')} ${r.retention_pct}%</span><span>- ${money(r.retention)}</span></div><div class="t"><span>${tr('المستحق الآن', 'Due now')}</span><span>${cur()} ${money(r.due_now)}</span></div>` : ''}</div>
-    ${r.notes ? `<p><b>${tr('ملاحظات', 'Notes')}:</b><br>${esc(r.notes).replace(/\n/g, '<br>')}</p>` : ''}
-    ${isQ && r.terms ? `<p><b>${tr('الشروط', 'Terms')}:</b><br>${esc(r.terms).replace(/\n/g, '<br>')}</p>` : ''}
-    ${!isQ && !isCN && S.bank_details ? `<p><b>${tr('بيانات البنك', 'Bank details')}:</b><br>${esc(S.bank_details).replace(/\n/g, '<br>')}${S.employer_iban ? `<br>IBAN: ${esc(S.employer_iban)}` : ''}</p>` : ''}
-    <div class="sig"><div>${tr('المستلم', 'Received by')}</div><div>${tr('الشركة', 'Authorised signatory')}</div></div></div>`;
-  window.print();
-}
-
-// ---- BOQ / variations / site diary ----------------------------------------------
-async function simpleModal({ title, table, fields, row, after }) {
-  const m = modal(`<h2>${title}</h2><div class="f2">${fields.map(f => field(f, row?.[f.k] ?? f.def)).join('')}</div>
-    <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button><span class="sp"></span>${row ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`);
-  $('#cancel', m).onclick = closeModal;
-  $('#save', m).onclick = guard(async () => { const b = {}; fields.forEach(f => b[f.k] = val(m, f.k)); row ? await api('PUT', `${table}/${row.id}`, b) : await api('POST', table, b); closeModal(); after(); });
-  if (row) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${table}/${row.id}`); closeModal(); after(); } });
-}
-window.boqModal = guard(async (pid, id) => simpleModal({ title: tr('بند جدول الكميات', 'BOQ item'), table: 'boq_items', after: render, row: id ? await api('GET', `boq_items/${id}`) : null, fields: [
-  { k: 'project_id', ar: '', en: '', type: 'hidden', def: pid }, { k: 'section', ar: 'القسم', en: 'Section' }, { k: 'description', ar: 'الوصف', en: 'Description', full: 1 }, { k: 'unit', ar: 'الوحدة', en: 'Unit' },
-  { k: 'qty', ar: 'الكمية', en: 'Quantity', type: 'number', def: 1 }, { k: 'rate', ar: 'سعر البيع للوحدة', en: 'Sell rate / unit', type: 'number', def: 0 }, { k: 'cost_rate', ar: 'التكلفة المقدّرة للوحدة', en: 'Budget cost / unit', type: 'number', def: 0 },
-  { k: 'done_pct', ar: 'نسبة الإنجاز %', en: 'Completion %', type: 'number', def: 0 }] }));
-window.varModal = guard(async (pid, id) => simpleModal({ title: tr('أمر تغيير', 'Variation order'), table: 'variations', after: render, row: id ? await api('GET', `variations/${id}`) : null, fields: [
-  { k: 'project_id', type: 'hidden', def: pid }, { k: 'number', ar: 'الرقم', en: 'Number' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date', def: today() }, { k: 'description', ar: 'الوصف', en: 'Description', full: 1 },
-  { k: 'amount', ar: 'المبلغ (بدون ضريبة، سالب للتخفيض)', en: 'Amount (ex VAT, negative for omission)', type: 'number', def: 0 },
-  { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['pending', tr('قيد الاعتماد', 'Pending')], ['approved', tr(...STATUS.approved)], ['rejected', tr(...STATUS.rejected)]] }] }));
-window.progressInvoice = guard(async pid => { const r = await api('POST', `projects/${pid}/progress-invoice`); go('invoices'); setTimeout(() => openInvoice(r.id), 400); });
-
-PAGES.sitediary = async () => {
-  const [rows, projects] = await Promise.all([api('GET', 'site_reports'), api('GET', 'projects')]);
-  const pn = id => projects.find(p => p.id === id)?.name || '';
-  const edit = guard(async id => simpleModal({ title: tr('تقرير يومي للموقع', 'Daily site report'), table: 'site_reports', after: render, row: id ? rows.find(r => r.id === id) : null, fields: [
-    { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`, false) }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date', def: today() },
-    { k: 'weather', ar: 'الطقس', en: 'Weather' }, { k: 'labour_count', ar: 'عدد العمال', en: 'Labour on site', type: 'number', def: 0 },
-    { k: 'work_done', ar: 'الأعمال المنجزة', en: 'Work done', type: 'textarea', full: 1 }, { k: 'issues', ar: 'المعوقات / السلامة', en: 'Issues / safety', type: 'textarea', full: 1 }, { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }] }));
-  main(`<div class="bar"><h1>${tr('يومية الموقع', 'Site diary')}</h1><span class="sp"></span><button class="btn" id="add">+ ${tr('تقرير جديد', 'New report')}</button></div>
-  <div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('المشروع', 'Project')}</th><th>${tr('الطقس', 'Weather')}</th><th class="n">${tr('العمال', 'Labour')}</th><th>${tr('الأعمال المنجزة', 'Work done')}</th><th>${tr('المعوقات', 'Issues')}</th></tr></thead><tbody>
-  ${rows.map(r => `<tr class="click" data-id="${r.id}"><td>${esc(r.date)}</td><td>${esc(pn(r.project_id))}</td><td>${esc(r.weather || '')}</td><td class="n">${r.labour_count}</td><td>${esc(r.work_done || '')}</td><td>${esc(r.issues || '')}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد تقارير', 'No reports yet')}</td></tr>`}</tbody></table></div>`);
-  $('#add').onclick = () => edit(); document.querySelectorAll('tr.click').forEach(t => t.onclick = () => edit(+t.dataset.id));
-};
+const printDoc = (kind, r) => window.open(`/api/doc/${kind}/${r.id}?print=1`, '_blank');
+const pdfDoc = (kind, r) => window.open(`/api/doc/${kind}/${r.id}/pdf`, '_blank');
 
 // ---- bills / payments -------------------------------------------------------
 const billFields = async (pre = {}) => [
@@ -387,7 +374,7 @@ window.openBill = guard(async id => billModal(await api('GET', 'bills/' + id)));
 window.newBillFor = pid => guard(billModal)(null, { project_id: pid });
 PAGES.bills = async () => {
   const rows = await api('GET', 'bills');
-  main(`<div class="bar"><h1>${tr('المصروفات والمشتريات', 'Expenses & purchases')}</h1><span class="sp"></span><button class="btn" id="add">+ ${tr('جديد', 'New')}</button></div>
+  main(`<div class="bar"><h1>${tr('المصروفات والمشتريات', 'Expenses & purchases')}</h1><span class="sp"></span>${xl('bills')}<button class="btn" id="add">+ ${tr('جديد', 'New')}</button></div>
   <div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('المورد', 'Supplier')}</th><th>${tr('المشروع', 'Project')}</th><th>${tr('البند', 'Category')}</th><th>${tr('الوصف', 'Description')}</th><th class="n">${tr('الإجمالي', 'Total')}</th><th class="n">${tr('المتبقي', 'Balance')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
   ${rows.map(b => `<tr class="click" data-id="${b.id}"><td>${esc(b.date)}</td><td>${esc(b.party_name || '')}</td><td>${esc(b.project_name || tr('مصاريف عامة', 'Overhead'))}</td><td>${tr(...(CATS[b.category] || [b.category, b.category]))}</td><td>${esc(b.description || '')}</td><td class="n">${money(b.total)}</td><td class="n">${money(b.balance)}</td><td>${tag(b.status)}</td></tr>`).join('') || `<tr><td colspan="8" class="muted">${tr('لا توجد بيانات', 'No records yet')}</td></tr>`}</tbody></table></div>`);
   $('#add').onclick = guard(() => billModal(null));
@@ -426,7 +413,7 @@ async function paymentModal(pre = {}) {
 }
 PAGES.payments = async () => {
   const rows = await api('GET', 'payments');
-  main(`<div class="bar"><h1>${tr('المدفوعات والمقبوضات', 'Payments & receipts')}</h1><span class="sp"></span><button class="btn" id="add">+ ${tr('تسجيل دفعة', 'Record payment')}</button></div>
+  main(`<div class="bar"><h1>${tr('المدفوعات والمقبوضات', 'Payments & receipts')}</h1><span class="sp"></span>${xl('payments')}<button class="btn" id="add">+ ${tr('تسجيل دفعة', 'Record payment')}</button></div>
   <div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('النوع', 'Type')}</th><th>${tr('الطرف', 'Party')}</th><th>${tr('المرجع', 'Ref')}</th><th>${tr('الطريقة', 'Method')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th>${tr('الشيك', 'Cheque')}</th><th></th></tr></thead><tbody>
   ${rows.map(p => `<tr><td>${esc(p.date)}</td><td><span class="${p.kind === 'in' ? 'pos' : 'neg'}">${p.kind === 'in' ? tr('مقبوض', 'Receipt') : tr('مدفوع', 'Payment')}${p.is_retention ? ' (' + tr('محتجزات', 'retention') + ')' : ''}</span></td><td>${esc(p.party_name || '')}</td><td>${esc(p.ref_label || '')} ${esc(p.reference || '')}</td><td>${tr(...(METHODS[p.method] || [p.method, p.method]))}</td><td class="n">${money(p.amount)}</td><td>${p.method === 'cheque' ? `<select data-ck="${p.id}" style="width:auto">${['pending', 'cleared', 'bounced'].map(k => `<option value="${k}" ${p.cheque_status === k ? 'selected' : ''}>${tr(...STATUS[k])}</option>`).join('')}</select> ${esc(p.cheque_date || '')}` : ''}</td><td><button class="btn sec sm" data-del="${p.id}">×</button></td></tr>`).join('') || `<tr><td colspan="8" class="muted">${tr('لا توجد بيانات', 'No records yet')}</td></tr>`}</tbody></table></div><p class="muted">${tr('الشيكات قيد التحصيل أو المرتجعة لا تُحتسب في الرصيد النقدي؛ الشيك المرتجع لا يسدّد الفاتورة.', 'Pending or bounced cheques are excluded from the cash balance; a bounced cheque does not settle the invoice.')}</p>`);
   document.querySelectorAll('[data-ck]').forEach(x => x.onchange = guard(async () => { await api('PUT', 'payments/' + x.dataset.ck, { cheque_status: x.value }); render(); }));
@@ -438,9 +425,10 @@ PAGES.payments = async () => {
 PAGES.vat = async () => {
   const now = new Date(), q = Math.floor(now.getMonth() / 3);
   const from = new Date(Date.UTC(now.getFullYear(), q * 3, 1)).toISOString().slice(0, 10), to = new Date(Date.UTC(now.getFullYear(), q * 3 + 3, 0)).toISOString().slice(0, 10);
-  main(`<h1>${tr('تقرير ضريبة القيمة المضافة (نموذج إقرار VAT 201)', 'VAT report (VAT 201 working)')}</h1><div class="bar"><div><label>${tr('من', 'From')}</label><input type="date" id="f" value="${from}"></div><div><label>${tr('إلى', 'To')}</label><input type="date" id="t" value="${to}"></div><button class="btn" id="go" style="margin-top:16px">${tr('عرض', 'Show')}</button></div><div id="out"></div>
+  main(`<h1>${tr('تقرير ضريبة القيمة المضافة (نموذج إقرار VAT 201)', 'VAT report (VAT 201 working)')}</h1><div class="bar"><div><label>${tr('من', 'From')}</label><input type="date" id="f" value="${from}"></div><div><label>${tr('إلى', 'To')}</label><input type="date" id="t" value="${to}"></div><button class="btn" id="go" style="margin-top:16px">${tr('عرض', 'Show')}</button><a class="btn sec sm noprint" id="vx" target="_blank" style="margin-top:16px">Excel</a></div><div id="out"></div>
   <p class="muted">${tr('هذا التقرير أرقام عمل تساعدك في تعبئة الإقرار في بوابة الهيئة الاتحادية للضرائب (EmaraTax) وهو ليس إقراراً رسمياً. يجب مراجعته مع محاسب قانوني. الإقرار يُقدَّم خلال ٢٨ يوماً من نهاية الفترة الضريبية. المحتجزات: تأكد من توقيت توريد الضريبة عليها مع مستشارك الضريبي.', 'Working figures to help you complete the return in the FTA EmaraTax portal — not an official return; review with a qualified accountant. Returns are due within 28 days after the tax period ends. Retention: confirm the time-of-supply treatment with your tax adviser.')}</p>`);
   const run = guard(async () => {
+    $('#vx').href = `/api/export/vat?from=${$('#f').value}&to=${$('#t').value}`;
     const r = await api('GET', `vat?from=${$('#f').value}&to=${$('#t').value}`);
     const k = (l, v, c = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${c}">${money(v)}</div></div>`;
     $('#out').innerHTML = `<div class="grid">${k(tr('مبيعات خاضعة للنسبة الأساسية', 'Standard-rated sales'), r.standard_sales)}${k(tr('مبيعات صفرية', 'Zero-rated sales'), r.zero_rated_sales)}${k(tr('مبيعات معفاة', 'Exempt sales'), r.exempt_sales)}${k(tr('ضريبة المخرجات', 'Output VAT'), r.output_vat)}
@@ -457,7 +445,7 @@ PAGES.employees = async () => {
   const projects = await api('GET', 'projects');
   const rows = await api('GET', 'employees');
   const grat = {}; await Promise.all(rows.map(async e => grat[e.id] = (await api('GET', `employees/${e.id}/gratuity`)).amount));
-  const c = await crud({ title: tr('الموظفون والعمال', 'Employees & labour'), table: 'employees', load: async () => rows,
+  const c = await crud({ title: tr('الموظفون والعمال', 'Employees & labour'), table: 'employees', load: async () => rows, extra: xl('employees'), onModal: (m, row) => window.employeeExtras && employeeExtras(m, row),
     intro: `<p class="muted">${tr('أدخل بيانات كل موظف كما هي في عقد العمل وبطاقة العمل وحسابه البنكي — هذه البيانات مطلوبة لملف حماية الأجور (WPS). مكافأة نهاية الخدمة التقديرية حسب المرسوم بقانون اتحادي رقم ٣٣ لسنة ٢٠٢١.', 'Enter each employee exactly as on their contract, labour card and bank account — required for the WPS file. Estimated end-of-service gratuity per Federal Decree-Law 33/2021.')}</p>`,
     fields: async () => [
       { k: 'name', ar: 'الاسم (كما في جواز السفر)', en: 'Name (as per passport)', req: 1 }, { k: 'designation', ar: 'المهنة', en: 'Designation' },
@@ -471,6 +459,8 @@ PAGES.employees = async () => {
       { k: 'routing_code', ar: 'رمز التوجيه (٩ أرقام)', en: 'Routing code (9 digits)' }, { k: 'iban', ar: 'الآيبان IBAN', en: 'IBAN' },
       { k: 'eid_expiry', ar: 'انتهاء الهوية', en: 'Emirates ID expiry', type: 'date' }, { k: 'visa_expiry', ar: 'انتهاء الإقامة', en: 'Residence visa expiry', type: 'date' },
       { k: 'passport_expiry', ar: 'انتهاء الجواز', en: 'Passport expiry', type: 'date' }, { k: 'card_expiry', ar: 'انتهاء بطاقة العمل', en: 'Labour card expiry', type: 'date' },
+      { k: 'phone', ar: 'الهاتف', en: 'Phone' }, { k: 'email', ar: 'البريد', en: 'Email' }, { k: 'emergency_contact', ar: 'جهة اتصال للطوارئ', en: 'Emergency contact' },
+      { k: 'leave_opening', ar: 'رصيد إجازات افتتاحي (أيام)', en: 'Opening leave balance (days)', type: 'number', def: 0 },
       { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }],
     cols: [{ ar: 'الاسم', en: 'Name', k: 'name' }, { ar: 'المهنة', en: 'Role', k: 'designation' }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) },
       { ar: 'الإجمالي الشهري', en: 'Monthly total', n: 1, f: r => money(r.basic + r.housing + r.other_allowance) }, { ar: 'نهاية الخدمة (تقديري)', en: 'Gratuity (est.)', n: 1, f: r => money(grat[r.id]) },
@@ -483,7 +473,7 @@ PAGES.payroll = async () => {
   const [rows, issues] = await Promise.all([api('GET', `payroll?month=${month}`), api('GET', `payroll/check?month=${month}`)]);
   const final = rows.length && rows.every(r => r.status === 'final'), paid = final && rows.every(r => r.paid_date);
   const num = (r, k) => final ? money(r[k]) : `<input type="number" step="any" style="width:80px" data-id="${r.id}" data-k="${k}" value="${r[k]}">`;
-  main(`<div class="bar"><h1>${tr('الرواتب ونظام حماية الأجور (WPS)', 'Payroll & WPS')}</h1><span class="sp"></span><input type="month" id="m" value="${month}" style="width:auto">
+  main(`<div class="bar"><h1>${tr('الرواتب ونظام حماية الأجور (WPS)', 'Payroll & WPS')}</h1><span class="sp"></span>${xl('payroll', '?month=' + month)}<input type="month" id="m" value="${month}" style="width:auto">
     ${final ? '' : `<button class="btn sec" id="gen">${tr('إنشاء كشف الشهر', 'Generate month')}</button>`}</div>
     <p class="muted">${tr('الراتب اليومي = الراتب الإجمالي ÷ ٣٠. الأوفرتايم: أجر الساعة (الأساسي ÷ ٣٠ ÷ ٨) + ٢٥٪ نهاراً، +٥٠٪ ليلاً (١٠م–٤ص) أو في الراحة/الإجازات الرسمية. يجب دفع الأجور عبر نظام حماية الأجور في موعدها؛ التأخير أكثر من ١٥ يوماً يُعرّض المنشأة لإيقاف التصاريح والغرامات.', 'Daily wage = total wage ÷ 30. Overtime: hourly rate (basic ÷ 30 ÷ 8) + 25% by day, +50% at night (10pm–4am) or on rest days/public holidays. Wages must be paid through WPS on time; delays beyond 15 days risk permit freezes and fines.')}</p>
     ${issues.length ? `<div class="card"><h2 class="neg">${tr('بيانات ناقصة / تنبيهات', 'Missing data / warnings')}</h2>${issues.map(i => `<div style="color:${i.warn ? 'var(--warn)' : 'var(--bad)'}">• <b>${esc(i.who)}</b>: ${esc(i.msg)}</div>`).join('')}</div>` : ''}
@@ -525,6 +515,7 @@ const ALERT = {
   employer_routing: () => tr('أدخل رمز توجيه بنك الشركة (٩ أرقام) في الإعدادات', 'Enter employer bank routing code (9 digits) in Settings'),
   license_expired: a => `${tr('الرخصة التجارية منتهية', 'Trade licence expired')}: ${a.date}`, license_soon: a => `${tr('الرخصة التجارية تنتهي قريباً', 'Trade licence expires soon')}: ${a.date}`,
   doc_eid: a => `${tr('هوية إماراتية', 'Emirates ID')} — ${a.who}: ${a.date}`, doc_visa: a => `${tr('إقامة', 'Residence visa')} — ${a.who}: ${a.date}`,
+  doc_file: a => `${tr('مستند منتهٍ/ينتهي', 'Document expiring')} — ${a.who}: ${a.date}`,
   doc_passport: a => `${tr('جواز سفر', 'Passport')} — ${a.who}: ${a.date}`, doc_card: a => `${tr('بطاقة عمل', 'Labour card')} — ${a.who}: ${a.date}`,
   wps_late: a => `${tr('رواتب شهر', 'Salaries for')} ${a.month} ${tr('لم تُدفع بعد ١٥ يوماً من نهاية الشهر — مخالفة محتملة لنظام حماية الأجور', 'unpaid more than 15 days after month-end — possible WPS violation')}`,
   bounced: a => `${a.count} ${tr('شيك مرتجع — تابع التحصيل', 'bounced cheque(s) — follow up')}`,
@@ -532,7 +523,7 @@ const ALERT = {
 };
 const alertList = al => al.map(a => `<div style="color:var(--${a.level === 'bad' ? 'bad' : 'warn'})">${a.level === 'bad' ? '⛔' : '⚠'} ${esc((ALERT[a.key] || (() => a.key))(a))}</div>`).join('');
 PAGES.compliance = async () => {
-  const [al, audit] = await Promise.all([api('GET', 'compliance'), api('GET', 'audit')]);
+  const [al, audit, ei] = await Promise.all([api('GET', 'compliance'), api('GET', 'audit').catch(() => []), api('GET', 'einvoice').catch(() => null)]);
   main(`<h1>${tr('الامتثال والتدقيق', 'Compliance & audit')}</h1>
   <div class="card"><h2>${tr('تنبيهات', 'Alerts')}</h2>${al.length ? alertList(al) : `<span class="pos">✔ ${tr('لا توجد تنبيهات', 'No alerts')}</span>`}</div>
   <div class="card"><h2>${tr('المواعيد الأساسية', 'Key deadlines')}</h2><ul>
@@ -545,46 +536,64 @@ PAGES.compliance = async () => {
    <li>${tr('التحقق من: TRN (١٥ رقم)، الهوية الإماراتية، رقم بطاقة العمل (١٤)، رمز التوجيه (٩)، IBAN (فحص المجموع MOD-97)، رقم المنشأة (١٣).', 'Validation of TRN (15), Emirates ID, person code (14), routing code (9), IBAN (MOD-97 checksum), establishment ID (13).')}</li>
    <li>${tr('سجل تدقيق لكل إنشاء/تعديل/حذف، واعتماد الرواتب يقفلها.', 'Audit log of every create/update/delete; finalizing payroll locks it.')}</li></ul>
    <p class="muted"><b>${tr('إخلاء مسؤولية', 'Disclaimer')}:</b> ${tr('النظام مبني ليتوافق مع الأنظمة المعمول بها وقت إعداده، لكنه ليس معتمداً رسمياً من الهيئة الاتحادية للضرائب أو وزارة الموارد البشرية أو المصرف المركزي. القوانين والنسب وصيغ ملفات البنوك تتغيّر؛ راجع محاسبك القانوني ومستشارك الضريبي وبنكك قبل تقديم أي إقرار أو رفع ملف رواتب. الفوترة الإلكترونية (E-Invoicing) الإلزامية قيد التطبيق تدريجياً في الإمارات وغير مدعومة بعد في هذا الإصدار.', 'Built to align with the rules in force when it was written, but it is not certified by the FTA, MOHRE or the Central Bank. Laws, rates and bank file formats change — confirm with your accountant, tax adviser and bank before filing a return or uploading a payroll file. UAE mandatory e-invoicing (Peppol) is being phased in and is not yet supported in this version.')}</p></div>
+  ${ei ? `<div class="card"><h2>${tr('جاهزية الفوترة الإلكترونية (E-Invoicing)', 'E-invoicing readiness')}</h2><p class="muted">${tr('الفوترة الإلكترونية في الإمارات تتم عبر مزوّد خدمة معتمد (شبكة Peppol) ولا يرسل هذا النظام الفواتير إليها بعد. هذا الفحص يتأكد من اكتمال البيانات التي سيحتاجها المزوّد.', 'UAE e-invoicing is transmitted through an accredited service provider (Peppol network); this system does not transmit invoices yet. This check verifies the data a provider will need is complete.')}</p>
+    <div>${ei.company_trn ? '✔' : '⛔'} ${tr('الرقم الضريبي للشركة', 'Company TRN')} · ${ei.invoices} ${tr('فاتورة', 'invoices')} · <b class="${ei.with_issues ? 'neg' : 'pos'}">${ei.with_issues}</b> ${tr('ببيانات ناقصة', 'with missing data')}</div>
+    ${ei.issues.slice(0, 15).map(i => `<div class="muted">• ${esc(i.number)}: ${esc(i.missing.join(', '))}</div>`).join('')}</div>` : ''}
   <div class="card"><h2>${tr('سجل التدقيق (آخر ٣٠٠)', 'Audit log (latest 300)')}</h2><div class="tw"><table><thead><tr><th>${tr('الوقت', 'Time')}</th><th>${tr('المستخدم', 'User')}</th><th>${tr('الإجراء', 'Action')}</th><th>${tr('السجل', 'Record')}</th><th>${tr('تفاصيل', 'Detail')}</th></tr></thead><tbody>${audit.map(a => `<tr><td>${esc(a.ts.replace('T', ' ').slice(0, 19))}</td><td>${esc(a.user)}</td><td>${esc(a.action)}</td><td>${esc(a.tbl)} ${a.rec || ''}</td><td>${esc(a.detail)}</td></tr>`).join('')}</tbody></table></div></div>`);
 };
 
 // ---- settings ---------------------------------------------------------------
 PAGES.settings = async () => {
   const s = await api('GET', 'settings'), admin = ME.role === 'admin';
-  const F = [['company_name', 'اسم الشركة', 'Company name'], ['trn', 'الرقم الضريبي للقيمة المضافة (TRN) — ١٥ رقم', 'VAT TRN (15 digits)'], ['ct_trn', 'رقم تسجيل ضريبة الشركات', 'Corporate tax TRN'], ['phone', 'الهاتف', 'Phone'], ['email', 'البريد', 'Email'], ['address', 'العنوان', 'Address'],
+  const F = [['company_name', 'اسم الشركة (إنجليزي)', 'Company name (English)'], ['company_name_ar', 'اسم الشركة (عربي)', 'Company name (Arabic)'], ['trn', 'الرقم الضريبي للقيمة المضافة (TRN) — ١٥ رقم', 'VAT TRN (15 digits)'], ['ct_trn', 'رقم تسجيل ضريبة الشركات', 'Corporate tax TRN'],
+    ['phone', 'الهاتف', 'Phone'], ['email', 'البريد', 'Email'], ['website', 'الموقع الإلكتروني', 'Website'], ['po_box', 'ص.ب', 'P.O. Box'], ['address', 'العنوان', 'Address'],
     ['vat_pct', 'نسبة الضريبة الافتراضية %', 'Default VAT %'], ['currency', 'العملة', 'Currency'], ['license_no', 'رقم الرخصة التجارية', 'Trade licence no.'], ['license_expiry', 'انتهاء الرخصة', 'Licence expiry', 'date'],
-    ['mohre_id', 'رقم المنشأة — وزارة الموارد البشرية (١٣ رقم)', 'MOHRE establishment ID (13 digits)'], ['employer_bank', 'بنك الشركة', 'Company bank'], ['employer_routing', 'رمز توجيه بنك الشركة (٩ أرقام)', 'Company bank routing code (9 digits)'], ['employer_iban', 'آيبان الشركة', 'Company IBAN']];
+    ['mohre_id', 'رقم المنشأة — وزارة الموارد البشرية (١٣ رقم)', 'MOHRE establishment ID (13 digits)'], ['employer_bank', 'بنك الشركة', 'Company bank'], ['employer_routing', 'رمز توجيه بنك الشركة (٩ أرقام)', 'Company bank routing code (9 digits)'], ['employer_iban', 'آيبان الشركة', 'Company IBAN'],
+    ['footer_text', 'نص تذييل المستندات', 'Document footer text']];
   const E = [['smtp_host', 'خادم البريد (SMTP)', 'SMTP server'], ['smtp_port', 'المنفذ (587 أو 465)', 'Port (587 or 465)'], ['smtp_user', 'اسم مستخدم البريد', 'SMTP username'], ['smtp_pass', 'كلمة مرور البريد', 'SMTP password', 'password'], ['smtp_from', 'عنوان المرسِل (مثل accounts@شركتك.com)', 'From address (e.g. accounts@yourco.com)']];
   const users = admin ? await api('GET', 'users') : [];
+  const brands = admin ? await api('GET', 'brand') : [], has = n => brands.some(b => b.name === n);
+  const BR = [['logo', 'الشعار', 'Logo'], ['stamp', 'الختم', 'Company stamp'], ['signature', 'التوقيع المعتمد', 'Authorised signature']];
   main(`<h1>${tr('الإعدادات', 'Settings')}</h1>
   ${admin ? `<div class="card" id="sf"><div class="f2">${F.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, s[k])).join('')}
     ${field({ k: 'vat_registered', ar: 'مسجّل في ضريبة القيمة المضافة؟', en: 'VAT registered?', type: 'select', options: [['1', tr('نعم', 'Yes')], ['0', tr('لا', 'No')]] }, s.vat_registered ?? '1')}
     ${field({ k: 'bank_details', ar: 'بيانات البنك (تظهر في الفاتورة)', en: 'Bank details (shown on invoices)', type: 'textarea', full: 1 }, s.bank_details)}${field({ k: 'terms', ar: 'الشروط الافتراضية لعروض الأسعار', en: 'Default quotation terms', type: 'textarea', full: 1 }, s.terms)}</div>
     <button class="btn" id="save">${tr('حفظ', 'Save')}</button></div>
+  <div class="card"><h2>${tr('هوية الشركة: الشعار والختم والتوقيع', 'Company identity: logo, stamp & signature')}</h2><p class="muted">${tr('تظهر تلقائياً في عروض الأسعار والفواتير وأوامر الشراء والخطابات والتقارير المطبوعة. استخدم صورة PNG بخلفية شفافة للختم والتوقيع (حتى ٢ ميجابايت). الختم والتوقيع يُطبعان فقط على المستندات الصادرة من النظام، فاحرص على صلاحيات المستخدمين.', 'Used automatically on quotations, invoices, purchase orders, letters and printed reports. Use a transparent PNG for the stamp and signature (up to 2 MB). The stamp and signature are applied to documents issued by the system — keep user roles tight.')}</p>
+    <div class="grid">${BR.map(([k, a, e]) => `<div class="kpi"><div class="l">${tr(a, e)}</div><div style="height:90px;display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#f1f1f1 0 25%,#fff 0 50%) 0 0/16px 16px;margin:8px 0">${has(k) ? `<img src="/api/brand/${k}?t=${Date.now()}" style="max-height:84px;max-width:100%">` : `<span class="muted">${tr('لم يُرفع', 'not uploaded')}</span>`}</div>
+      <input type="file" accept="image/png,image/jpeg,image/webp" data-brand="${k}">${has(k) ? `<button class="btn sec sm" data-brand-del="${k}" style="margin-top:6px">${tr('حذف', 'Remove')}</button>` : ''}</div>`).join('')}</div></div>
   <div class="card" id="ef"><h2>${tr('إرسال البريد الإلكتروني', 'Email sending')}</h2><p class="muted">${tr('استخدم بيانات SMTP من مزوّد بريد شركتك (Microsoft 365 أو Google Workspace أو استضافة الدومين). المنفذ 587 للتشفير STARTTLS و465 للتشفير المباشر.', 'Use the SMTP details from your company mail provider (Microsoft 365, Google Workspace or your domain host). Port 587 uses STARTTLS, 465 uses implicit TLS.')}</p>
     <div class="f2">${E.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, k === 'smtp_pass' ? '' : s[k])).join('')}${field({ k: 'smtp_secure', ar: 'التشفير', en: 'Encryption', type: 'select', options: [['0', 'STARTTLS (587)'], ['1', 'SSL/TLS (465)']] }, s.smtp_secure ?? '0')}</div>
     ${s.smtp_pass_set ? `<p class="muted">${tr('كلمة المرور محفوظة — اتركها فارغة للإبقاء عليها.', 'Password saved — leave blank to keep it.')}</p>` : ''}
     <button class="btn" id="saveE">${tr('حفظ', 'Save')}</button> <input id="testTo" placeholder="${tr('بريد لإرسال رسالة تجريبية', 'Email for a test message')}" style="width:260px;margin-inline-start:10px"> <button class="btn sec" id="test">${tr('إرسال تجربة', 'Send test')}</button></div>
   <div class="card"><div class="bar"><h2 style="margin:0">${tr('المستخدمون والصلاحيات', 'Users & roles')}</h2><span class="sp"></span><button class="btn sm" id="addU">+ ${tr('مستخدم', 'User')}</button></div>
-    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
-    <p class="muted">${tr('مدير النظام: كل شيء • محاسب: كل شيء عدا المستخدمين والإعدادات • مدير مشاريع: المشاريع والجداول والتقارير اليومية وعروض الأسعار دون الرواتب والضرائب • عرض فقط: قراءة فقط.', 'Admin: everything • Accountant: everything except users & settings • Project manager: projects, BOQ, site diary, quotes — no payroll or tax • Viewer: read-only.')}</p></div>` : ''}
+    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}${u.employee_name ? ` <span class="muted">(${esc(u.employee_name)})</span>` : ''}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
+    <p class="muted">${tr('مدير النظام: كل شيء • محاسب: المالية والمحاسبة دون المستخدمين والإعدادات • مدير مشاريع: المشاريع والمشتريات والحضور دون الرواتب والضرائب • موارد بشرية: الموظفون والإجازات والطلبات والرواتب والخطابات دون الحسابات • عرض فقط: قراءة فقط • موظف: بوابته الخاصة فقط.', 'Admin: everything • Accountant: finance & accounting, no users/settings • Project manager: projects, purchasing, attendance — no payroll or tax • HR: employees, leave, requests, payroll, letters — no finance • Viewer: read-only • Employee: own portal only.')}</p></div>` : ''}
     <div class="card"><h2>${tr('تغيير كلمة المرور', 'Change password')}</h2><div class="f"><input type="password" id="np" minlength="6" placeholder="${tr('كلمة مرور جديدة', 'New password')}"></div><button class="btn sec" id="cp">${tr('تغيير', 'Change')}</button></div>
-    ${admin ? `<div class="card"><h2>${tr('نسخة احتياطية', 'Backup')}</h2><p class="muted">${tr('حمّل نسخة من قاعدة البيانات واحتفظ بها بشكل دوري (السجلات المالية يجب حفظها ٥–٧ سنوات). تحتوي النسخة على كلمة مرور البريد فاحفظها في مكان آمن.', 'Download a copy of your database and keep it safe regularly (financial records must be kept 5–7 years). The copy contains the SMTP password — store it securely.')}</p><a class="btn sec" href="/api/backup" style="text-decoration:none;display:inline-block">${tr('تحميل النسخة الاحتياطية', 'Download backup')}</a></div>` : ''}`);
+    ${admin ? `<div class="card"><h2>${tr('نسخة احتياطية', 'Backup')}</h2><p class="muted">${tr('حمّل نسخة من قاعدة البيانات (تشمل المستندات المرفقة والشعار) واحتفظ بها بشكل دوري. السجلات المالية يجب حفظها ٥–٧ سنوات، وتحتوي النسخة على كلمة مرور البريد فاحفظها في مكان آمن.', 'Download a copy of the database (it includes attached documents and your logo) and keep it safe regularly. Financial records must be kept 5–7 years; the copy contains the SMTP password — store it securely.')}</p><a class="btn sec" href="/api/backup" style="text-decoration:none;display:inline-block">${tr('تحميل النسخة الاحتياطية', 'Download backup')}</a></div>` : ''}`);
   $('#cp').onclick = guard(async () => { await api('POST', 'password', { password: $('#np').value }); $('#np').value = ''; toast(tr('تم التغيير', 'Password changed')); });
   if (!admin) return;
   $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'bank_details', 'terms'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
   $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure'].forEach(k => b[k] = val($('#ef'), k)); await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
   $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });
-  const roleList = Object.keys(ROLE).map(k => `${k} = ${tr(...ROLE[k])}`).join('\n');
+  document.querySelectorAll('[data-brand]').forEach(inp => inp.onchange = guard(async () => {
+    const f = inp.files[0]; if (!f) return;
+    if (f.size > 2 * 1024 * 1024) throw new Error(tr('الصورة أكبر من ٢ ميجابايت', 'Image is larger than 2 MB'));
+    const data = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = no; r.readAsDataURL(f); });
+    await api('PUT', 'brand/' + inp.dataset.brand, { data }); toast(tr('تم الرفع', 'Uploaded')); render();
+  }));
+  document.querySelectorAll('[data-brand-del]').forEach(b => b.onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'brand/' + b.dataset.brandDel); render(); } }));
   $('#addU').onclick = guard(async () => {
-    const username = prompt(tr('اسم المستخدم:', 'Username:')); if (!username) return;
-    const password = prompt(tr('كلمة المرور (6 أحرف على الأقل):', 'Password (min 6 chars):')); if (!password) return;
-    const role = prompt(tr('الدور:\n', 'Role:\n') + roleList, 'accountant'); if (!role) return;
-    await api('POST', 'users', { username, password, role }); render();
+    const emps = await api('GET', 'employees').catch(() => []);
+    const m = modal(`<h2>${tr('مستخدم جديد', 'New user')}</h2><div class="f2">${field({ k: 'username', ar: 'اسم المستخدم', en: 'Username', req: 1 }, '')}${field({ k: 'password', ar: 'كلمة المرور (٦ أحرف على الأقل)', en: 'Password (min 6)', type: 'password', req: 1 }, '')}
+      ${field({ k: 'role', ar: 'الدور', en: 'Role', type: 'select', options: Object.keys(ROLE).map(k => [k, tr(...ROLE[k])]) }, 'accountant')}
+      <div id="empbox" style="display:none">${field({ k: 'employee_id', ar: 'الموظف المرتبط', en: 'Linked employee', type: 'select', options: refOpts(emps, e => e.name, false) }, '')}</div></div>
+      <div class="acts"><button class="btn" id="save">${tr('إنشاء', 'Create')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button></div>`);
+    $('[name=role]', m).onchange = () => { $('#empbox', m).style.display = val(m, 'role') === 'employee' ? '' : 'none'; };
+    $('#cancel', m).onclick = closeModal;
+    $('#save', m).onclick = guard(async () => { await api('POST', 'users', { username: val(m, 'username'), password: val(m, 'password'), role: val(m, 'role'), employee_id: val(m, 'employee_id') }); closeModal(); render(); });
   });
   document.querySelectorAll('[data-pw]').forEach(b => b.onclick = guard(async () => { const p = prompt(tr('كلمة المرور الجديدة:', 'New password:')); if (p) { await api('PUT', 'users/' + b.dataset.pw, { password: p }); toast(tr('تم', 'Done')); } }));
-  document.querySelectorAll("[data-urole]").forEach(b => b.onclick = guard(async () => { const r = prompt(tr('الدور:\n', 'Role:\n') + roleList); if (r) { await api('PUT', 'users/' + b.dataset.urole, { role: r }); render(); } }));
+  document.querySelectorAll('[data-urole]').forEach(b => b.onclick = guard(async () => { const r = prompt(tr('الدور:\n', 'Role:\n') + Object.keys(ROLE).join(' / ')); if (r) { await api('PUT', 'users/' + b.dataset.urole, { role: r }); render(); } }));
   document.querySelectorAll('[data-du]').forEach(b => b.onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'users/' + b.dataset.du); render(); } }));
 };
-
-boot();

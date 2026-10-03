@@ -131,6 +131,24 @@ module.exports = ctx => {
         return false;
       }
 
+      // ---------------- attendance (HR + site managers) ----------------
+      if (a === 'attendance') {
+        if (m === 'GET') {
+          const date = url.searchParams.get('date'), month = url.searchParams.get('month');
+          const rows = date ? db.prepare('SELECT * FROM attendance WHERE date=?').all(date) : db.prepare('SELECT * FROM attendance WHERE date>=? AND date<=? ORDER BY date').all(`${month}-01`, `${month}-31`);
+          return send(res, 200, { roster: db.prepare("SELECT id,name,designation,project_id FROM employees WHERE status='active' ORDER BY name").all(), rows }), true;
+        }
+        if (m === 'PUT') {
+          const x = await readBody(req);
+          if (!emp(+x.employee_id)) bad('Employee not found'); if (!/^\d{4}-\d\d-\d\d$/.test(x.date || '')) bad('Invalid date'); if (!ATT.includes(x.status)) bad('Invalid status');
+          db.prepare(`INSERT INTO attendance(employee_id,date,status,ot_normal_hours,ot_special_hours,project_id,note) VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(employee_id,date) DO UPDATE SET status=excluded.status, ot_normal_hours=excluded.ot_normal_hours, ot_special_hours=excluded.ot_special_hours, project_id=excluded.project_id, note=excluded.note`)
+            .run(+x.employee_id, x.date, x.status, +x.ot_normal_hours || 0, +x.ot_special_hours || 0, +x.project_id || null, x.note || '');
+          return send(res, 200, { ok: 1 }), true;
+        }
+        return false;
+      }
+
       // ---------------- HR back office ----------------
       if (a !== 'hr') return false;
       if (b === 'summary' && m === 'GET') {
@@ -155,24 +173,10 @@ module.exports = ctx => {
         if (m === 'PUT' && d === 'decide') { decide('hr_requests', +c, await readBody(req), me, req); return send(res, 200, { ok: 1 }), true; }
         if (m === 'DELETE') { db.prepare('DELETE FROM hr_requests WHERE id=?').run(+c); return send(res, 200, { ok: 1 }), true; }
       }
-      if (b === 'attendance') {
-        if (m === 'GET') {
-          const date = url.searchParams.get('date'), month = url.searchParams.get('month');
-          const rows = date ? db.prepare('SELECT * FROM attendance WHERE date=?').all(date) : db.prepare('SELECT * FROM attendance WHERE date>=? AND date<=? ORDER BY date').all(`${month}-01`, `${month}-31`);
-          return send(res, 200, rows), true;
-        }
-        if (m === 'PUT') {
-          const x = await readBody(req);
-          if (!emp(+x.employee_id)) bad('Employee not found'); if (!/^\d{4}-\d\d-\d\d$/.test(x.date || '')) bad('Invalid date'); if (!ATT.includes(x.status)) bad('Invalid status');
-          db.prepare(`INSERT INTO attendance(employee_id,date,status,ot_normal_hours,ot_special_hours,project_id,note) VALUES(?,?,?,?,?,?,?)
-            ON CONFLICT(employee_id,date) DO UPDATE SET status=excluded.status, ot_normal_hours=excluded.ot_normal_hours, ot_special_hours=excluded.ot_special_hours, project_id=excluded.project_id, note=excluded.note`)
-            .run(+x.employee_id, x.date, x.status, +x.ot_normal_hours || 0, +x.ot_special_hours || 0, +x.project_id || null, x.note || '');
-          return send(res, 200, { ok: 1 }), true;
-        }
-      }
       if (b === 'letters') {
         if (m === 'POST') {
           const x = await readBody(req), l = newLetter(x.type, +x.employee_id, x, me.username);
+          if (x.request_id) db.prepare("UPDATE hr_requests SET letter_id=?, status='approved', decided_by=?, decided_at=? WHERE id=? AND employee_id=? AND status='pending'").run(l.id, me.username, today(), +x.request_id, +x.employee_id);
           if (x.request_id) db.prepare('UPDATE hr_requests SET letter_id=? WHERE id=? AND employee_id=?').run(l.id, +x.request_id, +x.employee_id);
           audit(req, 'issue', 'letters', l.id, `${l.number} ${x.type}`);
           return send(res, 200, l), true;
