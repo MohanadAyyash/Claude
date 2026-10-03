@@ -1,0 +1,8 @@
+{
+  "name": "contractor-erp",
+  "version": "1.0.0",
+  "description": "نظام إدارة شركة مقاولات — Construction company management system (projects, quotes, invoices, expenses, VAT)",
+  "private": true,
+  "scripts": { "start": "node --no-warnings server.js", "test": "node --no-warnings test.js" },
+  "engines": { "node": ">=22.5" }
+}
