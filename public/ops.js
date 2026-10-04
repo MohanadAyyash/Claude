@@ -110,7 +110,7 @@ window.poModal = guard(async (id, preset = {}) => {
   });
   if (row) {
     $('#print', m).onclick = () => window.open(`/api/doc/purchase_orders/${row.id}?print=1`, '_blank'); $('#pdf', m).onclick = () => window.open(`/api/doc/purchase_orders/${row.id}/pdf`, '_blank');
-    $('#mail', m).onclick = guard(async () => { const to = prompt(tr('أرسل إلى بريد المورد:', 'Send to supplier email:'), parties.find(p => p.id === row.party_id)?.email || ''); if (to) { await api('POST', `purchase_orders/${row.id}/email`, { to }); toast(tr('تم الإرسال', 'Email sent')); } });
+    $('#mail', m).onclick = guard(async () => { const to = prompt(tr('أرسل إلى بريد المورد:', 'Send to supplier email:'), parties.find(p => p.id === row.party_id)?.email || ''); if (!to) return; if (window.STANDALONE) return standaloneMail(to, `Purchase Order ${row.number} — ${S.company_name || ''}`, `Please find purchase order ${row.number}. Total: ${S.currency || 'AED'} ${money(row.total)}\n\n${S.company_name || ''}`); await api('POST', `purchase_orders/${row.id}/email`, { to }); toast(tr('تم الإرسال', 'Email sent')); });
     if ($('#rcv', m)) $('#rcv', m).onclick = guard(async () => { if (!confirm(tr('سيُنشأ مصروف (فاتورة مورد) بقيمة الأمر. متابعة؟', 'This creates a supplier bill for the order value. Continue?'))) return; const r2 = await api('POST', `purchase_orders/${row.id}/receive`, {}); closeModal(); toast(tr('تم إنشاء الفاتورة', 'Bill created')); openBill(r2.bill_id); });
     if ($('#del', m)) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'purchase_orders/' + row.id); closeModal(); render(); } });
   }

@@ -296,7 +296,7 @@ server.listen(0, async () => {
     assert.equal((await call('PUT', 'profile', { display_name: 'Mohanad Ayyash', job_title: 'Managing Partner', mobile: '+971 50 000 0000' })).j.display_name, 'Mohanad Ayyash');
     assert.equal((await call('POST', 'brand/pack')).s, 200);
     const stg = (await call('GET', 'settings')).j; assert.equal(stg.company_name_ar, 'تريجون سيفيل للمقاولات ذ.م.م'); assert.equal(stg.license_no, '1656279'); assert.equal(stg.po_box, '334112');
-    for (const n of ['logo', 'logo_ar', 'logo_white', 'logo_line', 'mark', 'stamp']) assert.equal((await fetch(base + 'brand/' + n, { headers: { cookie } })).status, 200);
+    for (const n of ['logo', 'logo_ar', 'logo_white', 'logo_line', 'mark']) assert.equal((await fetch(base + 'brand/' + n, { headers: { cookie } })).status, 200);   // (the stamp is not part of the public repository)
     const m3 = mails.length; await call('POST', `invoices/${inv3}/email`, { to: 'client@example.com' });
     const sigMail = mails[m3].body; assert.match(sigMail, /multipart\/related/); assert.match(sigMail, /Content-ID: <brandlogo>/);
     const sh = Buffer.from(sigMail.split('multipart/related')[1].split('text/html')[1].split('\n\n')[1].split('--')[0].replace(/\s/g, ''), 'base64').toString(); assert.match(sh, /Mohanad Ayyash/); assert.match(sh, /Managing Partner/); assert.match(sh, /cid:brandlogo/);
