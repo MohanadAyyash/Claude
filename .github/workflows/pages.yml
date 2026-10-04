@@ -23,6 +23,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+        env:
+          SKIP_PDF: '1'          # no headless-browser PDF rendering in CI
       - run: npm run build:standalone
       - uses: actions/upload-pages-artifact@v3
         with:
