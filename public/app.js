@@ -89,11 +89,13 @@ function shell() {
     if (!okSet.has(n[0])) continue;
     links += pending + `<a data-r="${n[0]}" class="${route.split('/')[0] === n[0] ? 'on' : ''}">${tr(n[1], n[2])}</a>`; pending = '';
   }
-  $('#app').innerHTML = `<div class="shell"><nav class="side"><div class="brand">${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="${esc(S.company_name || '')}">` : esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
+  $('#app').innerHTML = `<div class="topbar"><button type="button" id="menu" aria-label="menu">☰</button>${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="">` : `<b>${esc(S.company_name || '')}</b>`}</div><div class="scrim" id="scrim"></div><div class="shell"><nav class="side"><div class="brand">${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="${esc(S.company_name || '')}">` : esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
     ${links}
     <div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
     <main class="main" id="main"></main></div>`;
-  document.querySelectorAll('.side a').forEach(a => a.onclick = () => go(a.dataset.r));
+  const drawer = open => { $('.side').classList.toggle('open', open); $('#scrim').classList.toggle('on', open); };
+  $('#menu').onclick = () => drawer(!$('.side').classList.contains('open')); $('#scrim').onclick = () => drawer(false);
+  document.querySelectorAll('.side a').forEach(a => a.onclick = () => { drawer(false); go(a.dataset.r); });
   $('#lang').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('#out').onclick = async () => { await api('POST', 'logout'); boot(); };
   render();
@@ -253,10 +255,10 @@ async function projectDetail(id) {
 
 // ---- documents (quotes & invoices) ------------------------------------------
 function itemsEditor(items) {
-  const row = (i = {}) => `<tr><td><input data-k="description" value="${esc(i.description || '')}"></td><td style="width:70px"><input data-k="unit" value="${esc(i.unit || '')}"></td>
-    <td style="width:90px"><input data-k="qty" type="number" step="any" value="${i.qty ?? 1}"></td><td style="width:110px"><input data-k="rate" type="number" step="any" value="${i.rate ?? 0}"></td>
+  const row = (i = {}) => `<tr><td><input data-k="description" placeholder="${tr('الوصف', 'Description')}" value="${esc(i.description || '')}"></td><td style="width:70px"><input data-k="unit" placeholder="${tr('الوحدة', 'Unit')}" value="${esc(i.unit || '')}"></td>
+    <td style="width:90px"><input data-k="qty" type="number" step="any" inputmode="decimal" placeholder="${tr('الكمية', 'Qty')}" value="${i.qty ?? 1}"></td><td style="width:110px"><input data-k="rate" type="number" step="any" inputmode="decimal" placeholder="${tr('السعر', 'Rate')}" value="${i.rate ?? 0}"></td>
     <td style="width:105px"><select data-k="vat">${Object.entries(VATC).map(([k, v]) => `<option value="${k}" ${(i.vat || 'std') === k ? 'selected' : ''}>${tr(...v)}</option>`).join('')}</select></td><td class="n" style="width:110px" data-amt></td><td style="width:30px"><button type="button" class="x">×</button></td></tr>`;
-  return { html: `<div class="tw items"><table><thead><tr><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('السعر', 'Rate')}</th><th>${tr('الضريبة', 'VAT')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th></th></tr></thead><tbody id="items">${(items.length ? items : [{}]).map(row).join('')}</tbody></table></div>
+  return { html: `<div class="tw items docitems"><table><thead><tr><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('السعر', 'Rate')}</th><th>${tr('الضريبة', 'VAT')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th></th></tr></thead><tbody id="items">${(items.length ? items : [{}]).map(row).join('')}</tbody></table></div>
     <button type="button" class="btn sec sm" id="addrow" style="margin-top:6px">+ ${tr('بند', 'Line')}</button>`, row };
 }
 function bindDoc(m, rowFn, vatEl, retEl) {
