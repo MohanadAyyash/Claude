@@ -10,6 +10,7 @@
   const cfg = {
     get client() { return ls.erp_od_client || ''; }, set client(v) { ls.erp_od_client = String(v || '').trim(); },
     get auth() { return ls.erp_od_authority || 'https://login.microsoftonline.com/common'; },     // overridable for tests
+    get pass() { return ls.erp_od_pass || ''; }, set pass(v) { if (v) ls.erp_od_pass = String(v); else ls.removeItem('erp_od_pass'); },
     get graph() { return ls.erp_od_graph || 'https://graph.microsoft.com/v1.0'; },
   };
   const Store = () => window.ERPStore;
@@ -62,6 +63,24 @@
   }
   function signOut() { ['erp_od_tok', 'erp_od_user', 'erp_od_last', 'erp_od_bk'].forEach(k => ls.removeItem(k)); st.last = null; st.conflict = null; setState('local'); }
 
+  // ---------- end-to-end encryption: OneDrive only ever holds ciphertext (AES-256-GCM, key = PBKDF2-SHA256(passphrase, random salt)) ----------
+  const MAGIC = new TextEncoder().encode('TRGN1');
+  const needKey = () => Object.assign(new Error(T('الملف في OneDrive مشفّر — أدخل كلمة سر التشفير في صفحة البيانات والمزامنة', 'The OneDrive file is encrypted — enter the encryption passphrase on the Data & sync page')), { needKey: true });
+  const deriveKey = async (pass, salt) => crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' }, await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']), { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  async function encrypt(bytes) {
+    if (!cfg.pass) return bytes;
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await deriveKey(cfg.pass, salt), bytes));
+    const out = new Uint8Array(MAGIC.length + 28 + ct.length); out.set(MAGIC, 0); out.set(salt, MAGIC.length); out.set(iv, MAGIC.length + 16); out.set(ct, MAGIC.length + 28); return out;
+  }
+  async function decrypt(bytes) {
+    const enc = MAGIC.every((b, i) => bytes[i] === b);
+    if (!enc) return bytes;                                                         // plaintext SQLite (linked before encryption was switched on)
+    if (!cfg.pass) throw needKey();
+    try { return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(MAGIC.length + 16, MAGIC.length + 28) }, await deriveKey(cfg.pass, bytes.slice(MAGIC.length, MAGIC.length + 16)), bytes.slice(MAGIC.length + 28))); }
+    catch { throw Object.assign(new Error(T('كلمة سر التشفير غير صحيحة', 'Wrong encryption passphrase')), { needKey: true }); }
+  }
+
   // ---------- Graph helpers ----------
   async function gfetch(path, opts = {}, retry = true) {
     const token = await accessToken();
@@ -80,9 +99,10 @@
   async function download(meta) {
     let r = meta['@microsoft.graph.downloadUrl'] ? await fetch(meta['@microsoft.graph.downloadUrl']) : await gfetch(`${itemPath('/' + FILE)}:/content`);
     if (!r.ok) throw await httpErr(r, 'download');
-    return new Uint8Array(await r.arrayBuffer());
+    return decrypt(new Uint8Array(await r.arrayBuffer()));
   }
-  async function putFile(sub, bytes, etag) {
+  async function putFile(sub, plain, etag) {
+    const bytes = await encrypt(plain);
     const url = `${itemPath(sub)}:/content?@microsoft.graph.conflictBehavior=replace`;
     if (bytes.length <= 4 * 1000 * 1000) {
       let r = await gfetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', ...(etag ? { 'If-Match': etag } : {}) }, body: bytes });
@@ -115,7 +135,7 @@
 
   // ---------- sync logic ----------
   let busy = false, timer = null, pendingUpload = false;
-  const classify = e => { if (e.status === 412) return; if (e.auth) setState('signin', e.message); else if (e.offline || !navigator.onLine) setState('offline', T('لا يوجد اتصال — التغييرات محفوظة على الجهاز وستُرفع لاحقاً', 'Offline — changes are saved on this device and will upload later')); else setState('error', e.message); };
+  const classify = e => { if (e.status === 412) return; if (e.needKey) setState('error', e.message); else if (e.auth) setState('signin', e.message); else if (e.offline || !navigator.onLine) setState('offline', T('لا يوجد اتصال — التغييرات محفوظة على الجهاز وستُرفع لاحقاً', 'Offline — changes are saved on this device and will upload later')); else setState('error', e.message); };
   function conflict(meta) { st.conflict = { remote: meta }; setState('conflict', T('تعارض: تغيّرت البيانات على جهاز آخر', 'Conflict: the data changed on another device')); }
 
   async function reconcile(rec, hasUsers) {                                        // startup: choose between the local and OneDrive copy
@@ -179,6 +199,6 @@
   function notify() { if (connected() && !st.conflict && st.state !== 'syncing') setState('dirty'); }
   function disconnectKeepLocal() { signOut(); }
 
-  window.ERPCloud = { cfg, st, onChange: f => { listeners.add(f); return () => listeners.delete(f); }, connected, signIn, signOut: disconnectKeepLocal, completeSignIn, reconcile, start, schedule, notify, syncNow, pull, resolve, redirectUri: BASE,
+  window.ERPCloud = { _enc: encrypt, _dec: decrypt, cfg, st, onChange: f => { listeners.add(f); return () => listeners.delete(f); }, connected, signIn, signOut: disconnectKeepLocal, completeSignIn, reconcile, start, schedule, notify, syncNow, pull, resolve, redirectUri: BASE,
     user: () => ls.erp_od_user || '', lastError: () => ls.erp_od_err || '', clearError: () => ls.removeItem('erp_od_err') };
 })();

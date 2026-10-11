@@ -82,6 +82,17 @@ server.listen(0, async () => {
     // ===== Sign-out keeps local data, stops syncing =====
     await B.page.evaluate(() => ERPCloud.signOut()); assert.equal(await state(B.page), 'local');
     assert.equal((await api(B.page, 'GET', 'parties')).s, 200);
+    // ===== encryption: ciphertext only, round-trip, wrong passphrase rejected, plaintext still readable =====
+    const enc = await A.page.evaluate(async () => {
+      const plain = new TextEncoder().encode('SQLite format 3\0 secret company books'); ERPCloud.cfg.pass = 'correct horse';
+      const ct = await ERPCloud._enc(plain), back = await ERPCloud._dec(ct); let wrong = '';
+      ERPCloud.cfg.pass = 'bad pass'; try { await ERPCloud._dec(ct); } catch (e) { wrong = e.message; }
+      ERPCloud.cfg.pass = ''; let nokey = ''; try { await ERPCloud._dec(ct); } catch (e) { nokey = e.needKey ? 'needKey' : e.message; }
+      const legacy = await ERPCloud._dec(plain);
+      return { head: new TextDecoder().decode(ct.slice(0, 5)), leaks: new TextDecoder('latin1').decode(ct).includes('secret company'), same: new TextDecoder().decode(back) === new TextDecoder().decode(plain), wrong, nokey, legacy: legacy.length === plain.length };
+    });
+    assert.equal(enc.head, 'TRGN1'); assert.ok(!enc.leaks, 'ciphertext must not contain plaintext'); assert.ok(enc.same, 'round trip');
+    assert.ok(enc.wrong, 'wrong passphrase rejected'); assert.equal(enc.nokey, 'needKey'); assert.ok(enc.legacy, 'plaintext still readable');
     console.log('STANDALONE CLOUD TESTS PASSED', errs.length ? 'page errors: ' + JSON.stringify(errs.slice(0, 3)) : '');
   } catch (e) { console.error('FAIL', e.message || e, errs.slice(0, 3)); process.exitCode = 1; }
   await browser.close(); server.close(); ms.server.close(); process.exit(process.exitCode || 0);

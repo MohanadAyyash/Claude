@@ -72,7 +72,10 @@
       <p class="muted">${tx('تحتاج تسجيل تطبيق مجاني في Microsoft Entra (خطوات مفصّلة في دليل STANDALONE.md). ثم الصق معرّف التطبيق (Application / Client ID) هنا.', 'You need a free app registration in Microsoft Entra (detailed steps in STANDALONE.md). Then paste the Application (client) ID here.')}</p>
       <div class="f"><label>Redirect URI (${tx('انسخه في تسجيل التطبيق كنوع Single-page application', 'add it to the app registration as a Single-page application')})</label><input id="ru" dir="ltr" readonly value="${esc(C.redirectUri)}"></div>
       <div class="f"><label>${tx('معرّف التطبيق (Client ID)', 'Application (client) ID')}</label><input id="cid" dir="ltr" value="${esc(C.cfg.client)}" placeholder="00000000-0000-0000-0000-000000000000"></div>
+      <div class="f"><label>${tx('كلمة سر تشفير السحابة (يُنصح بها بشدة)', 'Cloud encryption passphrase (strongly recommended)')}</label><input id="cpw" type="password" dir="ltr" autocomplete="new-password" value="${esc(C.cfg.pass)}"><p class="muted">${tx('تُشفَّر قاعدة البيانات على جهازك قبل رفعها فلا يقرأ OneDrive ولا أي شخص يصل لحسابك محتواها. احفظ الكلمة في مكان آمن: إن ضاعت لا يمكن فك التشفير. استخدم نفس الكلمة على كل أجهزتك.', 'The database is encrypted on your device before upload, so OneDrive — or anyone who gets into your account — cannot read it. Keep the passphrase safe: if it is lost the data cannot be decrypted. Use the same passphrase on all your devices.')}</p></div>
       <button class="btn" id="si">${tx('تسجيل الدخول بحساب مايكروسوفت', 'Sign in with Microsoft')}</button></div>` : ''}
+    ${C.connected() && admin ? `<div class="card"><h2>${tx('تشفير السحابة', 'Cloud encryption')}</h2><p class="muted">${C.cfg.pass ? tx('مفعّل: ما يُرفع إلى OneDrive مشفّر.', 'On: what is uploaded to OneDrive is encrypted.') : tx('غير مفعّل: الملف في OneDrive غير مشفّر. أدخل كلمة سر لتشفيره من الرفع القادم.', 'Off: the OneDrive file is not encrypted. Enter a passphrase to encrypt it from the next upload.')}</p>
+      <div class="f"><input id="cpw2" type="password" dir="ltr" autocomplete="new-password" value="${esc(C.cfg.pass)}"></div><button class="btn sec" id="cps">${tx('حفظ كلمة السر', 'Save passphrase')}</button></div>` : ''}
     <div class="card"><h2>${tx('نسخة احتياطية يدوية', 'Manual backup')}</h2>
       <div class="bar"><a class="btn sec" href="/api/backup">${tx('تحميل ملف قاعدة البيانات', 'Download database file')}</a>
       ${admin ? `<label class="btn sec" style="cursor:pointer">${tx('استرجاع من ملف…', 'Restore from file…')}<input type="file" id="rf" accept=".sqlite,.db" style="display:none"></label>` : ''}</div>
@@ -82,7 +85,8 @@
     if ($('#rc')) $('#rc').onclick = conflictDialog;
     if ($('#pl')) $('#pl').onclick = run(async () => { if (confirm(tx('سيُستبدل ما على هذا الجهاز بنسخة OneDrive (تُفقد التعديلات غير المرفوعة). متابعة؟', 'This device will be replaced by the OneDrive copy (unuploaded changes are lost). Continue?'))) await C.pull(); });
     if ($('#so')) $('#so').onclick = run(async () => { if (confirm(tx('سيُفصل OneDrive وتبقى بياناتك على هذا الجهاز. متابعة؟', 'OneDrive will be disconnected; your data stays on this device. Continue?'))) { C.signOut(); render(); } });
-    if ($('#si')) $('#si').onclick = run(async () => { C.cfg.client = $('#cid').value; await C.signIn(); });
+    if ($('#cps')) $('#cps').onclick = run(async () => { C.cfg.pass = $('#cpw2').value; toast(tx('تم الحفظ', 'Saved')); await C.syncNow(); render(); });
+    if ($('#si')) $('#si').onclick = run(async () => { C.cfg.client = $('#cid').value; C.cfg.pass = $('#cpw').value; await C.signIn(); });
     if ($('#rf')) $('#rf').onchange = run(async e => {
       const f = e.target.files[0]; if (!f) return; const bytes = new Uint8Array(await f.arrayBuffer());
       let ok = false; try { const d = new S.SQL.Database(bytes); ok = d.exec("SELECT COUNT(*) FROM settings").length > 0; d.close(); } catch { ok = false; }
