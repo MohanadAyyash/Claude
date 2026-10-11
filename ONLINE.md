@@ -1,0 +1,43 @@
+# تشغيل نظام تريجون أونلاين من أي مكان — خطوات مرتبة
+
+اختر **مساراً واحداً**. أنصحك بالمسار (أ) لأنه بدون خادم ومجاني.
+
+## المسار (أ): GitHub Pages + OneDrive (بدون خادم) — الموصى به
+الحالة: الكود جاهز والبناء ينجح. المتبقي ٣ خطوات من حسابك (لا أستطيع تنفيذها عنك).
+
+### ١) تفعيل GitHub Pages (دقيقتان)
+1. افتح: https://github.com/MohanadAyyash/Claude/settings/pages
+2. تحت **Build and deployment** غيّر **Source** إلى **GitHub Actions**.
+3. افتح تبويب **Actions** ثم **Deploy standalone app** ثم **Run workflow** (اختر الفرع `claude/construction-management-app-rfq8al`).
+4. إذا ظهر رفض بسبب قيود الفروع: Settings ثم Environments ثم github-pages ثم Deployment branches، وأضف الفرع أو اختر "All branches".
+5. بعد النجاح يظهر الرابط: `https://mohanadayyash.github.io/Claude/`
+
+### ٢) ربط OneDrive (خمس دقائق، مرة واحدة)
+1. https://entra.microsoft.com ثم Applications ثم App registrations ثم New registration.
+2. الاسم: Trigon ERP. نوع الحسابات: يناسب حسابك (Work/School أو شخصي).
+3. Redirect URI: اختر نوع **Single-page application (SPA)** والقيمة `https://mohanadayyash.github.io/Claude/`
+4. API permissions ثم Microsoft Graph ثم Delegated: `Files.ReadWrite` و `User.Read` و `offline_access`.
+5. انسخ **Application (client) ID**. ستلصقه في التطبيق في صفحة «المزامنة».
+(التفاصيل والصور المقترحة في STANDALONE.md)
+
+### ٣) أول استخدام
+1. من أي جهاز افتح الرابط في **Safari/Chrome** (ليس من تطبيق داخلي).
+2. أنشئ حساب المدير ثم اذهب إلى «المزامنة» والصق الـ Client ID وسجّل دخول Microsoft.
+3. على الجهاز الثاني: افتح نفس الرابط ثم «المزامنة» ثم سجّل بنفس الحساب، فتنزل البيانات.
+4. الآيفون: Safari ثم زر المشاركة ثم «إضافة إلى الشاشة الرئيسية».
+
+### قيود المسار (أ)
+- جهاز واحد في الوقت نفسه. عند التعارض يسألك التطبيق أي نسخة تبقى.
+- لا إرسال بريد SMTP من الخادم (يفتح تطبيق البريد). PDF عبر الطباعة.
+- المستودع عام: لا ترفع الختم أو بيانات حقيقية إليه. ارفع الختم من الإعدادات فقط.
+
+## المسار (ب): خادم حقيقي على نطاقك trigon.ae (عدة مستخدمين معاً، SMTP، PDF تلقائي)
+اختر واحداً:
+1. **VPS** بـ Docker + Caddy: اتبع deploy/DEPLOY.md (يوجد install.sh). تكلفة تقريبية ٥–١٠ دولار شهرياً.
+2. **جهاز المكتب** + Cloudflare Tunnel (بدون فتح منافذ): deploy/OFFICE-SERVER.md، والسكربت deploy/windows/setup-office-server.ps1.
+بعدها تضيف سجل DNS: نطاق فرعي مثل `erp.trigon.ae` يشير إلى الخادم أو النفق.
+
+## نصائح أمان قبل الاستخدام الفعلي
+- كلمة مرور المدير طويلة وفريدة، ولا تشارك حساب المدير.
+- نسخة احتياطية أسبوعية خارج الجهاز (زر النسخ الاحتياطي في الإعدادات).
+- النظام غير معتمد رسمياً للفوترة الإلكترونية (Peppol)؛ راجع محاسبك قبل تقديم الإقرارات.
