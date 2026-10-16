@@ -56,7 +56,10 @@
   }
   async function api(method, pathAndQuery, bodyStr) {
     const r = await callHandler(method, pathAndQuery, bodyStr); takeCookie(r.headers);
-    if (method !== 'GET' && r.status < 400 && !/^\/api\/(login|logout)\b/.test(pathAndQuery)) S.markDirty();     // sign-in/out only touch the sessions table: not a data change, must not trigger uploads or conflicts
+    if (method !== 'GET' && r.status < 400) {
+      if (!/^\/api\/(login|logout)\b/.test(pathAndQuery)) S.markDirty();       // sign-in/out only touch the sessions table: not a data change, must not trigger uploads or conflicts
+      await S.flushNow();                                                          // saved on the device before the UI is told "done", so a refresh or closed tab right after loses nothing
+    }
     return r;
   }
   const toResponse = r => { const h = new Headers(); for (const k in r.headers) if (k !== 'set-cookie') h.set(k, r.headers[k]); return new Response(r.body, { status: r.status, headers: h }); };

@@ -35,6 +35,14 @@ if (require.main === module) server.listen(0, async () => {
     const doc = await page.evaluate(async id => (await fetch('/api/doc/invoices/' + id)).text(), inv.id); assert.match(doc, /Tax Invoice/); assert.match(doc, /data:image\/png;base64/);
     // ---- data survives a reload (IndexedDB) and the login session too
     await page.waitForTimeout(1200); await page.reload(); await page.waitForSelector('.side', { timeout: 30000 });
+    // ---- a write followed by an IMMEDIATE refresh must not be lost (regression: debounced save)
+    assert.equal((await api(page, 'POST', 'parties', { type: 'client', name: 'Instant Reload Co' })).s, 200);
+    await page.reload(); await page.waitForSelector('.side', { timeout: 30000 });
+    assert.ok(JSON.stringify((await api(page, 'GET', 'parties')).j).includes('Instant Reload Co'), 'write lost on immediate reload');
+    // ---- a fresh login survives an immediate refresh
+    await page.evaluate(() => fetch('/api/logout', { method: 'POST' })); await page.reload(); await page.waitForSelector('form.login');
+    await page.fill('[name=username]', 'admin'); await page.fill('[name=password]', 'secret1'); await page.click('form button'); await page.waitForSelector('.side');
+    await page.reload(); await page.waitForSelector('.side', { timeout: 30000 });
     assert.equal((await api(page, 'GET', 'invoices/' + inv.id)).j.total, 10500);
     assert.equal((await api(page, 'GET', 'invoices')).s, 200);
     // ---- logo image in the sidebar is served from the local database
