@@ -121,6 +121,7 @@ window.employeeExtras = async (m, row) => {
 
 // ---- employee self-service portal ---------------------------------------------------------------------
 PAGES.portal = async () => {
+  if (!ME.employee_id) return main(`<h1>${tr('بوابة الموظف', 'Employee portal')}</h1><div class="card"><p>${tr('حسابك غير مربوط بملف موظف. اربطه من «المستخدمين» ← تعديل ← الموظف، ثم تظهر هنا إجازاتك وطلباتك وقسائم راتبك.', 'Your account is not linked to an employee record. Link it under Users → Edit → Employee to see your leave, requests and payslips here.')}</p></div>`);
   const d = await api('GET', 'me'), e = d.employee, b = d.balance;
   const k = (l, v, c = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${c}">${v}</div></div>`;
   const exp = [['eid_expiry', tr('الهوية الإماراتية', 'Emirates ID')], ['visa_expiry', tr('الإقامة', 'Residence visa')], ['passport_expiry', tr('جواز السفر', 'Passport')], ['card_expiry', tr('بطاقة العمل', 'Labour card')]].filter(([f]) => e[f]);
