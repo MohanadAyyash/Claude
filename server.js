@@ -304,7 +304,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/odoo')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
