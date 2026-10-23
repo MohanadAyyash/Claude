@@ -8,7 +8,7 @@ const CHART = [
   ['3000', 'Share capital', 'رأس المال', 'equity'], ['3100', 'Retained earnings / owner current account', 'أرباح مبقاة / جاري الشريك', 'equity'],
   ['4000', 'Contract revenue', 'إيرادات العقود', 'revenue'],
   ['5100', 'Materials', 'مواد', 'expense'], ['5200', 'Labour & payroll', 'عمالة ورواتب', 'expense'], ['5300', 'Subcontractors', 'مقاولو الباطن', 'expense'], ['5400', 'Equipment', 'معدات', 'expense'],
-  ['5500', 'Transport', 'نقل', 'expense'], ['5600', 'Permits & fees', 'رسوم وتراخيص', 'expense'], ['5700', 'Other direct costs', 'تكاليف مباشرة أخرى', 'expense'], ['6000', 'Overheads', 'مصاريف عمومية', 'expense'], ['6100', 'Depreciation', 'الإهلاك', 'expense'],
+  ['5500', 'Transport', 'نقل', 'expense'], ['5600', 'Permits & fees', 'رسوم وتراخيص', 'expense'], ['5700', 'Other direct costs', 'تكاليف مباشرة أخرى', 'expense'], ['6000', 'Overheads', 'مصاريف عمومية', 'expense'], ['6100', 'Depreciation', 'الإهلاك', 'expense'], ['6200', 'Administrative salaries (head office)', 'رواتب إدارية (المكتب الرئيسي)', 'expense'],
 ];
 const CAT = { materials: '5100', labour: '5200', subcontract: '5300', equipment: '5400', transport: '5500', permits: '5600', overhead: '6000', other: '5700', asset: '1600' };
 const TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense'];
@@ -37,7 +37,8 @@ module.exports = ctx => {
     }
     for (const t of db.prepare('SELECT * FROM petty_topups').all()) add(t.date, 'PETTY', `Petty cash top-up ${t.note || ''}`, 'petty', [mk('1010', t.amount), mk('1000', 0, t.amount)]);
     for (const r of db.prepare("SELECT * FROM payroll WHERE status='final'").all()) {
-      add(monthEnd(r.month), `PAY-${r.month}`, `Payroll ${r.month}`, 'payroll', [mk('5200', r.gross), mk('2200', 0, r.net), mk('2250', 0, r.deductions)]);
+      add(monthEnd(r.month), `PAY-${r.month}`, `Payroll ${r.month}`, 'payroll', [mk(r.project_id ? '5200' : '6200', r.gross),   // site staff → direct labour; no project → head-office overhead
+         mk('2200', 0, r.net), mk('2250', 0, r.deductions)]);
       if (r.paid_date) add(r.paid_date, `PAY-${r.month}`, `Salaries paid ${r.month}`, 'payroll', [mk('2200', r.net), mk('1000', 0, r.net)]);
     }
     for (const a of ctx.assetRegister('9999-12-31')) {

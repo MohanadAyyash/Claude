@@ -459,7 +459,7 @@ PAGES.employees = async () => {
       { k: 'passport_no', ar: 'رقم الجواز', en: 'Passport no.' }, { k: 'nationality', ar: 'الجنسية', en: 'Nationality' },
       { k: 'join_date', ar: 'تاريخ الالتحاق', en: 'Join date', type: 'date' }, { k: 'end_date', ar: 'تاريخ انتهاء الخدمة', en: 'End of service date', type: 'date' },
       { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['active', tr(...STATUS.active)], ['left', tr(...STATUS.left)]] },
-      { k: 'project_id', ar: 'المشروع الافتراضي (لتحميل التكلفة)', en: 'Default project (cost allocation)', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`) },
+      { k: 'project_id', ar: 'تحميل التكلفة على', en: 'Cost charged to', type: 'select', options: [['', tr('عمومي — الإدارة / كل الشركة (مصاريف عمومية)', 'General — head office / whole company (overheads)')], ...refOpts(projects, p => `${p.code || ''} ${p.name}`, false)] },
       { k: 'basic', ar: 'الراتب الأساسي', en: 'Basic wage', type: 'number', def: 0 }, { k: 'housing', ar: 'بدل سكن', en: 'Housing allowance', type: 'number', def: 0 },
       { k: 'other_allowance', ar: 'بدلات أخرى', en: 'Other allowances', type: 'number', def: 0 }, { k: 'bank_name', ar: 'البنك / شركة الصرافة', en: 'Bank / exchange house' },
       { k: 'routing_code', ar: 'رمز التوجيه (٩ أرقام)', en: 'Routing code (9 digits)' }, { k: 'iban', ar: 'الآيبان IBAN', en: 'IBAN' },
@@ -469,7 +469,7 @@ PAGES.employees = async () => {
       { k: 'leave_opening', ar: 'رصيد إجازات افتتاحي (أيام)', en: 'Opening leave balance (days)', type: 'number', def: 0 },
       { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }],
     cols: [{ ar: 'الاسم', en: 'Name', k: 'name' }, { ar: 'المهنة', en: 'Role', k: 'designation' }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) },
-      { ar: 'الإجمالي الشهري', en: 'Monthly total', n: 1, f: r => money(r.basic + r.housing + r.other_allowance) }, { ar: 'نهاية الخدمة (تقديري)', en: 'Gratuity (est.)', n: 1, f: r => money(grat[r.id]) },
+      { ar: 'تحميل التكلفة', en: 'Cost charged to', f: r => { const p = projects.find(x => x.id === r.project_id); return p ? esc(p.name) : `<span class="muted">${tr('عمومي', 'General')}</span>`; } }, { ar: 'الإجمالي الشهري', en: 'Monthly total', n: 1, f: r => money(r.basic + r.housing + r.other_allowance) }, { ar: 'نهاية الخدمة (تقديري)', en: 'Gratuity (est.)', n: 1, f: r => money(grat[r.id]) },
       { ar: 'IBAN', en: 'IBAN', f: r => r.iban ? esc(r.iban) : `<span class="neg">${tr('ناقص', 'missing')}</span>` }] });
 };
 

@@ -275,6 +275,14 @@ server.listen(0, async () => {
     assert.equal((await call('POST', 'journal_entries', { date: '2026-01-01', lines: [{ account: '9999', debit: 10 }, { account: '3000', credit: 10 }] })).s, 400);  // unknown account
     const fin2 = (await call('GET', 'financials?from=2026-01-01&to=2026-12-31')).j; assert.equal(fin2.tb_debit, fin2.tb_credit); assert.equal(fin2.trial_balance.find(x => x.code === '3000').credit, 100000);
     const led = (await call('GET', 'ledger?account=3000&from=2026-01-01&to=2026-12-31')).j; assert.equal(led.lines.at(-1).balance, -100000);
+    // head-office staff (no project) → administrative salaries (6200), not direct labour, and not charged to any project
+    const hq = (await call('POST', 'employees', { name: 'Ops Manager', designation: 'Operations Manager', person_code: '12345678901235', routing_code: '302620122', iban: 'AE070331234567890123456', join_date: '2026-01-01', basic: 20000, housing: 5000 })).j.id;
+    await call('POST', 'payroll/generate', { month: '2026-11' }); await call('POST', 'payroll/finalize', { month: '2026-11' });
+    const hqRow = (await call('GET', 'payroll?month=2026-11')).j.find(r => r.employee_id === hq); assert.ok(hqRow && !hqRow.project_id);
+    const nov = (await call('GET', 'payroll?month=2026-11')).j, gSum = rows => Math.round(rows.reduce((t, r) => t + r.gross, 0) * 100) / 100;
+    const dr = async acc => Math.round((await call('GET', `ledger?account=${acc}&from=2026-11-01&to=2026-11-30`)).j.lines.reduce((t, l) => t + l.debit, 0) * 100) / 100;
+    assert.equal(await dr('6200'), gSum(nov.filter(r => !r.project_id))); assert.equal(await dr('5200'), gSum(nov.filter(r => r.project_id)));
+    assert.ok(nov.filter(r => !r.project_id).some(r => r.employee_id === hq));
     assert.equal((await call('POST', 'accounts', { code: '5800', name: 'Insurance', type: 'expense' })).s, 200); assert.equal((await call('DELETE', 'accounts/1000')).s, 400); assert.equal((await call('POST', 'accounts', { code: 'x', name: 'bad', type: 'expense' })).s, 400);
     // bank reconciliation
     const pay1 = (await call('POST', 'payments', { kind: 'in', amount: 777, invoice_id: inv3, method: 'bank', date: '2026-10-02' })).j.id; assert.ok(pay1);
