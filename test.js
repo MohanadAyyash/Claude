@@ -169,6 +169,31 @@ server.listen(0, async () => {
     const html = Buffer.from(m.body.split('text/html')[1].split('\n\n')[1].split('--')[0].replace(/\s/g, ''), 'base64').toString();
     assert.match(html, /INV-\d{4}-\d+/); assert.match(html, /Payment reminder/);
 
+    // ---- Microsoft 365 sending via Graph (mock login + Graph endpoints) ----
+    const graphMails = []; let tokenCalls = 0;
+    const ms = require('http').createServer((rq, rs) => { let b = ''; rq.on('data', d => (b += d)); rq.on('end', () => {
+      const out = (c, o) => { rs.writeHead(c, { 'Content-Type': 'application/json' }); rs.end(o ? JSON.stringify(o) : ''); };
+      if (rq.url === '/tenant-123/oauth2/v2.0/token') { const f = new URLSearchParams(b); tokenCalls++;
+        return f.get('client_secret') === 'sec-ret' && f.get('grant_type') === 'client_credentials' && f.get('scope') === 'https://graph.microsoft.com/.default' ? out(200, { access_token: 'tok-1', expires_in: 3600 }) : out(401, { error: 'invalid_client', error_description: 'AADSTS7000215: Invalid client secret provided.' }); }
+      const m = /^\/v1\.0\/users\/([^/]+)\/sendMail$/.exec(rq.url);
+      if (m && rq.headers.authorization === 'Bearer tok-1') { if (decodeURIComponent(m[1]) !== 'accounts@trigon.ae') return out(404, { error: { code: 'ErrorInvalidUser', message: 'The requested user is invalid.' } }); graphMails.push(JSON.parse(b)); return out(202); }
+      out(401, { error: { code: 'InvalidAuthenticationToken', message: 'bad token' } });
+    }); });
+    await new Promise(ok => ms.listen(0, ok)); process.env.MS_LOGIN_BASE = `http://127.0.0.1:${ms.address().port}`; process.env.MS_GRAPH_BASE = `http://127.0.0.1:${ms.address().port}/v1.0`;
+    assert.equal((await call('PUT', 'settings', { mail_method: 'graph', graph_tenant: 'tenant-123', graph_client: 'client-abc', graph_secret: 'wrong', smtp_from: 'accounts@trigon.ae' })).s, 200);
+    const st365 = (await call('GET', 'settings')).j; assert.equal(st365.graph_secret, undefined); assert.equal(st365.graph_secret_set, '1');
+    const bad1 = await call('POST', 'settings/test-email', { to: 'me@example.com' }); assert.ok(bad1.s >= 400); assert.match(bad1.j.error, /client secret/);
+    assert.equal((await call('PUT', 'settings', { graph_secret: 'sec-ret' })).s, 200);
+    assert.equal((await call('POST', 'settings/test-email', { to: 'me@example.com' })).s, 200);
+    assert.equal((await call('POST', `invoices/${inv3}/email`, { to: 'client@example.com', message: 'Dear client' })).s, 200);
+    assert.equal(graphMails.length, 2); assert.equal(tokenCalls, 2);                                       // one failed + one good token, then cached
+    const gm = graphMails[1].message; assert.equal(gm.toRecipients[0].emailAddress.address, 'client@example.com'); assert.match(gm.subject, /INV-/); assert.equal(gm.body.contentType, 'HTML');
+    const pdfAtt = gm.attachments.find(a => !a.isInline); if (!process.env.SKIP_PDF) { assert.ok(pdfAtt && /\.pdf$/.test(pdfAtt.name)); assert.equal(Buffer.from(pdfAtt.contentBytes, 'base64').subarray(0, 4).toString(), '%PDF'); } assert.equal(graphMails[1].saveToSentItems, true);
+    assert.equal(mails.length, 2, 'SMTP not used in Graph mode');
+    assert.equal((await call('PUT', 'settings', { smtp_from: 'nobody@trigon.ae' })).s, 200);
+    const bad2 = await call('POST', 'settings/test-email', { to: 'me@example.com' }); assert.ok(bad2.s >= 400); assert.match(bad2.j.error, /existing Microsoft 365 mailbox/);
+    assert.equal((await call('PUT', 'settings', { mail_method: 'smtp', smtp_from: 'accounts@grc-uae.com' })).s, 200); ms.close();
+
     // ---- HR: leave, requests, attendance, letters, payslips, employee portal ----
     const hrId = (await call('POST', 'users', { username: 'hr1', password: 'pass123', role: 'hr' })).s; assert.equal(hrId, 200);
     const loginAs = async u => { cookie = ''; assert.equal((await call('POST', 'login', { username: u, password: 'pass123' })).s, 200); };

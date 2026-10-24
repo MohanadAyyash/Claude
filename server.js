@@ -274,7 +274,7 @@ function clean(table, body) {
 }
 
 const { ROLES } = ACLX, can = ACLX.can;
-const SETTING_KEYS = ['address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban'];
+const SETTING_KEYS = ['mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -294,6 +294,11 @@ function applyPayroll(id, inp) {
 // ---- feature modules ------------------------------------------------------------
 const mailCfgFor = () => {
   const st = getSettings();
+  if (st.mail_method === 'graph') {
+    if (!st.graph_tenant || !st.graph_client || !st.graph_secret || !st.smtp_from) bad('Email is not configured — set the Microsoft 365 details in Settings');
+    return { method: 'graph', tenant: st.graph_tenant, client: st.graph_client, secret: st.graph_secret, from: st.smtp_from, fromName: st.company_name,
+      loginBase: process.env.MS_LOGIN_BASE || 'https://login.microsoftonline.com', graphBase: process.env.MS_GRAPH_BASE || 'https://graph.microsoft.com/v1.0' };
+  }
   if (!st.smtp_host || !st.smtp_from) bad('Email is not configured — set the SMTP details in Settings');
   return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
 };
@@ -343,11 +348,7 @@ async function api(req, res, url) {
   if (!me) return send(res, 401, { error: 'unauthorized' });
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
 
-  const mailCfg = () => {
-    const st = getSettings();
-    if (!st.smtp_host || !st.smtp_from) bad('Email is not configured — set the SMTP details in Settings');
-    return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
-  };
+  const mailCfg = mailCfgFor;
   if (a === 'settings' && b === 'test-email' && method === 'POST') {
     const { to } = await readBody(req);
     if (!validEmail(to)) bad('Enter a valid email address');
@@ -426,10 +427,11 @@ async function api(req, res, url) {
       if (body.employer_iban && !C.validIban(body.employer_iban)) return send(res, 400, { error: 'Invalid UAE IBAN' });
       for (const k of SETTING_KEYS) if (k in body) ins.run(k, String(body[k] ?? '').trim());
       if (body.smtp_pass) ins.run('smtp_pass', String(body.smtp_pass));                // password only changes when a new one is typed
+      if (body.graph_secret) ins.run('graph_secret', String(body.graph_secret).trim());     // same for the Microsoft 365 client secret
       if (body.smtp_from && !validEmail(body.smtp_from)) return send(res, 400, { error: 'SMTP "from" must be a valid email address' });
       audit(req, 'update', 'settings', 0, 'company settings');
     }
-    const st = getSettings(); st.smtp_pass_set = st.smtp_pass ? '1' : ''; delete st.smtp_pass;       // never send the SMTP password back
+    const st = getSettings(); st.smtp_pass_set = st.smtp_pass ? '1' : ''; delete st.smtp_pass; st.graph_secret_set = st.graph_secret ? '1' : ''; delete st.graph_secret;       // never send secrets back
     if (me.role === 'employee') return send(res, 200, { company_name: st.company_name, company_name_ar: st.company_name_ar, currency: st.currency });
     return send(res, 200, st);
   }
