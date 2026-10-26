@@ -4,7 +4,7 @@ const CHART = [
   ['1100', 'Accounts receivable', 'ذمم العملاء', 'asset'], ['1150', 'Retention receivable', 'محتجزات لدى العملاء', 'asset'], ['1200', 'VAT input (recoverable)', 'ضريبة القيمة المضافة - مدخلات', 'asset'],
   ['1400', 'Advances to subcontractors', 'دفعات مقدمة لمقاولي الباطن', 'asset'], ['1600', 'Fixed assets (cost)', 'الأصول الثابتة', 'asset'], ['1690', 'Accumulated depreciation', 'مجمع الإهلاك', 'asset'],
   ['2000', 'Accounts payable', 'ذمم الموردين', 'liability'], ['2050', 'Cheques issued (PDC payable)', 'شيكات برسم الدفع', 'liability'], ['2100', 'VAT output', 'ضريبة القيمة المضافة - مخرجات', 'liability'],
-  ['2200', 'Salaries payable', 'رواتب مستحقة', 'liability'], ['2250', 'Employee deductions payable', 'خصومات موظفين مستحقة', 'liability'], ['2300', 'End-of-service provision', 'مخصص نهاية الخدمة', 'liability'],
+  ['2200', 'Salaries payable', 'رواتب مستحقة', 'liability'], ['2250', 'Employee deductions payable', 'خصومات موظفين مستحقة', 'liability'], ['2300', 'End-of-service provision', 'مخصص نهاية الخدمة', 'liability'], ['2400', 'Advances from customers', 'دفعات مقدمة من العملاء', 'liability'],
   ['3000', 'Share capital', 'رأس المال', 'equity'], ['3100', 'Retained earnings / owner current account', 'أرباح مبقاة / جاري الشريك', 'equity'],
   ['4000', 'Contract revenue', 'إيرادات العقود', 'revenue'],
   ['5100', 'Materials', 'مواد', 'expense'], ['5200', 'Labour & payroll', 'عمالة ورواتب', 'expense'], ['5300', 'Subcontractors', 'مقاولو الباطن', 'expense'], ['5400', 'Equipment', 'معدات', 'expense'],
@@ -28,7 +28,9 @@ module.exports = ctx => {
   function entries() {
     const out = [], e = enrich();
     const add = (date, ref, memo, source, lines) => { lines = lines.filter(l => l.debit || l.credit); if (lines.length) out.push({ date, ref, memo, source, lines }); };
-    for (const i of e.invoices) if (!i.voided) add(i.date, i.number, `${i.kind === 'credit_note' ? 'Credit note' : 'Invoice'} — ${i.client_name || ''}`, 'invoice', [mk('1100', i.due_now), mk('1150', i.retention), mk('4000', 0, i.subtotal), mk('2100', 0, i.vat)]);
+    // advance invoices credit "advances from customers"; progress invoices recognise the full work value and debit the advance they recover
+    for (const i of e.invoices) if (!i.voided) add(i.date, i.number, `${i.kind === 'credit_note' ? 'Credit note' : i.kind === 'advance' ? 'Advance payment invoice' : 'Invoice'} — ${i.client_name || ''}`, 'invoice',
+      [mk('1100', i.due_now), mk('1150', i.retention), mk('2400', i.recovery || 0), mk(i.kind === 'advance' ? '2400' : '4000', 0, i.kind === 'advance' ? i.subtotal : i.revenue), mk('2100', 0, i.vat)]);
     for (const b of e.bills) add(b.date, b.reference || `BILL-${b.id}`, `${b.party_name || 'Expense'} — ${b.description || ''}`, 'bill', [mk(CAT[b.category] || '5700', b.amount), mk('1200', b.vat_amount), mk('2000', 0, b.total)]);
     for (const p of e.payments) {
       if (p.cheque_status === 'bounced') continue;

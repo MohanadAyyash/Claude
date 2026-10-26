@@ -103,7 +103,8 @@ function enrich() {
     const warnings = [];
     if (client && !client.trn) warnings.push('customer_trn_missing');
     if (client && !client.address) warnings.push('customer_address_missing');
-    return { ...r, items, ...tt, due_now: dueNow, paid, credited, balance, retention_open, status, warnings,
+    const revenue = r.kind === 'advance' ? 0 : round(tt.subtotal + tt.recovery);   // an advance is a liability until recovered; recovery lines don't reduce the work value
+    return { ...r, items, ...tt, revenue, due_now: dueNow, paid, credited, balance, retention_open, status, warnings,
       project_name: proj?.name, emirate: proj?.emirate, client_id: proj?.client_id, client_name: client?.name, client_trn: client?.trn, client_address: client?.address, client_email: client?.email };
   });
   const bills = all('bills').map(r => {
@@ -133,7 +134,7 @@ function projectRows() {
   const { projects, invoices, bills } = enrich();
   return Object.values(projects).sort((a, b) => b.id - a.id).map(p => {
     const inv = invoices.filter(i => i.project_id === p.id && !i.voided), bl = bills.filter(b => b.project_id === p.id);
-    const invoiced = round(inv.reduce((s, i) => s + i.subtotal, 0));
+    const invoiced = round(inv.reduce((s, i) => s + i.revenue, 0));
     const collected = round(inv.reduce((s, i) => s + i.paid, 0) + inv.reduce((s, i) => s + (i.retention - i.retention_open), 0));
     const pr = db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final' AND project_id=?").get(p.id).g;
     const costBills = bl.filter(b => b.category !== 'asset');
@@ -169,7 +170,7 @@ function dashboard() {
   return {
     active_projects: projs.filter(p => p.status === 'active').length,
     contract_value: round(projs.filter(p => p.status !== 'cancelled').reduce((s, p) => s + p.revised_value, 0)),
-    invoiced: round(invoices.reduce((s, i) => s + i.subtotal, 0)),
+    invoiced: round(invoices.reduce((s, i) => s + i.revenue, 0)),
     expenses: round(bills.filter(b => b.category !== 'asset').reduce((s, b) => s + b.amount, 0) + db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final'").get().g),
     receivable: round(invoices.reduce((s, i) => s + i.balance, 0)),
     retention_held: round(invoices.reduce((s, i) => s + i.retention_open, 0)),
@@ -198,7 +199,7 @@ function vatReport(from, to) {
 function corporateTaxReport(from, to) {
   const { invoices, bills } = enrich();
   const inR = dt => (!from || dt >= from) && (!to || dt <= to);
-  const revenue = round(invoices.filter(i => !i.voided && inR(i.date)).reduce((s, i) => s + i.subtotal, 0));
+  const revenue = round(invoices.filter(i => !i.voided && inR(i.date)).reduce((s, i) => s + i.revenue, 0));
   const billCost = round(bills.filter(b => inR(b.date) && b.category !== 'asset').reduce((s, b) => s + b.amount, 0));
   const depreciation = ctx.depreciation(from, to || today());
   const payroll = round(payrollCost(from, to).reduce((s, r) => s + r.gross, 0));
@@ -227,6 +228,7 @@ function compliance() {
   const { invoices } = enrich();
   const noTrn = new Set(invoices.filter(i => !i.voided && i.warnings.includes('customer_trn_missing')).map(i => i.client_name));
   if (noTrn.size) add('warn', 'customer_trn', { who: [...noTrn].join(', ') });
+  if (ctx.hooks.alerts) ctx.hooks.alerts(add, t);                         // modules add their own (e.g. retention due for release)
   return alerts;
 }
 
@@ -314,7 +316,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/contract'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -556,6 +558,8 @@ async function api(req, res, url) {
     const lines = db.prepare('SELECT * FROM boq_items WHERE project_id=? AND done_pct>billed_pct+0.0001 ORDER BY id').all(+b);
     if (!lines.length) bad('No unbilled progress — update the completion % on the BOQ first');
     const items = lines.map(i => ({ description: `${i.description} (${i.billed_pct}% → ${i.done_pct}%)`, unit: i.unit, qty: round(i.qty * (i.done_pct - i.billed_pct) / 100), rate: i.rate, vat: 'std' }));
+    const rec = ctx.advanceRecoveryLine && ctx.advanceRecoveryLine(proj, round(items.reduce((s, i) => s + i.qty * i.rate, 0)));
+    if (rec) items.push(rec);                                               // contract advance recovered from each progress invoice
     const r = db.prepare('INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes) VALUES(?,?,?,?,?,?,?)')
       .run(nextNumber('invoices', 'INV'), today(), proj.id, JSON.stringify(items), +st.vat_pct || 5, proj.retention_pct || 0, 'Progress invoice');
     db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=?').run(+b);

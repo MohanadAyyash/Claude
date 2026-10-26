@@ -227,6 +227,9 @@ const projectFields = async () => [
   { k: 'contract_value', ar: 'قيمة العقد (بدون ضريبة)', en: 'Contract value (ex VAT)', type: 'number', def: 0 }, { k: 'retention_pct', ar: 'نسبة المحتجزات % (للفواتير)', en: 'Retention % (on invoices)', type: 'number', def: 0 },
   { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: ['active', 'completed', 'hold', 'cancelled'].map(k => [k, tr(...STATUS[k])]) },
   { k: 'start_date', ar: 'تاريخ البدء', en: 'Start date', type: 'date' }, { k: 'end_date', ar: 'تاريخ الانتهاء', en: 'End date', type: 'date' },
+  { k: 'advance_pct', ar: 'الدفعة المقدمة % من العقد', en: 'Advance payment % of contract', type: 'number', def: 0 }, { k: 'advance_recovery_pct', ar: 'استرداد المقدمة % من كل مستخلص (فارغ = نفس النسبة)', en: 'Advance recovery % per progress invoice (empty = same %)', type: 'number', def: 0 },
+  { k: 'handover_date', ar: 'تاريخ التسليم (يُستحق جزء المحتجزات)', en: 'Handover date (first retention release)', type: 'date' }, { k: 'retention_handover_pct', ar: 'نسبة المحتجزات المفرج عنها عند التسليم %', en: 'Retention released at handover %', type: 'number', def: 50 },
+  { k: 'dlp_months', ar: 'فترة الصيانة (أشهر) — الباقي بعدها', en: 'Defects liability period (months) — rest after it', type: 'number', def: 12 },
   { k: 'site_lat', ar: 'خط العرض للموقع (لحضور الجوال)', en: 'Site latitude (phone attendance)', type: 'number' }, { k: 'site_lng', ar: 'خط الطول للموقع', en: 'Site longitude', type: 'number' },
   { k: 'site_radius', ar: 'نطاق الموقع بالمتر', en: 'Site radius (m)', type: 'number', def: 300 },
   { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }];
