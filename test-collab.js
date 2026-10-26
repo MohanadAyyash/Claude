@@ -71,6 +71,18 @@ server.listen(0, async () => {
     assert.equal((await call('POST', 'notes', { entity: 'nuclear', entity_id: 1, body: 'x' })).s, 400);
     assert.equal((await as('imran', () => call('GET', `notes?entity=project&id=${p}`))).s, 403);
     assert.equal((await as('acc1', () => call('DELETE', 'notes/' + n1.id))).s, 403); ok(await as('pm1', () => call('DELETE', 'notes/' + n1.id)));
+    // ---- shared expense split across projects
+    const p2 = ok(await call('POST', 'projects', { name: 'Villa 12', status: 'active' })).id, p3 = ok(await call('POST', 'projects', { name: 'Warehouse', status: 'active' })).id;
+    assert.match((await call('POST', 'bills', { date: '2026-10-01', category: 'equipment', description: 'Roller', amount: 30000, allocation: [{ project_id: p, pct: 50 }, { project_id: p2, pct: 30 }] })).j.error, /100 %/);
+    assert.match((await call('POST', 'bills', { date: '2026-10-01', category: 'equipment', description: 'Roller', amount: 30000, allocation: [{ project_id: p, pct: 100 }] })).j.error, /at least two/);
+    assert.match((await call('POST', 'bills', { date: '2026-10-01', category: 'equipment', description: 'Roller', amount: 30000, allocation: [{ project_id: p, pct: 50 }, { project_id: 999, pct: 50 }] })).j.error, /not found/);
+    const rb = ok(await call('POST', 'bills', { date: '2026-10-01', project_id: p2, category: 'equipment', description: 'Roller hire', amount: 30000, vat_amount: 1500, allocation: [{ project_id: p, pct: 50 }, { project_id: p2, pct: 30 }, { project_id: p3, pct: 20 }] })).id;
+    assert.equal(ok(await call('GET', 'bills/' + rb)).project_id, null, 'a split bill belongs to no single project');
+    const sum = ok(await call('GET', 'project-summary')), cost = id => sum.find(x => x.id === id);
+    assert.equal(cost(p).cost, 165000); assert.equal(cost(p).cost_by_category.equipment, 15000); assert.equal(cost(p2).cost, 9000); assert.equal(cost(p3).cost, 6000);
+    assert.equal(Object.fromEntries(ok(await call('GET', `projects/${p}/budget`)).lines.map(l => [l.category, l])).equipment.actual, 15000);
+    ok(await call('PUT', 'bills/' + rb, { allocation: [], project_id: p3 }));                       // back to a single project
+    assert.equal(ok(await call('GET', 'project-summary')).find(x => x.id === p3).cost, 30000);
     console.log('✔ budget vs actual vs committed + forecast at completion, weekly updates with snapshot + alert, tasks (assign, sub-tasks, status-only for assignees, done notice), notes with @mentions, roles');
     console.log('COLLAB TESTS PASSED');
   } catch (e) { console.error('FAIL', e); process.exitCode = 1; }

@@ -17,6 +17,20 @@ module.exports = ctx => {
   CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id);
   CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, entity TEXT, entity_id INTEGER, user_id INTEGER, username TEXT, body TEXT, created TEXT);
   CREATE INDEX IF NOT EXISTS notes_entity ON notes(entity, entity_id);`);
+  // shared expenses: bills.allocation = [{ project_id, pct }] totalling 100 %
+  if (!db.prepare('PRAGMA table_info(bills)').all().some(x => x.name === 'allocation')) db.exec('ALTER TABLE bills ADD COLUMN allocation TEXT');
+  const BT = ctx.TABLES.bills; BT.cols.push('allocation'); BT.json = [...(BT.json || []), 'allocation'];
+  const prevBillCheck = BT.check;
+  BT.check = r => {
+    if (prevBillCheck) prevBillCheck(r);
+    if (r.allocation === undefined) return;
+    const al = JSON.parse(r.allocation || '[]'); if (!al.length) return;
+    if (al.length < 2) bad('Split across at least two projects (or choose one project)');
+    for (const a of al) { if (!(+a.pct > 0)) bad('Each share must be more than 0 %'); if (!db.prepare('SELECT 1 FROM projects WHERE id=?').get(+a.project_id)) bad('Project not found in the split'); }
+    if (new Set(al.map(a => +a.project_id)).size !== al.length) bad('A project appears twice in the split');
+    if (Math.abs(al.reduce((s, a) => s + +a.pct, 0) - 100) > 0.01) bad('The shares must add up to 100 %');
+    r.project_id = null;                                                    // split bills belong to no single project
+  };
   const now = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().replace('T', ' ').slice(0, 16); };
   const notify = (to, msg) => ctx.notify ? ctx.notify(to, msg).catch(() => {}) : null;
   const staff = me => me.role !== 'employee';

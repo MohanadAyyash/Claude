@@ -396,11 +396,21 @@ const billFields = async (pre = {}) => [
   { k: 'vat_amount', ar: 'ضريبة القيمة المضافة (إن وجدت)', en: 'VAT amount (if any)', type: 'number', def: 0 }, { k: 'reference', ar: 'رقم فاتورة المورد', en: 'Supplier invoice no.' }];
 async function billModal(row, pre) {
   const fs = await billFields(pre || {});
+  const projOpts = fs.find(f => f.k === 'project_id').options.filter(o => o[0] !== ''), al = row?.allocation || [];
+  const splitRow = (a = {}) => `<div class="bar" data-split><select style="flex:2">${projOpts.map(([k, l]) => `<option value="${k}" ${String(k) === String(a.project_id) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><input type="number" step="any" style="width:90px" placeholder="%" value="${a.pct ?? ''}"><span>%</span><button type="button" class="x">×</button></div>`;
   const m = modal(`<h2>${row ? tr('تعديل مصروف', 'Edit expense') : tr('مصروف / مشتريات جديدة', 'New expense / purchase')}</h2><div class="f2">${fs.map(f => field(f, row?.[f.k] ?? f.def)).join('')}</div>
+    <label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" style="width:auto" id="spl" ${al.length ? 'checked' : ''}> ${tr('توزيع المصروف على عدة مشاريع (إيجار، معدات مشتركة…)', 'Split this expense across several projects (rent, shared equipment…)')}</label>
+    <div id="splitbox" style="${al.length ? '' : 'display:none'}">${(al.length ? al : [{}, {}]).map(splitRow).join('')}<button type="button" class="btn sec sm" id="spadd">+ ${tr('مشروع', 'Project')}</button> <span class="muted" id="sptot"></span></div>
     <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button>${row ? `<button class="btn sec" id="pay">${tr('تسجيل دفعة', 'Record payment')}</button>` : ''}<button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button><span class="sp"></span>${row ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`);
+  const spTot = () => { const t = [...m.querySelectorAll('[data-split] input')].reduce((s, i) => s + (+i.value || 0), 0); $('#sptot', m).textContent = `${tr('المجموع', 'Total')} ${t}%`; $('#sptot', m).className = Math.abs(t - 100) < 0.01 ? 'pos' : 'neg'; };
+  $('#spl', m).onchange = e => { $('#splitbox', m).style.display = e.target.checked ? '' : 'none'; m.querySelector('[name=project_id]').disabled = e.target.checked; };
+  if (al.length) m.querySelector('[name=project_id]').disabled = true;
+  $('#spadd', m).onclick = () => { $('#spadd', m).insertAdjacentHTML('beforebegin', splitRow()); spTot(); };
+  $('#splitbox', m).addEventListener('input', spTot); $('#splitbox', m).addEventListener('click', e => { if (e.target.classList.contains('x')) { e.target.closest('[data-split]').remove(); spTot(); } }); spTot();
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
     const b = {}; fs.forEach(f => b[f.k] = val(m, f.k));
+    b.allocation = $('#spl', m).checked ? [...m.querySelectorAll('[data-split]')].map(r => ({ project_id: +r.querySelector('select').value, pct: +r.querySelector('input').value || 0 })) : [];
     row ? await api('PUT', 'bills/' + row.id, b) : await api('POST', 'bills', b); closeModal(); render();
   });
   if (row) {
@@ -414,7 +424,7 @@ PAGES.bills = async () => {
   const rows = await api('GET', 'bills');
   main(`<div class="bar"><h1>${tr('المصروفات والمشتريات', 'Expenses & purchases')}</h1><span class="sp"></span>${xl('bills')}<button class="btn" id="add">+ ${tr('جديد', 'New')}</button></div>
   <div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('المورد', 'Supplier')}</th><th>${tr('المشروع', 'Project')}</th><th>${tr('البند', 'Category')}</th><th>${tr('الوصف', 'Description')}</th><th class="n">${tr('الإجمالي', 'Total')}</th><th class="n">${tr('المتبقي', 'Balance')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
-  ${rows.map(b => `<tr class="click" data-id="${b.id}"><td>${esc(b.date)}</td><td>${esc(b.party_name || '')}</td><td>${esc(b.project_name || tr('مصاريف عامة', 'Overhead'))}</td><td>${tr(...(CATS[b.category] || [b.category, b.category]))}</td><td>${esc(b.description || '')}</td><td class="n">${money(b.total)}</td><td class="n">${money(b.balance)}</td><td>${tag(b.status)}</td></tr>`).join('') || `<tr><td colspan="8" class="muted">${tr('لا توجد بيانات', 'No records yet')}</td></tr>`}</tbody></table></div>`);
+  ${rows.map(b => `<tr class="click" data-id="${b.id}"><td>${esc(b.date)}</td><td>${esc(b.party_name || '')}</td><td>${b.allocation && b.allocation.length ? `${tr('موزّع على', 'Split across')} ${b.allocation.length} ${tr('مشاريع', 'projects')}` : esc(b.project_name || tr('مصاريف عامة', 'Overhead'))}</td><td>${tr(...(CATS[b.category] || [b.category, b.category]))}</td><td>${esc(b.description || '')}</td><td class="n">${money(b.total)}</td><td class="n">${money(b.balance)}</td><td>${tag(b.status)}</td></tr>`).join('') || `<tr><td colspan="8" class="muted">${tr('لا توجد بيانات', 'No records yet')}</td></tr>`}</tbody></table></div>`);
   $('#add').onclick = guard(() => billModal(null));
   document.querySelectorAll('tr.click').forEach(t => t.onclick = guard(() => billModal(rows.find(r => r.id === +t.dataset.id))));
 };

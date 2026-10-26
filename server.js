@@ -111,7 +111,8 @@ function enrich() {
     const total = round(r.amount + r.vat_amount);
     const paid = round(pays.filter(p => p.kind === 'out' && p.bill_id === r.id).reduce((s, p) => s + p.amount, 0));
     const balance = round(total - paid), party = parties[r.party_id];
-    return { ...r, total, paid, balance, status: balance <= 0.005 ? 'paid' : (paid > 0 ? 'partial' : 'unpaid'),
+    let allocation = []; try { allocation = JSON.parse(r.allocation || '[]').map(a => ({ project_id: +a.project_id, pct: +a.pct })); } catch { /* not split */ }
+    return { ...r, allocation, total, paid, balance, status: balance <= 0.005 ? 'paid' : (paid > 0 ? 'partial' : 'unpaid'),
       party_name: party?.name, party_trn: party?.trn, project_name: projects[r.project_id]?.name };
   });
   const quotes = all('quotes').map(r => {
@@ -133,7 +134,9 @@ const payrollCost = (from, to) => db.prepare("SELECT * FROM payroll WHERE status
 function projectRows() {
   const { projects, invoices, bills } = enrich();
   return Object.values(projects).sort((a, b) => b.id - a.id).map(p => {
-    const inv = invoices.filter(i => i.project_id === p.id && !i.voided), bl = bills.filter(b => b.project_id === p.id);
+    const inv = invoices.filter(i => i.project_id === p.id && !i.voided), direct = bills.filter(b => b.project_id === p.id && !b.allocation.length);
+    // a shared expense split across projects counts its share here (office rent, a roller used on three sites…)
+    const bl = [...direct, ...bills.filter(b => b.allocation.some(a => a.project_id === p.id)).map(b => { const pct = b.allocation.find(a => a.project_id === p.id).pct; return { ...b, amount: round(b.amount * pct / 100), balance: round(b.balance * pct / 100) }; })];
     const invoiced = round(inv.reduce((s, i) => s + i.revenue, 0));
     const collected = round(inv.reduce((s, i) => s + i.paid, 0) + inv.reduce((s, i) => s + (i.retention - i.retention_open), 0));
     const pr = db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final' AND project_id=?").get(p.id).g;
