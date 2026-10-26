@@ -212,18 +212,37 @@ PAGES.parties = () => crud({ title: tr('العملاء والموردون', 'Cli
 
 const partyOpts = async types => refOpts((await api('GET', 'parties')).filter(p => !types || types.includes(p.type)), p => p.name);
 
+const projectFields = async () => [
+  { k: 'code', ar: 'رمز المشروع', en: 'Code', def: '' }, { k: 'name', ar: 'اسم المشروع', en: 'Project name', req: 1 },
+  { k: 'client_id', ar: 'العميل', en: 'Client', type: 'select', options: await partyOpts(['client']) }, { k: 'location', ar: 'الموقع', en: 'Location' },
+  { k: 'emirate', ar: 'الإمارة (لإقرار الضريبة)', en: 'Emirate (for VAT return)', type: 'select', options: Object.entries(EMIRATES).map(([k, v]) => [k, tr(...v)]) },
+  { k: 'contract_value', ar: 'قيمة العقد (بدون ضريبة)', en: 'Contract value (ex VAT)', type: 'number', def: 0 }, { k: 'retention_pct', ar: 'نسبة المحتجزات % (للفواتير)', en: 'Retention % (on invoices)', type: 'number', def: 0 },
+  { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: ['active', 'completed', 'hold', 'cancelled'].map(k => [k, tr(...STATUS[k])]) },
+  { k: 'start_date', ar: 'تاريخ البدء', en: 'Start date', type: 'date' }, { k: 'end_date', ar: 'تاريخ الانتهاء', en: 'End date', type: 'date' },
+  { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }];
+// Edit / delete a project from its detail page (the list opens the detail page, not the CRUD modal)
+async function editProject(id) {
+  const p = await api('GET', 'projects/' + id), fs = await projectFields();
+  const m = modal(`<h2>${tr('تعديل', 'Edit')} — ${tr('المشروع', 'Project')}</h2><div class="f2">${fs.map(f => field(f, p[f.k] ?? f.def)).join('')}</div>
+    <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button><span class="sp"></span><button class="btn bad" id="del">${tr('حذف', 'Delete')}</button></div>`);
+  $('#cancel', m).onclick = closeModal;
+  $('#save', m).onclick = guard(async () => {
+    const body = {}; fs.forEach(f => body[f.k] = val(m, f.k));
+    for (const f of fs) if (f.req && !body[f.k]) throw new Error(tr('أكمل الحقول المطلوبة', 'Fill the required fields'));
+    await api('PUT', 'projects/' + id, body); closeModal(); projectDetail(id);
+  });
+  $('#del', m).onclick = guard(async () => {
+    if (!confirmDel()) return;
+    try { await api('DELETE', 'projects/' + id); }
+    catch (e) { throw /invoices or expenses/.test(e.message) ? new Error(tr('لا يمكن حذف مشروع عليه فواتير أو مصروفات — غيّر حالته إلى "ملغي" بدلاً من ذلك', 'A project with invoices or expenses cannot be deleted — set its status to Cancelled instead')) : e; }
+    closeModal(); go('projects');
+  });
+}
 PAGES.projects = async id => {
   if (id) return projectDetail(+id);
   const rows = await api('GET', 'project-summary');
   const c = await crud({ title: tr('المشاريع', 'Projects'), table: 'projects', load: async () => rows, extra: xl('projects'),
-    fields: async () => [
-      { k: 'code', ar: 'رمز المشروع', en: 'Code', def: '' }, { k: 'name', ar: 'اسم المشروع', en: 'Project name', req: 1 },
-      { k: 'client_id', ar: 'العميل', en: 'Client', type: 'select', options: await partyOpts(['client']) }, { k: 'location', ar: 'الموقع', en: 'Location' },
-      { k: 'emirate', ar: 'الإمارة (لإقرار الضريبة)', en: 'Emirate (for VAT return)', type: 'select', options: Object.entries(EMIRATES).map(([k, v]) => [k, tr(...v)]) },
-      { k: 'contract_value', ar: 'قيمة العقد (بدون ضريبة)', en: 'Contract value (ex VAT)', type: 'number', def: 0 }, { k: 'retention_pct', ar: 'نسبة المحتجزات % (للفواتير)', en: 'Retention % (on invoices)', type: 'number', def: 0 },
-      { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: ['active', 'completed', 'hold', 'cancelled'].map(k => [k, tr(...STATUS[k])]) },
-      { k: 'start_date', ar: 'تاريخ البدء', en: 'Start date', type: 'date' }, { k: 'end_date', ar: 'تاريخ الانتهاء', en: 'End date', type: 'date' },
-      { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }],
+    fields: projectFields,
     cols: [{ ar: 'الرمز', en: 'Code', k: 'code' }, { ar: 'المشروع', en: 'Project', k: 'name' }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) },
       { ar: 'قيمة العقد', en: 'Contract', n: 1, f: r => money(r.contract_value) }, { ar: 'المفوتر', en: 'Invoiced', n: 1, f: r => money(r.invoiced) },
       { ar: 'التكلفة', en: 'Cost', n: 1, f: r => money(r.cost) }, { ar: 'الربح', en: 'Profit', n: 1, f: r => `<span class="${r.profit >= 0 ? 'pos' : 'neg'}">${money(r.profit)}</span>` }] });
@@ -235,7 +254,7 @@ async function projectDetail(id) {
   const mine = inv.filter(i => i.project_id === id), bl = bills.filter(b => b.project_id === id);
   const kpi = (l, v, c = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${c}">${money(v)}</div></div>`;
   main(`<div class="bar"><button class="btn sec" onclick="go('projects')">←</button><h1 style="margin:0">${esc(p.code || '')} ${esc(p.name)} ${tag(p.status)}</h1><span class="sp"></span>
-    <button class="btn sec" onclick="progressInvoice(${id})">${tr('فاتورة إنجاز من الجدول', 'Progress invoice from BOQ')}</button><button class="btn sec" onclick="newInvoiceFor(${id})">+ ${tr('فاتورة', 'Invoice')}</button><button class="btn sec" onclick="newBillFor(${id})">+ ${tr('مصروف', 'Expense')}</button></div>
+    ${['admin', 'accountant', 'manager'].includes(ME.role) ? `<button class="btn sec" onclick="editProject(${id})">${tr('تعديل', 'Edit')}</button>` : ''}<button class="btn sec" onclick="progressInvoice(${id})">${tr('فاتورة إنجاز من الجدول', 'Progress invoice from BOQ')}</button><button class="btn sec" onclick="newInvoiceFor(${id})">+ ${tr('فاتورة', 'Invoice')}</button><button class="btn sec" onclick="newBillFor(${id})">+ ${tr('مصروف', 'Expense')}</button></div>
     <div class="grid">${kpi(tr('قيمة العقد', 'Contract value'), p.contract_value)}${kpi(tr('أوامر التغيير المعتمدة', 'Approved variations'), p.variations)}${kpi(tr('القيمة المعدّلة', 'Revised value'), p.revised_value)}${kpi(tr('المفوتر', 'Invoiced'), p.invoiced)}${kpi(tr('نسبة الفوترة', 'Billed %'), p.billed_pct).replace(money(p.billed_pct), p.billed_pct + '%')}
     ${kpi(tr('المحصّل', 'Collected'), p.collected, 'ok')}${kpi(tr('مستحق التحصيل', 'Receivable'), p.receivable, 'warn')}${kpi(tr('التكلفة', 'Cost'), p.cost)}
     ${kpi(tr('الربح', 'Profit'), p.profit, p.profit >= 0 ? 'ok' : 'bad')}${kpi(tr('هامش الربح', 'Margin'), p.margin).replace(money(p.margin), p.margin + '%')}</div>

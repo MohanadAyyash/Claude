@@ -22,13 +22,19 @@ $app = (Get-Location).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmm'
 $url = 'https://github.com/MohanadAyyash/Claude/archive/refs/heads/claude/construction-management-app-rfq8al.zip'
 try {
-  Write-Host '1/4 Backing up the data folder...'
+  Write-Host '1/4 Backing up the data and program files...'
   if (Test-Path "$app\data") {
     $bk = "$app\data-backup-$stamp"
     robocopy "$app\data" $bk /E /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw 'Backup failed - nothing was changed.' }
     Write-Host "    saved to $bk"
   } else { Write-Host '    (no data folder here - the data lives where DATA_DIR points)' }
+
+  $pb = "$app\app-backup-$stamp"                                                   # program files too, so any edit made directly on this PC can be recovered
+  robocopy $app $pb /E /XD data node_modules .git data-backup-* app-backup-* /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -ge 8) { throw 'Program backup failed - nothing was changed.' }
+  Write-Host "    program files saved to $pb"
+  Get-ChildItem $app -Directory -Filter 'app-backup-*' | Sort-Object Name -Descending | Select-Object -Skip 3 | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
   Write-Host '2/4 Downloading the latest version...'
   $zip = Join-Path $env:TEMP 'trigon-erp-update.zip'
