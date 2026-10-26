@@ -7,7 +7,7 @@ const copy = (from, to) => fs.cpSync(from, to, { recursive: true });
   fs.rmSync(dist, { recursive: true, force: true }); fs.mkdirSync(dist, { recursive: true });
   await esbuild.build({
     entryPoints: [path.join(__dirname, 'entry-server.js')], bundle: true, format: 'iife', platform: 'browser', target: 'es2022', outfile: path.join(dist, 'erp-server.js'), minify: true, legalComments: 'none', logLevel: 'warning',
-    alias: { 'node:sqlite': sh('sqlite'), 'node:crypto': sh('crypto'), 'node:fs': sh('fs'), 'node:path': sh('path'), 'node:http': sh('http'), 'node:net': sh('net'), 'node:tls': sh('tls'), 'node:child_process': sh('child_process'), 'node:os': sh('os') },
+    alias: { 'node:sqlite': sh('sqlite'), 'node:crypto': sh('crypto'), 'node:fs': sh('fs'), 'node:path': sh('path'), 'node:http': sh('http'), 'node:net': sh('net'), 'node:tls': sh('tls'), 'node:child_process': sh('child_process'), 'node:os': sh('os'), 'node:zlib': sh('zlib') },
     inject: [sh('inject')], define: { __dirname: '"/app"', __filename: '"/app/server.js"' },
   });
   copy(path.join(root, 'public'), dist);                                           // the application UI
@@ -22,6 +22,10 @@ const copy = (from, to) => fs.cpSync(from, to, { recursive: true });
   fs.writeFileSync(path.join(dist, 'index.html'), html);
   fs.writeFileSync(path.join(dist, 'boot.js'), 'window.__ERPReady.then(function () { boot(); });\n');
   fs.writeFileSync(path.join(dist, '.nojekyll'), '');
+  // service worker: stamp the version with a hash of everything published, so phones pick up each new build once
+  const h = require('node:crypto').createHash('sha256'), walk = d => { for (const f of fs.readdirSync(d).sort()) { const p = path.join(d, f); if (fs.statSync(p).isDirectory()) walk(p); else if (f !== 'sw.js') h.update(f).update(fs.readFileSync(p)); } };
+  walk(dist); const swFile = path.join(dist, 'sw.js');
+  fs.writeFileSync(swFile, fs.readFileSync(swFile, 'utf8').replace('__VERSION__', h.digest('hex').slice(0, 12)).replace("'mobile.js', 'boot.js',", "'mobile.js', 'boot.js', 'standalone-runtime.js', 'standalone-cloud.js', 'standalone-ui.js', 'erp-server.js', 'sql-wasm.js', 'sql-wasm.wasm',"));
   const size = fs.statSync(path.join(dist, 'erp-server.js')).size;
   console.log(`standalone build ok → dist/ (server bundle ${(size / 1024).toFixed(0)} KB)`);
 })();

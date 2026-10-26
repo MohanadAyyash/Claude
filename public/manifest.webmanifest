@@ -1,15 +1,23 @@
 {
+  "id": "./",
   "name": "Trigon ERP",
   "short_name": "Trigon",
   "description": "Trigon Civil Contracting — management system",
+  "lang": "ar",
+  "dir": "rtl",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#F2F1EE",
   "theme_color": "#1F3A5F",
+  "categories": ["business", "productivity"],
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
     { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "بوابتي / My portal", "url": "./#portal" },
+    { "name": "الإشعارات / Notifications", "url": "./#notifications" }
   ]
 }

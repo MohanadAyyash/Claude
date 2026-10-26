@@ -8,7 +8,7 @@ const tr = (ar, en) => (lang === 'ar' ? ar : en);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = n => (+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const $ = (s, r = document) => r.querySelector(s);
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };   // local date, not UTC
 const cur = () => S.currency || 'AED';
 
 async function api(method, url, body) {
@@ -39,13 +39,19 @@ const opts = (map, sel) => Object.entries(map).map(([k, v]) => `<option value="$
 
 // ---- boot / auth ------------------------------------------------------------
 async function boot() {
-  const st = await (await fetch('/api/status')).json();
+  let st;
+  try { st = await (await fetch('/api/status')).json(); }
+  catch {                                                                 // the app itself opens from the phone's cache; the data needs the server
+    $('#app').innerHTML = `<div class="login" style="text-align:center"><img class="logo" src="icon-192.png" alt="" style="width:72px"><h2>${tr('لا يوجد اتصال بالإنترنت', 'No internet connection')}</h2><p class="muted">${tr('تحقق من الاتصال ثم أعد المحاولة.', 'Check the connection and try again.')}</p><button class="btn" id="retry" style="width:100%">${tr('إعادة المحاولة', 'Try again')}</button></div>`;
+    $('#retry').onclick = boot; window.addEventListener('online', boot, { once: true }); return;
+  }
   document.documentElement.lang = lang; document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   if (st.setup) return setupScreen(st.token_required);
   if (!st.user) return loginScreen();
   ME = st.user; document.body.dataset.role = ME.role; route = location.hash.slice(1) || landing();
   if (!allowedNav().some(n => n[0] === route.split('/')[0])) route = landing();
-  S = await api('GET', 'settings'); BR = new Set((await api('GET', 'brand').catch(() => [])).map(b => b.name));
+  const [s, br] = await Promise.all([api('GET', 'settings'), api('GET', 'brand').catch(() => [])]);   // in parallel: faster start on mobile data
+  S = s; BR = new Set(br.map(b => b.name));
   document.title = S.company_name || tr('نظام إدارة المقاولات', 'Contractor ERP');
   shell();
 }
@@ -77,6 +83,7 @@ const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager']],
   ['leave', 'الإجازات', 'Leave', HRR], ['hrrequests', 'طلبات الموظفين', 'Employee requests', HRR], ['letters', 'الخطابات الرسمية', 'Official letters', HRR], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS', EMPR],
   ['#', 'الضرائب والامتثال', 'Tax & compliance'], ['vat', 'ضريبة القيمة المضافة', 'VAT report', ['admin', 'accountant', 'viewer']], ['ctax', 'ضريبة الشركات', 'Corporate tax', FINR], ['compliance', 'الامتثال والتدقيق', 'Compliance & audit', FINR], ['documents', 'المستندات', 'Documents', [...READR, 'hr']],
+  ['notifications', 'الإشعارات', 'Notifications', ['admin', 'accountant', 'manager', 'hr', 'viewer', 'employee']],
   ['settings', 'الإعدادات', 'Settings', ['admin', 'accountant', 'manager', 'hr', 'viewer', 'employee']],
 ];
 const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role));
@@ -99,6 +106,7 @@ function shell() {
   $('#lang').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('#out').onclick = async () => { await api('POST', 'logout'); boot(); };
   render();
+  if (window.onShell) onShell();                                          // mobile.js: bell, install button
 }
 const go = r => { location.hash = r; };
 window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };

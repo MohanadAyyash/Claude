@@ -3,6 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 const { DatabaseSync } = require('node:sqlite');
 const C = require('./lib/compliance');
 const { sendMail, validEmail } = require('./lib/mailer');
@@ -57,7 +58,7 @@ const TABLES = {
 
 const round = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const getSettings = () => Object.fromEntries(db.prepare('SELECT key,value FROM settings').all().map(r => [r.key, r.value]));
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };   // local date (UTC would still be yesterday before 4am in the UAE)
 const all = (t) => db.prepare(`SELECT * FROM ${t} ORDER BY id DESC`).all();
 
 const docTotals = C.docTotals;
@@ -250,10 +251,14 @@ function sessionUser(req) {
 
 // ---- http -----------------------------------------------------------------
 const MIME = { '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const gzipOk = res => zlib.gzipSync && /\bgzip\b/.test((res.req && res.req.headers['accept-encoding']) || '');
 const send = (res, code, body, headers = {}) => {
   const isObj = typeof body === 'object' && !Buffer.isBuffer(body);
-  res.writeHead(code, { 'Content-Type': isObj ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8', ...headers });
-  res.end(isObj ? JSON.stringify(body) : body);
+  let out = isObj ? JSON.stringify(body) : body;
+  const h = { 'Content-Type': isObj ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8', ...headers };
+  if (isObj && out.length > 2048 && gzipOk(res)) { out = zlib.gzipSync(out); h['Content-Encoding'] = 'gzip'; h.Vary = 'Accept-Encoding'; }   // big lists load faster on mobile data
+  res.writeHead(code, h);
+  res.end(out);
 };
 const readBody = (req, max = 5e6) => new Promise((ok, no) => {
   let b = ''; req.on('data', c => { b += c; if (b.length > max) req.destroy(); });
@@ -309,7 +314,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -623,6 +628,30 @@ async function api(req, res, url) {
 }
 
 const PUB = path.join(__dirname, 'public');
+// static files: kept in memory with a content hash (ETag → 304 when unchanged) and pre-gzipped text; sw.js carries the
+// version of the whole app so phones fetch the new files exactly once after each update
+const staticCache = new Map();
+let appVersion = null;
+const versionOf = () => {
+  if (appVersion) return appVersion;
+  const h = crypto.createHash('sha256'), walk = d => { for (const f of fs.readdirSync(d).sort()) { const p = path.join(d, f); if (fs.statSync(p).isDirectory()) walk(p); else if (f !== 'sw.js') h.update(f).update(fs.readFileSync(p)); } };
+  walk(PUB); return (appVersion = h.digest('hex').slice(0, 12));
+};
+function serveStatic(req, res, file) {
+  const mtime = fs.statSync(file).mtimeMs; let c = staticCache.get(file);
+  if (!c || c.mtime !== mtime) {
+    let raw = fs.readFileSync(file);
+    if (path.basename(file) === 'sw.js') raw = Buffer.from(raw.toString('utf8').replace('__VERSION__', versionOf()));
+    const text = /\.(js|css|html|webmanifest|svg|txt)$/.test(file);
+    c = { mtime, raw, gz: text && raw.length > 1024 && zlib.gzipSync ? zlib.gzipSync(raw) : null, etag: '"' + crypto.createHash('sha256').update(raw).digest('hex').slice(0, 20) + '"' };
+    staticCache.set(file, c);
+  }
+  const h = { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache', ETag: c.etag, Vary: 'Accept-Encoding' };
+  if (path.basename(file) === 'sw.js') h['Service-Worker-Allowed'] = '/';
+  if (req.headers['if-none-match'] === c.etag) { res.writeHead(304, h); return res.end(); }
+  if (c.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) { h['Content-Encoding'] = 'gzip'; res.writeHead(200, h); return res.end(c.gz); }
+  res.writeHead(200, h); res.end(c.raw);
+}
 const server = http.createServer(async (req, res) => {
   try {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('X-Frame-Options', 'DENY'); res.setHeader('Referrer-Policy', 'same-origin');
@@ -633,8 +662,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/' || p === '\\') p = '/index.html';
     const file = path.join(PUB, p);
     if (!file.startsWith(PUB) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, 'Not found');
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-    fs.createReadStream(file).pipe(res);
+    serveStatic(req, res, file);
   } catch (e) {
     if (!e.status) console.error(e); send(res, e.status || 500, { error: String(e.message || e) });
   }
