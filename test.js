@@ -9,6 +9,7 @@ const { server } = require('./server.js');
 const mails = [];
 const smtp = net.createServer(sock => {
   let inData = false, authStage = 0, cur = { rcpt: [], auth: [] };
+  sock.on('error', () => {});                                          // Windows resets the socket after QUIT
   sock.write('220 fake ESMTP\r\n');
   sock.on('data', d => {
     for (const line of d.toString().split('\r\n')) {

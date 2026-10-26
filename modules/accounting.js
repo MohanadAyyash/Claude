@@ -45,7 +45,7 @@ module.exports = ctx => {
       if (!a.purchase_date) continue;
       const end = (a.status === 'disposed' && a.disposal_date) ? a.disposal_date.slice(0, 7) : today().slice(0, 7), monthly = (a.cost - a.salvage) / Math.max(1, a.life_years * 12);
       let ym = a.purchase_date.slice(0, 7), done = 0;
-      while (ym <= end && done < a.cost - a.salvage - 0.005) { const amt = Math.min(monthly, a.cost - a.salvage - done); done += amt; add(monthEnd(ym), `DEP-${a.id}`, `Depreciation — ${a.name}`, 'depreciation', [mk('6100', amt), mk('1690', 0, amt)]); const d = new Date(+ym.slice(0, 4), +ym.slice(5, 7), 1); ym = d.toISOString().slice(0, 7); }
+      while (ym <= end && done < a.cost - a.salvage - 0.005) { const amt = Math.min(monthly, a.cost - a.salvage - done); done += amt; add(monthEnd(ym), `DEP-${a.id}`, `Depreciation — ${a.name}`, 'depreciation', [mk('6100', amt), mk('1690', 0, amt)]); const y = +ym.slice(0, 4), m = +ym.slice(5, 7); ym = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`; }   // plain arithmetic: local-time Date + toISOString stays in the same month east of UTC (UAE)
     }
     for (const j of db.prepare('SELECT * FROM journal_entries').all()) add(j.date, `JV-${j.id}`, j.memo, 'journal', JSON.parse(j.lines || '[]').map(l => mk(l.account, +l.debit || 0, +l.credit || 0)));
     return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

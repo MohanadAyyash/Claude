@@ -217,7 +217,7 @@ function compliance() {
       if (e[f] && e[f] < soon) add(e[f] < t ? 'bad' : 'warn', 'doc_' + key, { who: e.name, date: e[f] });
   // salaries: final run unpaid more than 15 days after month end -> WPS delay
   for (const m of db.prepare("SELECT DISTINCT month FROM payroll WHERE status='final' AND paid_date IS NULL").all()) {
-    const due = new Date(+m.month.slice(0, 4), +m.month.slice(5, 7), 15).toISOString().slice(0, 10);
+    const y = +m.month.slice(0, 4), mo = +m.month.slice(5, 7), due = mo === 12 ? `${y + 1}-01-15` : `${y}-${String(mo + 1).padStart(2, '0')}-15`;
     if (due < t) add('bad', 'wps_late', { month: m.month });
   }
   for (const d of db.prepare('SELECT name,entity,expiry_date FROM documents WHERE expiry_date IS NOT NULL AND expiry_date<? ORDER BY expiry_date').all(soon)) add(d.expiry_date < t ? 'bad' : 'warn', 'doc_file', { who: d.name, date: d.expiry_date });
@@ -309,7 +309,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/odoo')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
