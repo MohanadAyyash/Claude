@@ -10,7 +10,7 @@ projectDetail = async id => {
   const A = s.advance, R = s.retention, fin = ['admin', 'accountant'].includes(ME.role);
   const pct = A.invoiced ? Math.min(100, A.recovered / A.invoiced * 100) : 0;
   const row = (l, v, c = '') => `<tr><td>${l}</td><td class="n ${c}">${v}</td></tr>`;
-  const card = document.createElement('div'); card.className = 'card';
+  const card = document.createElement('div'); card.className = 'card'; card.id = 'contract-card';
   card.innerHTML = `<h2>${tr('الدفعة المقدمة والمحتجزات', 'Advance payment & retention')}</h2><div class="f2">
     <div><h3>${tr('الدفعة المقدمة', 'Advance payment')} ${A.pct ? `(${A.pct}% — ${tr('استرداد', 'recovered at')} ${A.recovery_pct}%)` : ''}</h3>
       ${A.invoiced ? `<table>${row(tr('فاتورة المقدمة', 'Advance invoiced'), money(A.invoiced))}${row(tr('المسترد من المستخلصات', 'Recovered from progress invoices'), money(A.recovered))}${row(tr('المتبقي للاسترداد', 'Still to recover'), money(A.remaining), A.remaining > 0 ? 'warn' : 'pos')}</table>
