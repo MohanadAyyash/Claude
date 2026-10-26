@@ -80,7 +80,7 @@ const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', READR], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['parties', 'العملاء والموردون', 'Clients & suppliers', READR],
   ['stock', 'المخزون', 'Stock', READR], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
   ['#', 'المحاسبة', 'Accounting'], ['financials', 'القوائم المالية', 'Financial statements', FINR], ['ledger', 'دفتر الأستاذ', 'General ledger', FINR], ['journal', 'قيود اليومية', 'Journal entries', FINR], ['coa', 'دليل الحسابات', 'Chart of accounts', FINR], ['bank', 'مطابقة البنك', 'Bank reconciliation', FINR], ['zoho', 'الربط مع Zoho Books', 'Zoho Books link', FINR],
-  ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager']],
+  ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['approvals', 'الاعتمادات', 'Approvals', ['admin', 'accountant', 'manager', 'hr']], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager']],
   ['leave', 'الإجازات', 'Leave', HRR], ['hrrequests', 'طلبات الموظفين', 'Employee requests', HRR], ['letters', 'الخطابات الرسمية', 'Official letters', HRR], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS', EMPR],
   ['#', 'الضرائب والامتثال', 'Tax & compliance'], ['vat', 'ضريبة القيمة المضافة', 'VAT report', ['admin', 'accountant', 'viewer']], ['ctax', 'ضريبة الشركات', 'Corporate tax', FINR], ['compliance', 'الامتثال والتدقيق', 'Compliance & audit', FINR], ['documents', 'المستندات', 'Documents', [...READR, 'hr']],
   ['notifications', 'الإشعارات', 'Notifications', ['admin', 'accountant', 'manager', 'hr', 'viewer', 'employee']],
@@ -227,6 +227,8 @@ const projectFields = async () => [
   { k: 'contract_value', ar: 'قيمة العقد (بدون ضريبة)', en: 'Contract value (ex VAT)', type: 'number', def: 0 }, { k: 'retention_pct', ar: 'نسبة المحتجزات % (للفواتير)', en: 'Retention % (on invoices)', type: 'number', def: 0 },
   { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: ['active', 'completed', 'hold', 'cancelled'].map(k => [k, tr(...STATUS[k])]) },
   { k: 'start_date', ar: 'تاريخ البدء', en: 'Start date', type: 'date' }, { k: 'end_date', ar: 'تاريخ الانتهاء', en: 'End date', type: 'date' },
+  { k: 'site_lat', ar: 'خط العرض للموقع (لحضور الجوال)', en: 'Site latitude (phone attendance)', type: 'number' }, { k: 'site_lng', ar: 'خط الطول للموقع', en: 'Site longitude', type: 'number' },
+  { k: 'site_radius', ar: 'نطاق الموقع بالمتر', en: 'Site radius (m)', type: 'number', def: 300 },
   { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }];
 // Edit / delete a project from its detail page (the list opens the detail page, not the CRUD modal)
 async function editProject(id) {
@@ -477,6 +479,7 @@ PAGES.vat = async () => {
 PAGES.employees = async () => {
   const projects = await api('GET', 'projects');
   const rows = await api('GET', 'employees');
+  const managers = (await api('GET', 'users').catch(() => [])).filter(u => u.role !== 'employee' || u.employee_id);
   const grat = {}; await Promise.all(rows.map(async e => grat[e.id] = (await api('GET', `employees/${e.id}/gratuity`)).amount));
   const c = await crud({ title: tr('الموظفون والعمال', 'Employees & labour'), table: 'employees', load: async () => rows, extra: xl('employees'), onModal: (m, row) => window.employeeExtras && employeeExtras(m, row),
     intro: `<p class="muted">${tr('أدخل بيانات كل موظف كما هي في عقد العمل وبطاقة العمل وحسابه البنكي — هذه البيانات مطلوبة لملف حماية الأجور (WPS). مكافأة نهاية الخدمة التقديرية حسب المرسوم بقانون اتحادي رقم ٣٣ لسنة ٢٠٢١.', 'Enter each employee exactly as on their contract, labour card and bank account — required for the WPS file. Estimated end-of-service gratuity per Federal Decree-Law 33/2021.')}</p>`,
@@ -494,6 +497,8 @@ PAGES.employees = async () => {
       { k: 'passport_expiry', ar: 'انتهاء الجواز', en: 'Passport expiry', type: 'date' }, { k: 'card_expiry', ar: 'انتهاء بطاقة العمل', en: 'Labour card expiry', type: 'date' },
       { k: 'phone', ar: 'الهاتف', en: 'Phone' }, { k: 'email', ar: 'البريد', en: 'Email' }, { k: 'emergency_contact', ar: 'جهة اتصال للطوارئ', en: 'Emergency contact' },
       { k: 'leave_opening', ar: 'رصيد إجازات افتتاحي (أيام)', en: 'Opening leave balance (days)', type: 'number', def: 0 },
+      { k: 'manager_user_id', ar: 'المدير المباشر (يعتمد الإجازات أولاً)', en: 'Line manager (approves leave first)', type: 'select', options: refOpts(managers, u => `${u.display_name || u.username} (${tr(...(ROLE[u.role] || [u.role, u.role]))})`) },
+      { k: 'probation_end', ar: 'نهاية فترة التجربة (حتى ٦ أشهر)', en: 'Probation ends (max 6 months)', type: 'date' },
       { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }],
     cols: [{ ar: 'الاسم', en: 'Name', k: 'name' }, { ar: 'المهنة', en: 'Role', k: 'designation' }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) },
       { ar: 'تحميل التكلفة', en: 'Cost charged to', f: r => { const p = projects.find(x => x.id === r.project_id); return p ? esc(p.name) : `<span class="muted">${tr('عمومي', 'General')}</span>`; } }, { ar: 'الإجمالي الشهري', en: 'Monthly total', n: 1, f: r => money(r.basic + r.housing + r.other_allowance) }, { ar: 'نهاية الخدمة (تقديري)', en: 'Gratuity (est.)', n: 1, f: r => money(grat[r.id]) },

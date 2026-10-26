@@ -32,6 +32,20 @@ module.exports = ctx => {
     const unpaid = round(approved.filter(l => l.type === 'unpaid').reduce((s, l) => s + l.days, 0));
     return { months_of_service: months, accrued, opening: e.leave_opening || 0, used, balance: round(accrued + (e.leave_opening || 0) - used), sick_used_12m: sick, sick_left: Math.max(0, 90 - sick), unpaid_taken: unpaid };
   }
+  ctx.hrBalance = balance;
+
+  // last step of an approval chain (modules/workforce.js): write the decision and tell the employee
+  ctx.hrFinalize = (table, id, status, me, note, force, checkOnly) => {
+    const r = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(id);
+    if (table === 'leave_requests' && status === 'approved' && r.type === 'annual' && !force) {
+      const bal = balance(emp(r.employee_id)).balance;
+      if (r.days > bal) bad(`Insufficient annual leave balance (${bal} days available, ${r.days} requested)`);
+    }
+    if (checkOnly) return;
+    db.prepare(`UPDATE ${table} SET status=?, decided_by=?, decided_at=?, decision_note=? WHERE id=?`).run(status, me.username, today(), note || '', id);
+    const what = table === 'leave_requests' ? `${r.type} ${r.start_date} → ${r.end_date}` : r.type;
+    if (ctx.notify) ctx.notify({ employee_id: r.employee_id }, { title: status === 'approved' ? 'تمت الموافقة على طلبك / Your request was approved' : 'تم رفض طلبك / Your request was rejected', body: what + (note ? ' — ' + note : ''), url: '#portal' }).catch(() => {});
+  };
 
   function newLeave(employee_id, b, createdBy) {
     if (!emp(employee_id)) bad('Employee not found');
@@ -42,13 +56,15 @@ module.exports = ctx => {
     const clash = db.prepare("SELECT 1 FROM leave_requests WHERE employee_id=? AND status IN ('pending','approved') AND start_date<=? AND end_date>=?").get(employee_id, b.end_date, b.start_date);
     if (clash) bad('There is already a leave request covering these dates');
     const r = db.prepare('INSERT INTO leave_requests(employee_id,type,start_date,end_date,days,reason,created) VALUES(?,?,?,?,?,?,?)').run(employee_id, b.type, b.start_date, b.end_date, days, b.reason || '', today());
-    return Number(r.lastInsertRowid);
+    const id = Number(r.lastInsertRowid); if (ctx.approvals) ctx.approvals.start('leave', id);
+    return id;
   }
   function newRequest(employee_id, b) {
     if (!emp(employee_id)) bad('Employee not found');
     if (!REQ_TYPES.includes(b.type)) bad('Invalid request type');
     const r = db.prepare('INSERT INTO hr_requests(employee_id,type,details,amount,created) VALUES(?,?,?,?,?)').run(employee_id, b.type, b.details || '', +b.amount || 0, today());
-    return Number(r.lastInsertRowid);
+    const id = Number(r.lastInsertRowid); if (ctx.approvals) ctx.approvals.start('request', id);
+    return id;
   }
   function newLetter(type, employee_id, b, user) {
     if (!LETTER_TYPES.includes(type)) bad('Invalid letter type');
@@ -76,22 +92,24 @@ module.exports = ctx => {
     for (const l of db.prepare("SELECT * FROM leave_requests WHERE employee_id=? AND type='unpaid' AND status='approved' AND start_date<=? AND end_date>=?").all(e.id, last, first))
       unpaid += spanDays(l.start_date < first ? first : l.start_date, l.end_date > last ? last : l.end_date);
     const att = db.prepare("SELECT COALESCE(SUM(ot_normal_hours),0) n, COALESCE(SUM(ot_special_hours),0) s, SUM(status='absent') a FROM attendance WHERE employee_id=? AND date>=? AND date<=?").get(e.id, first, last);
-    const away = Math.min(30, unpaid + (att.a || 0));
+    // sick leave pay (Art. 31): per year of service 15 days full pay, 30 half, 45 unpaid; unpaid during probation
+    const sickDays = new Set();
+    for (const l of db.prepare("SELECT start_date,end_date FROM leave_requests WHERE employee_id=? AND type='sick' AND status='approved' AND start_date<=?").all(e.id, last))
+      for (let t = Date.parse(l.start_date + 'T00:00:00Z'); t <= Date.parse(l.end_date + 'T00:00:00Z'); t += 864e5) sickDays.add(new Date(t).toISOString().slice(0, 10));
+    let sickCut = 0;
+    for (const d of [...sickDays].filter(d => d >= first && d <= last)) {
+      if (e.probation_end && d <= e.probation_end) { sickCut += 1; continue; }
+      let ys = e.join_date ? d.slice(0, 4) + e.join_date.slice(4) : d.slice(0, 4) + '-01-01'; if (ys > d) ys = (+d.slice(0, 4) - 1) + ys.slice(4);
+      const n = [...sickDays].filter(x => x >= ys && x <= d).length;
+      sickCut += n <= 15 ? 0 : n <= 45 ? 0.5 : 1;
+    }
+    const away = Math.min(30, unpaid + (att.a || 0) + sickCut);
     return { days_worked: Math.max(0, baseDays - away), leave_days: away, ot_normal_hours: att.n, ot_special_hours: att.s };
   };
 
   const isHr = me => ['admin', 'hr'].includes(me.role);
-  const decide = (table, id, b, me, req) => {
-    const r = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(id); if (!r) bad('Not found');
-    if (r.status !== 'pending') bad('This request was already decided');
-    if (!['approved', 'rejected'].includes(b.status)) bad('Decision must be approved or rejected');
-    if (table === 'leave_requests' && b.status === 'approved' && r.type === 'annual' && !b.force) {
-      const bal = balance(emp(r.employee_id)).balance;
-      if (r.days > bal) bad(`Insufficient annual leave balance (${bal} days available, ${r.days} requested)`);
-    }
-    db.prepare(`UPDATE ${table} SET status=?, decided_by=?, decided_at=?, decision_note=? WHERE id=?`).run(b.status, me.username, today(), b.note || '', id);
-    audit(req, b.status, table, id, `${b.status} #${id}`);
-  };
+  // HR deciding from the leave / requests pages acts on the current level of the approval chain
+  const decide = (table, id, b, me, req) => ctx.approvals.decide(table === 'leave_requests' ? 'leave' : 'request', id, me, b, req);
 
   return {
     async handle(req, res, url, [a, b, c, d], me) {
@@ -115,7 +133,7 @@ module.exports = ctx => {
         if (m === 'DELETE' && (b === 'leave' || b === 'request')) {
           const t = b === 'leave' ? 'leave_requests' : 'hr_requests', r = db.prepare(`SELECT * FROM ${t} WHERE id=? AND employee_id=?`).get(+c, e.id);
           if (!r || r.status !== 'pending') bad('Only your pending requests can be cancelled');
-          db.prepare(`DELETE FROM ${t} WHERE id=?`).run(r.id); return send(res, 200, { ok: 1 }), true;
+          db.prepare(`DELETE FROM ${t} WHERE id=?`).run(r.id); ctx.approvals.drop(b === 'leave' ? 'leave' : 'request', r.id); return send(res, 200, { ok: 1 }), true;
         }
         if (m === 'GET' && (b === 'payslip' || b === 'letter')) {
           let ok = false;
@@ -132,16 +150,16 @@ module.exports = ctx => {
 
       // ---------------- attendance (HR + site managers) ----------------
       if (a === 'attendance') {
-        if (m === 'GET') {
+        if (m === 'GET' && !b) {
           const date = url.searchParams.get('date'), month = url.searchParams.get('month');
           const rows = date ? db.prepare('SELECT * FROM attendance WHERE date=?').all(date) : db.prepare('SELECT * FROM attendance WHERE date>=? AND date<=? ORDER BY date').all(`${month}-01`, `${month}-31`);
           return send(res, 200, { roster: db.prepare("SELECT id,name,designation,project_id FROM employees WHERE status='active' ORDER BY name").all(), rows }), true;
         }
-        if (m === 'PUT') {
+        if (m === 'PUT' && !b) {
           const x = await readBody(req);
           if (!emp(+x.employee_id)) bad('Employee not found'); if (!/^\d{4}-\d\d-\d\d$/.test(x.date || '')) bad('Invalid date'); if (!ATT.includes(x.status)) bad('Invalid status');
-          db.prepare(`INSERT INTO attendance(employee_id,date,status,ot_normal_hours,ot_special_hours,project_id,note) VALUES(?,?,?,?,?,?,?)
-            ON CONFLICT(employee_id,date) DO UPDATE SET status=excluded.status, ot_normal_hours=excluded.ot_normal_hours, ot_special_hours=excluded.ot_special_hours, project_id=excluded.project_id, note=excluded.note`)
+          db.prepare(`INSERT INTO attendance(employee_id,date,status,ot_normal_hours,ot_special_hours,project_id,note,source) VALUES(?,?,?,?,?,?,?,'manual')
+            ON CONFLICT(employee_id,date) DO UPDATE SET status=excluded.status, ot_normal_hours=excluded.ot_normal_hours, ot_special_hours=excluded.ot_special_hours, project_id=excluded.project_id, note=excluded.note, source='manual'`)
             .run(+x.employee_id, x.date, x.status, +x.ot_normal_hours || 0, +x.ot_special_hours || 0, +x.project_id || null, x.note || '');
           return send(res, 200, { ok: 1 }), true;
         }
@@ -164,19 +182,20 @@ module.exports = ctx => {
         if (m === 'GET') return send(res, 200, db.prepare('SELECT l.*, e.name FROM leave_requests l JOIN employees e ON e.id=l.employee_id ORDER BY (l.status=\'pending\') DESC, l.id DESC').all()), true;
         if (m === 'POST' && !c) { const body = await readBody(req), id = newLeave(+body.employee_id, body); audit(req, 'create', 'leave_requests', id, 'by HR'); return send(res, 200, { id }), true; }
         if (m === 'PUT' && d === 'decide') { decide('leave_requests', +c, await readBody(req), me, req); return send(res, 200, { ok: 1 }), true; }
-        if (m === 'DELETE') { db.prepare('DELETE FROM leave_requests WHERE id=?').run(+c); audit(req, 'delete', 'leave_requests', +c); return send(res, 200, { ok: 1 }), true; }
+        if (m === 'DELETE') { db.prepare('DELETE FROM leave_requests WHERE id=?').run(+c); ctx.approvals.drop('leave', +c); audit(req, 'delete', 'leave_requests', +c); return send(res, 200, { ok: 1 }), true; }
       }
       if (b === 'requests') {
         if (m === 'GET') return send(res, 200, db.prepare('SELECT r.*, e.name FROM hr_requests r JOIN employees e ON e.id=r.employee_id ORDER BY (r.status=\'pending\') DESC, r.id DESC').all()), true;
         if (m === 'POST' && !c) { const body = await readBody(req), id = newRequest(+body.employee_id, body); audit(req, 'create', 'hr_requests', id, 'by HR'); return send(res, 200, { id }), true; }
         if (m === 'PUT' && d === 'decide') { decide('hr_requests', +c, await readBody(req), me, req); return send(res, 200, { ok: 1 }), true; }
-        if (m === 'DELETE') { db.prepare('DELETE FROM hr_requests WHERE id=?').run(+c); return send(res, 200, { ok: 1 }), true; }
+        if (m === 'DELETE') { db.prepare('DELETE FROM hr_requests WHERE id=?').run(+c); ctx.approvals.drop('request', +c); return send(res, 200, { ok: 1 }), true; }
       }
       if (b === 'letters') {
         if (m === 'POST') {
           const x = await readBody(req), l = newLetter(x.type, +x.employee_id, x, me.username);
           if (x.request_id) db.prepare("UPDATE hr_requests SET letter_id=?, status='approved', decided_by=?, decided_at=? WHERE id=? AND employee_id=? AND status='pending'").run(l.id, me.username, today(), +x.request_id, +x.employee_id);
           if (x.request_id) db.prepare('UPDATE hr_requests SET letter_id=? WHERE id=? AND employee_id=?').run(l.id, +x.request_id, +x.employee_id);
+          if (x.request_id) db.prepare("UPDATE approval_steps SET status='approved', decided_by=?, decided_at=?, note='letter issued' WHERE kind='request' AND ref_id=? AND status IN ('pending','waiting')").run(me.username, today(), +x.request_id);
           audit(req, 'issue', 'letters', l.id, `${l.number} ${x.type}`);
           return send(res, 200, l), true;
         }

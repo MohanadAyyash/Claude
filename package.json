@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "start": "node --no-warnings server.js",
-    "test": "node --no-warnings test.js && node --no-warnings test-zoho.js && node --no-warnings test-mobile.js",
+    "test": "node --no-warnings test.js && node --no-warnings test-zoho.js && node --no-warnings test-mobile.js && node --no-warnings test-workforce.js",
     "build:standalone": "node standalone/build.js",
     "test:standalone": "node standalone/selftest.js && node standalone/selftest-cloud.js"
   },
