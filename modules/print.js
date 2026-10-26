@@ -1,5 +1,5 @@
 // Printable documents with letterhead: HTML (browser print) and PDF (headless Chrome/Edge).
-const { page, cover, CSP } = require('../lib/render');
+const { page, cover, CSP, esc } = require('../lib/render');
 const { htmlToPdf } = require('../lib/pdf');
 
 module.exports = ctx => {
@@ -13,7 +13,8 @@ module.exports = ctx => {
     if (doc.voided) bad('Voided documents cannot be printed');
     const S = getSettings(), isCN = doc.kind === 'credit_note', isQ = kind === 'quotes';
     const body = docHtml({ kind, doc: { ...doc, client_trn: e.parties[doc.client_id]?.trn, client_address: e.parties[doc.client_id]?.address }, settings: S, bare: true, mode: 'print' });
-    const out = { title: `${isQ ? 'Quotation' : isCN ? 'Credit note' : 'Tax invoice'} ${doc.number}`, filename: doc.number.replace(/[\/]/g, '-'), body, ref: doc.number, date: doc.date, label: 'Authorised signatory / المفوّض بالتوقيع', receiver: isQ ? undefined : 'Received by / المستلم' };
+    const accepted = isQ && doc.accepted_at ? `<div style="margin-top:6mm;padding:3mm;border:.5pt solid #2e7d4f;font-size:9pt"><b>Accepted online by the client / قبول العميل إلكترونياً:</b> ${esc(doc.accepted_by)} — ${esc(doc.accepted_at)}${/^data:image\/png;base64,/.test(doc.signature || '') ? `<br><img src="${doc.signature}" style="height:22mm" alt="signature">` : ''}</div>` : '';
+    const out = { title: `${isQ ? 'Quotation' : isCN ? 'Credit note' : 'Tax invoice'} ${doc.number}`, filename: doc.number.replace(/[\/]/g, '-'), body: body + accepted, ref: doc.number, date: doc.date, label: 'Authorised signatory / المفوّض بالتوقيع', receiver: isQ ? undefined : 'Received by / المستلم' };
     if (isQ && !(q && q.get && q.get('cover') === '0')) {          // quotations open with the brand cover page
       out.cover = cover(S, ctx.brand, { ref: doc.number, title: `Quotation for ${doc.project_name || 'Works'}`, title_ar: `عرض سعر لـ ${doc.project_name || 'الأعمال'}`,
         rows: [['Project', doc.project_name], ['Submitted to', doc.client_name], ['Scope', (doc.items[0] || {}).description], ['Date', doc.date], ['Validity', `${doc.validity_days} days`]] });

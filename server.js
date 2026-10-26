@@ -319,7 +319,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/contract'), require('./modules/statements'), require('./modules/collab'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/contract'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -666,6 +666,7 @@ const server = http.createServer(async (req, res) => {
     if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
+    if ((url.pathname.startsWith('/q/') || url.pathname.startsWith('/pub/q/')) && ctx.publicHandler && await ctx.publicHandler(req, res, url)) return;   // client quote acceptance (no login)
     let p = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
     if (p === '/' || p === '\\') p = '/index.html';
     const file = path.join(PUB, p);

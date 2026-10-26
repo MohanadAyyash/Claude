@@ -5,7 +5,7 @@ const CATS = ['materials', 'labour', 'subcontract', 'equipment', 'transport', 'p
 const STATUS = ['on_track', 'at_risk', 'off_track', 'on_hold', 'complete'];
 const TASK_ST = ['todo', 'doing', 'done', 'cancelled'];
 const TAGS = ['site', 'commercial', 'authorities', 'hse', 'qaqc', 'procurement', 'other'];
-const ENTITIES = ['project', 'party', 'invoice', 'quote', 'bill', 'po', 'employee', 'task', 'subcontract'];
+const ENTITIES = ['project', 'party', 'invoice', 'quote', 'bill', 'po', 'employee', 'task', 'subcontract', 'tender'];
 
 module.exports = ctx => {
   const { db, send, bad, audit, readBody, today, round } = ctx;
@@ -89,7 +89,7 @@ module.exports = ctx => {
     const r = db.prepare('INSERT INTO notes(entity,entity_id,user_id,username,body,created) VALUES(?,?,?,?,?,?)').run(entity, id, me.id, me.username, body, now());
     const names = [...new Set((body.match(/@([\w.\-@]{3,40})/g) || []).map(m => m.slice(1).toLowerCase()))];
     const users = names.length ? db.prepare(`SELECT id, username FROM users WHERE lower(username) IN (${names.map(() => '?').join(',')}) AND COALESCE(disabled,0)=0`).all(...names).filter(u => u.id !== me.id) : [];
-    const link = { project: `#projects/${id}`, task: `#tasks/${id}`, party: '#parties', invoice: '#invoices', quote: '#quotes', bill: '#bills', po: '#po', employee: '#employees', subcontract: '#subcontracts' }[entity];
+    const link = { project: `#projects/${id}`, task: `#tasks/${id}`, party: '#parties', invoice: '#invoices', quote: '#quotes', bill: '#bills', po: '#po', employee: '#employees', subcontract: '#subcontracts', tender: '#tenders' }[entity];
     if (users.length) notify(users.map(u => u.id), { title: `${me.username} ذكرك / mentioned you`, body: body.slice(0, 180), url: link });
     return { id: Number(r.lastInsertRowid), mentioned: users.map(u => u.username) };
   }

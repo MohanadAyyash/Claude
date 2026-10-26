@@ -75,7 +75,7 @@ const setupScreen = needToken => authBox(tr('إعداد النظام لأول م
 const FINR = ['admin', 'accountant'], READR = ['admin', 'accountant', 'manager', 'viewer'], HRR = ['admin', 'hr'], EMPR = ['admin', 'accountant', 'hr'];
 const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['portal', 'بوابتي', 'My portal', ['employee']], ['tasks', 'المهام', 'Tasks', ['admin', 'accountant', 'manager', 'hr', 'viewer']],
-  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['projects', 'المشاريع', 'Projects', READR], ['quotes', 'عروض الأسعار', 'Quotations', READR], ['invoices', 'فواتير العملاء', 'Sales invoices', READR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', READR],
+  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['tenders', 'المناقصات والفرص', 'Tenders & opportunities', READR], ['projects', 'المشاريع', 'Projects', READR], ['quotes', 'عروض الأسعار', 'Quotations', READR], ['invoices', 'فواتير العملاء', 'Sales invoices', READR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', READR],
   ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', READR], ['po', 'أوامر الشراء', 'Purchase orders', READR], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', READR],
   ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', READR], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['parties', 'العملاء والموردون', 'Clients & suppliers', READR],
   ['stock', 'المخزون', 'Stock', READR], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
@@ -327,14 +327,16 @@ async function docModal(kind, row, preset = {}) {
     customer_trn_missing: tr('العميل بدون رقم ضريبي (TRN) — مطلوب في الفاتورة الضريبية للشركات', 'Client has no TRN — required on tax invoices to VAT-registered businesses'),
     customer_address_missing: tr('عنوان العميل غير مسجّل — مطلوب في الفاتورة الضريبية', 'Client address missing — required on tax invoices') };
   const m = modal(`<h2>${isQ ? tr('عرض سعر', 'Quotation') : isCN ? tr('إشعار دائن', 'Credit note') : tr('فاتورة ضريبية', 'Tax invoice')} ${esc(r.number || '')} ${dead ? tag('void') : ''}</h2>
-    ${dead ? `<p class="err">${tr('ملغاة', 'Voided')}: ${esc(r.void_reason || '')}</p>` : ''}${(r.warnings || []).map(w => `<p class="err" style="color:var(--warn)">⚠ ${W[w] || w}</p>`).join('')}<div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>
+    ${dead ? `<p class="err">${tr('ملغاة', 'Voided')}: ${esc(r.void_reason || '')}</p>` : ''}
+    ${isQ && r.accepted_at ? `<p class="ok">✔ ${tr('قبله العميل إلكترونياً', 'Accepted online by the client')}: <b>${esc(r.accepted_by)}</b> — ${esc(r.accepted_at)}${/^data:image\/png;base64,/.test(r.signature || '') ? `<br><img src="${r.signature}" alt="" style="height:60px;background:#fff;border:1px solid #ddd">` : ''}</p>` : ''}
+    ${isQ && r.rejected_at ? `<p class="err">${tr('رفضه العميل', 'Declined by the client')} — ${esc(r.rejected_at)}${r.client_comment ? `: ${esc(r.client_comment)}` : ''}</p>` : ''}${(r.warnings || []).map(w => `<p class="err" style="color:var(--warn)">⚠ ${W[w] || w}</p>`).join('')}<div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>
     ${e.html}<div class="totals" id="tot"></div>
     <div class="f2" style="margin-top:10px">${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}${isQ ? field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms) : ''}</div>
     <div class="acts">${dead ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}
     ${row && !dead ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}
     ${row && !dead ? `<button class="btn sec" id="mail">${tr('إرسال بالإيميل', 'Email')}</button>` : ''}${row && !isQ && !isCN && !dead && row.balance > 0 && row.status === 'overdue' ? `<button class="btn sec" id="remind">${tr('تذكير بالسداد', 'Payment reminder')}</button>` : ''}
     ${row && !isQ && !isCN && !dead ? `<button class="btn sec" id="pay">${tr('تسجيل دفعة', 'Record payment')}</button><button class="btn sec" id="cn">${tr('إصدار إشعار دائن', 'Issue credit note')}</button>` : ''}
-    ${row && isQ && !row.project_id ? `<button class="btn sec" id="conv">${tr('تحويل إلى مشروع', 'Convert to project')}</button>` : ''}
+    ${row && isQ && !row.project_id ? `<button class="btn sec" id="conv">${tr('تحويل إلى مشروع', 'Convert to project')}</button>` : ''}${row && isQ && !row.accepted_at && !row.rejected_at && !window.STANDALONE ? `<button class="btn sec" id="share">🔗 ${tr('رابط القبول للعميل', 'Client acceptance link')}</button>` : ''}
     <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && isQ ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}${row && !isQ && !dead ? `<button class="btn bad" id="void">${tr('إلغاء الفاتورة', 'Void')}</button>` : ''}</div>`, true);
   if (dead) m.querySelectorAll('input,select,textarea').forEach(x => x.disabled = true);
   bindDoc(m, e.row, 1, !isQ);
@@ -367,6 +369,14 @@ async function docModal(kind, row, preset = {}) {
     });
     if ($('#pay', m)) $('#pay', m).onclick = () => paymentModal({ kind: 'in', invoice_id: row.id, amount: row.balance });
     if ($('#conv', m)) $('#conv', m).onclick = guard(async () => { const r2 = await api('POST', `quotes/${row.id}/convert`); closeModal(); go('projects/' + r2.project_id); });
+    if ($('#share', m)) $('#share', m).onclick = guard(async () => {
+      const s = await api('POST', `quotes/${row.id}/share`, {}), link = location.origin + s.path;
+      const m2 = modal(`<h2>${tr('رابط القبول للعميل', 'Client acceptance link')}</h2><p class="muted">${tr('يفتح العميل الرابط دون تسجيل دخول، يراجع العرض، ثم يقبله بالاسم والتوقيع أو يرفضه بملاحظة. يصلك تنبيه فوراً.', 'The client opens the link without signing in, reviews the quotation, then accepts with name and signature or declines with a comment. You are notified right away.')}</p>
+        <input id="lnk" dir="ltr" readonly value="${esc(link)}" onclick="this.select()"><div class="acts"><button class="btn" id="cp">${tr('نسخ', 'Copy')}</button><button class="btn sec" id="em">✉ ${tr('إرسال بالبريد مع العرض', 'Email with the quotation')}</button><a class="btn sec" target="_blank" href="${esc(link)}">${tr('معاينة', 'Preview')}</a><button class="btn sec" id="cl">${tr('إغلاق', 'Close')}</button></div>`);
+      $('#cp', m2).onclick = guard(async () => { await navigator.clipboard.writeText(link); toast(tr('تم النسخ', 'Copied')); });
+      $('#em', m2).onclick = guard(async () => { const to = prompt(tr('أرسل إلى البريد:', 'Send to email:'), row.client_email || ''); if (!to) return; await api('POST', `quotes/${row.id}/email`, { to, message: `To accept this quotation online, open: ${link}\nلقبول العرض إلكترونياً افتح الرابط أعلاه.` }); toast(tr('تم الإرسال', 'Email sent')); });
+      $('#cl', m2).onclick = closeModal;
+    });
   }
 }
 window.openInvoice = guard(async id => docModal('invoices', await api('GET', 'invoices/' + id)));

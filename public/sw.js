@@ -1,7 +1,7 @@
 // Service worker: opens the app instantly from the phone's cache, fetches a new version once after each update
 // (the server stamps VERSION with a hash of the app files), and shows push notifications. API calls always go to the server.
 const VERSION = '__VERSION__', CACHE = 'trigon-' + VERSION, BRAND = 'trigon-brand';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ops.js', 'contract.js', 'statements.js', 'hr.js', 'workforce.js', 'collab.js', 'accounting.js', 'zoho.js', 'mobile.js', 'boot.js', 'manifest.webmanifest', 'icon-192.png', 'fonts/fonts.css',
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ops.js', 'contract.js', 'statements.js', 'sales.js', 'hr.js', 'workforce.js', 'collab.js', 'accounting.js', 'zoho.js', 'mobile.js', 'boot.js', 'manifest.webmanifest', 'icon-192.png', 'fonts/fonts.css',
   'fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2', 'fonts/ibm-plex-sans-arabic-arabic-600-normal.woff2', 'fonts/archivo-latin-400-normal.woff2', 'fonts/archivo-latin-600-normal.woff2'];
 
 self.addEventListener('install', e => {
@@ -23,6 +23,7 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (url.pathname.startsWith('/api/')) return;                                          // data: always live
+  if (url.pathname.startsWith('/q/') || url.pathname.startsWith('/pub/')) return;           // client-facing quotation pages: always from the server
   if (req.mode === 'navigate') { e.respondWith(caches.match('index.html').then(r => r || fetch(req))); return; }   // hash routes → one page
   e.respondWith(caches.match(req, { ignoreSearch: true }).then(r => r || fetch(req).then(res => {
     if (res.ok && url.pathname.startsWith('/fonts/')) caches.open(CACHE).then(c => c.put(req, res.clone()));
