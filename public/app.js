@@ -75,7 +75,7 @@ const setupScreen = needToken => authBox(tr('إعداد النظام لأول م
 const FINR = ['admin', 'accountant'], READR = ['admin', 'accountant', 'manager', 'viewer'], HRR = ['admin', 'hr'], EMPR = ['admin', 'accountant', 'hr'];
 const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['portal', 'بوابتي', 'My portal', ['employee']],
-  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['projects', 'المشاريع', 'Projects', READR], ['quotes', 'عروض الأسعار', 'Quotations', READR], ['invoices', 'فواتير العملاء', 'Sales invoices', READR], ['sitediary', 'يومية الموقع', 'Site diary', READR],
+  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['projects', 'المشاريع', 'Projects', READR], ['quotes', 'عروض الأسعار', 'Quotations', READR], ['invoices', 'فواتير العملاء', 'Sales invoices', READR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', READR],
   ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', READR], ['po', 'أوامر الشراء', 'Purchase orders', READR], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', READR],
   ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', READR], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['parties', 'العملاء والموردون', 'Clients & suppliers', READR],
   ['stock', 'المخزون', 'Stock', READR], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],

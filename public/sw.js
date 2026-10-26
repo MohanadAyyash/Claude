@@ -1,7 +1,7 @@
 // Service worker: opens the app instantly from the phone's cache, fetches a new version once after each update
 // (the server stamps VERSION with a hash of the app files), and shows push notifications. API calls always go to the server.
 const VERSION = '__VERSION__', CACHE = 'trigon-' + VERSION, BRAND = 'trigon-brand';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ops.js', 'contract.js', 'hr.js', 'workforce.js', 'accounting.js', 'zoho.js', 'mobile.js', 'boot.js', 'manifest.webmanifest', 'icon-192.png', 'fonts/fonts.css',
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ops.js', 'contract.js', 'statements.js', 'hr.js', 'workforce.js', 'accounting.js', 'zoho.js', 'mobile.js', 'boot.js', 'manifest.webmanifest', 'icon-192.png', 'fonts/fonts.css',
   'fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2', 'fonts/ibm-plex-sans-arabic-arabic-600-normal.woff2', 'fonts/archivo-latin-400-normal.woff2', 'fonts/archivo-latin-600-normal.woff2'];
 
 self.addEventListener('install', e => {
