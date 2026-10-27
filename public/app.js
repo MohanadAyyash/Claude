@@ -388,7 +388,7 @@ async function docModal(kind, row, preset = {}) {
     ${e.html}<div class="totals" id="tot"></div>
     <div class="f2" style="margin-top:10px">${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}${isQ ? field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms) : ''}</div>
     <div class="acts">${dead ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}
-    ${row && !dead ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}
+    ${row && !dead ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}${row && !dead && row.ipc ? `<button class="btn sec" id="ipc">${tr('شهادة الدفع (المستخلص)', 'Payment certificate')}</button><button class="btn sec" id="ipcpdf">${tr('المستخلص PDF', 'Certificate PDF')}</button>` : ''}
     ${row && !dead ? `<button class="btn sec" id="mail">${tr('إرسال بالإيميل', 'Email')}</button>` : ''}${row && !isQ && !isCN && !dead && row.balance > 0 && row.status === 'overdue' ? `<button class="btn sec" id="remind">${tr('تذكير بالسداد', 'Payment reminder')}</button>` : ''}
     ${row && !isQ && !isCN && !dead ? `<button class="btn sec" id="pay">${tr('تسجيل دفعة', 'Record payment')}</button><button class="btn sec" id="cn">${tr('إصدار إشعار دائن', 'Issue credit note')}</button>` : ''}
     ${row && isQ && !row.project_id ? `<button class="btn sec" id="conv">${tr('تحويل إلى مشروع', 'Convert to project')}</button>` : ''}${row && isQ && !row.accepted_at && !row.rejected_at && !window.STANDALONE ? `<button class="btn sec" id="share">🔗 ${tr('رابط القبول للعميل', 'Client acceptance link')}</button>` : ''}
@@ -405,6 +405,7 @@ async function docModal(kind, row, preset = {}) {
   });
   if (row) {
     if ($('#print', m)) { $('#print', m).onclick = () => printDoc(kind, row); $('#pdf', m).onclick = () => pdfDoc(kind, row); }
+    if ($('#ipc', m)) { $('#ipc', m).onclick = () => printDoc('ipc', row); $('#ipcpdf', m).onclick = () => pdfDoc('ipc', row); }
     if (isQ) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${kind}/${row.id}`); closeModal(); render(); } });
     const sendMailTo = (reminder) => guard(async () => {
       const to = prompt(tr('أرسل إلى البريد:', 'Send to email:'), row.client_email || ''); if (!to) return;

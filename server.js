@@ -85,7 +85,7 @@ function enrich() {
   const parties = Object.fromEntries(all('parties').map(p => [p.id, p]));
   const projects = Object.fromEntries(all('projects').map(p => [p.id, p]));
   const pays = all('payments').filter(countable);
-  const raw = all('invoices');
+  const raw = all('invoices'), ipcs = ctx.ipcIds ? ctx.ipcIds() : new Set();
   const invoices = raw.map(r => {
     const items = parseItems(r), tt = docTotals(items, r.vat_pct, r.retention_pct);
     const sign = r.kind === 'credit_note' ? -1 : 1, dead = !!r.voided;
@@ -104,7 +104,7 @@ function enrich() {
     if (client && !client.trn) warnings.push('customer_trn_missing');
     if (client && !client.address) warnings.push('customer_address_missing');
     const revenue = r.kind === 'advance' ? 0 : round(tt.subtotal + tt.recovery);   // an advance is a liability until recovered; recovery lines don't reduce the work value
-    return { ...r, items, ...tt, revenue, due_now: dueNow, paid, credited, balance, retention_open, status, warnings,
+    return { ...r, items, ...tt, revenue, ipc: ipcs.has(r.id), due_now: dueNow, paid, credited, balance, retention_open, status, warnings,
       project_name: proj?.name, emirate: proj?.emirate, client_id: proj?.client_id, client_name: client?.name, client_trn: client?.trn, client_address: client?.address, client_email: client?.email };
   });
   const bills = all('bills').map(r => {
@@ -326,7 +326,7 @@ function clean(table, body) {
 }
 
 const { ROLES } = ACLX, can = ACLX.can;
-const SETTING_KEYS = ['mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days'];
+const SETTING_KEYS = ['mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -361,7 +361,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -508,7 +508,7 @@ async function api(req, res, url) {
   }
   if (a === 'dashboard') { const d = dashboard(); if (!['admin', 'accountant'].includes(me.role)) d.alerts = []; return send(res, 200, d); }
   if (a === 'vat') return send(res, 200, vatReport(url.searchParams.get('from'), url.searchParams.get('to')));
-  if (a === 'project-summary') return send(res, 200, projectRows());
+  if (a === 'project-summary' && !b) return send(res, 200, projectRows());
   if (a === 'backup') {
     const file = path.join(DATA_DIR, 'backup.db'); fs.rmSync(file, { force: true });
     db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
@@ -615,11 +615,14 @@ async function api(req, res, url) {
     const st = getSettings(); if (st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
     const lines = db.prepare('SELECT * FROM boq_items WHERE project_id=? AND done_pct>billed_pct+0.0001 ORDER BY id').all(+b);
     if (!lines.length) bad('No unbilled progress — update the completion % on the BOQ first');
+    const x = await readBody(req).catch(() => ({})), date = x && x.date ? x.date : today();          // optional certificate date (end of the valuation period)
+    if (!/^\d{4}-\d\d-\d\d$/.test(date)) bad('Invalid date');
     const items = lines.map(i => ({ description: `${i.description} (${i.billed_pct}% → ${i.done_pct}%)`, unit: i.unit, qty: round(i.qty * (i.done_pct - i.billed_pct) / 100), rate: i.rate, vat: 'std' }));
     const rec = ctx.advanceRecoveryLine && ctx.advanceRecoveryLine(proj, round(items.reduce((s, i) => s + i.qty * i.rate, 0)));
     if (rec) items.push(rec);                                               // contract advance recovered from each progress invoice
     const r = db.prepare('INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes) VALUES(?,?,?,?,?,?,?)')
-      .run(nextNumber('invoices', 'INV'), today(), proj.id, JSON.stringify(items), +st.vat_pct || 5, proj.retention_pct || 0, 'Progress invoice');
+      .run(nextNumber('invoices', 'INV'), date, proj.id, JSON.stringify(items), +st.vat_pct || 5, proj.retention_pct || 0, 'Progress invoice');
+    if (ctx.ipcSnapshot) ctx.ipcSnapshot(proj.id, Number(r.lastInsertRowid));   // payment certificate: previous / this period / cumulative per BOQ item
     db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=?').run(+b);
     audit(req, 'create', 'progress_invoice', Number(r.lastInsertRowid), `project ${proj.name}`);
     return send(res, 200, { id: Number(r.lastInsertRowid) });

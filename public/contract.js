@@ -28,3 +28,21 @@ projectDetail = async id => {
     const r = await api('POST', `projects/${id}/advance-invoice`, {}); toast(`${tr('تم الإصدار', 'Issued')} ${money(r.amount)}`); projectDetail(id);
   });
 };
+
+// revenue per worker-day: certified work of the month ÷ present days on this project's attendance, against the target
+const baseProjectDetailKpi = projectDetail;
+projectDetail = async id => {
+  await baseProjectDetailKpi(id);
+  if (!seesMoney() || !$('#main')) return;
+  const [y0, m0] = today().split('-').map(Number), months = [...Array(6)].map((_, i) => { let y = y0, m = m0 - i; while (m < 1) { m += 12; y--; } return `${y}-${String(m).padStart(2, '0')}`; });   // plain arithmetic: local dates east of UTC
+  const data = await Promise.all(months.map(m => api('GET', `project-summary/manday?month=${m}&project_id=${id}`).catch(() => null)));
+  if (!$('#main') || !data[0]) return;
+  const t = data[0].target, admin = ME.role === 'admin';
+  const card = document.createElement('div'); card.className = 'card'; card.id = 'manday-card';
+  card.innerHTML = `<div class="bar"><h2 style="margin:0">${tr('الإيراد لكل عامل في اليوم', 'Revenue per worker-day')}</h2><span class="sp"></span><span class="muted">${tr('الهدف', 'Target')}: <b>${money(t)}</b></span>${admin ? ` <button class="btn sec sm" id="mdt">${tr('تعديل الهدف', 'Edit target')}</button>` : ''}</div>
+    <div class="tw"><table><thead><tr><th>${tr('الشهر', 'Month')}</th><th class="n">${tr('الأعمال المعتمدة', 'Certified work')}</th><th class="n">${tr('أيام عمل (الحضور)', 'Worker-days (attendance)')}</th><th class="n">${tr('لكل عامل/يوم', 'Per worker-day')}</th></tr></thead><tbody>
+    ${data.map((d, i) => { const r = d && d.rows[0] || { certified: 0, worker_days: 0, per_worker_day: null }; return `<tr><td>${months[i]}</td><td class="n">${money(r.certified)}</td><td class="n">${r.worker_days}</td><td class="n ${r.per_worker_day == null ? 'muted' : r.per_worker_day >= t ? 'pos' : 'neg'}">${r.per_worker_day == null ? '—' : money(r.per_worker_day)}</td></tr>`; }).join('')}</tbody></table></div>
+    <p class="muted" style="font-size:12px">${tr('قيمة المستخلصات المؤرخة في الشهر (بدون الضريبة والدفعات المقدمة) ÷ أيام الحضور «حاضر» على المشروع.', 'Value of the progress invoices dated in the month (ex VAT, advances excluded) ÷ “present” attendance days on the project.')}</p>`;
+  $('#main').append(card);
+  if ($('#mdt')) $('#mdt').onclick = guard(async () => { const v = prompt(tr('الهدف (درهم لكل عامل في اليوم):', 'Target (AED per worker-day):'), t); if (v && +v > 0) { await api('PUT', 'settings', { kpi_manday_target: +v }); projectDetail(id); } });
+};
