@@ -36,7 +36,7 @@ module.exports = ctx => {
 
   // ---------- what goes to Zoho (pure mapping, also used by the CSV export and the daily report) ----------
   const PLACE = { abu_dhabi: 'AB', dubai: 'DU', sharjah: 'SH', ajman: 'AJ', uaq: 'UM', rak: 'RA', fujairah: 'FU' };   // Zoho's UAE place-of-supply codes
-  const CAT = { asset: 'Fixed asset', materials: 'Materials', labour: 'Labour', subcontract: 'Subcontract', equipment: 'Equipment', transport: 'Transport', permits: 'Permits', overhead: 'Overhead', other: 'Other' };
+  const CAT = { asset: 'Fixed asset', materials: 'Materials', labour: 'Labour', subcontract: 'Subcontract', equipment: 'Equipment', transport: 'Transport', permits: 'Permits', accommodation: 'Accommodation', visa: 'Visas & labour fees', insurance: 'Medical insurance', overhead: 'Overhead', other: 'Other' };
   const TAX_NAME = { std: 'Standard Rate', zero: 'Zero Rate', exempt: 'Exempt' }, TAX_PCT = { std: 5, zero: 0, exempt: 0 };
   const MODE = { cash: 'cash', petty: 'cash', cheque: 'check', bank: 'banktransfer', card: 'creditcard' };
   function data(from, to) {

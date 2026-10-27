@@ -30,8 +30,11 @@ module.exports = ctx => {
 
   const nowLocal = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().replace('T', ' ').slice(0, 19); };
   const emp = id => db.prepare('SELECT * FROM employees WHERE id=?').get(id);
+  const hm = (t, d) => /^\d\d:\d\d$/.test(t) ? +t.slice(0, 2) * 60 + +t.slice(3) : d;
   const S = () => { const s = getSettings(); return { hours: +s.hr_work_hours || 8, brk: s.hr_break_min === undefined || s.hr_break_min === '' ? 60 : +s.hr_break_min, rest: s.hr_rest_day || 'fri', geofence: s.hr_geofence || 'flag',
-    ramadanFrom: s.hr_ramadan_from || '', ramadanTo: s.hr_ramadan_to || '' }; };
+    ramadanFrom: s.hr_ramadan_from || '', ramadanTo: s.hr_ramadan_to || '',
+    // midday work ban (MOHRE, outdoor sites): dates MM-DD and hours HH:MM are settings; defaults 15 Jun – 15 Sep, 12:30 – 15:00
+    middayFrom: s.hr_midday_from || '06-15', middayTo: s.hr_midday_to || '09-15', middayStart: hm(s.hr_midday_start || '12:30', 750), middayEnd: hm(s.hr_midday_end || '15:00', 900) }; };
   const notify = (to, msg) => ctx.notify ? ctx.notify(to, msg).catch(() => {}) : null;
   const isHr = me => ['admin', 'hr'].includes(me.role);
 
@@ -126,12 +129,12 @@ module.exports = ctx => {
       if (!open) continue;
       const a = minutes(open.at), b = minutes(x.at) + (x.at.slice(0, 10) > date ? 1440 : 0);
       worked += b - a; night += overlap(a, b, 0, 240) + overlap(a, b, 1320, 1680);
-      midday += overlap(a, b, 750, 900);                                                 // 12:30 – 15:00
+      midday += overlap(a, b, s.middayStart, s.middayEnd);
       open = null; closed = x;
     }
     const ins = ev.filter(x => x.kind === 'in' && x.at.slice(0, 10) === date);
     if (!ins.length) return;
-    const md = date.slice(5); if (midday > 0 && md >= '06-15' && md <= '09-15' && e.project_id) flags.add('midday_break');
+    const md = date.slice(5); if (midday > 0 && md >= s.middayFrom && md <= s.middayTo && e.project_id) flags.add('midday_break');
     const ramadan = s.ramadanFrom && date >= s.ramadanFrom && date <= s.ramadanTo;
     const net = Math.max(0, worked - (worked > 300 ? s.brk : 0)), normal = (s.hours - (ramadan ? 2 : 0)) * 60;
     const restDay = DAY[new Date(date + 'T00:00:00Z').getUTCDay()] === s.rest;
@@ -224,15 +227,15 @@ module.exports = ctx => {
   const daysBetween = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5);
   // UAE final settlement: wages to the last day, unused annual leave on basic wage (Art. 29), gratuity (Art. 51), notice shortfall (Art. 43)
   function settlement(e, { last_day, reason, notice_date, other_deductions }) {
-    const wage = (+e.basic || 0) + (+e.housing || 0) + (+e.other_allowance || 0), day = +last_day.slice(8, 10);
+    const wage = (+e.basic || 0) + (+e.housing || 0) + (+e.transport || 0) + (+e.other_allowance || 0), day = +last_day.slice(8, 10);
     const leave = ctx.hrBalance(e, last_day), leaveDays = Math.max(0, leave.balance);
-    const g = C.gratuity(e, last_day), notice = notice_date ? daysBetween(notice_date, last_day) : 0, shortfall = Math.max(0, 30 - notice);
+    const g = C.gratuity(e, last_day, ctx.unpaidDays ? ctx.unpaidDays(e, last_day) : 0), notice = notice_date ? daysBetween(notice_date, last_day) : 0, shortfall = Math.max(0, 30 - notice);
     const noticePay = !shortfall || reason === 'end_of_contract' ? 0 : round((reason === 'resignation' ? -1 : 1) * shortfall * wage / 30);   // the side that cut the notice short pays it
-    const lines = { salary: round(wage / 30 * Math.min(30, day)), leave_encashment: round(leaveDays * (+e.basic || 0) / 30), gratuity: g.amount, notice: noticePay, deductions: -round(+other_deductions || 0) };
+    const lines = { salary: round(wage / 30 * Math.min(30, day)), leave_encashment: round(leaveDays * (+e.basic || 0) / 30), gratuity: g.amount, notice: noticePay, advance: -(ctx.loanBalance ? ctx.loanBalance(e.id) : 0), deductions: -round(+other_deductions || 0) };
     const warnings = [];
     if (notice_date && notice < 30) warnings.push(`notice period ${notice} days — the law requires at least 30 (Art. 43)`);
     if (notice > 90) warnings.push(`notice period ${notice} days — the law allows at most 90 (Art. 43)`);
-    return { ...lines, total: round(Object.values(lines).reduce((s, v) => s + v, 0)), leave_days: leaveDays, service_years: g.years, notice_days: notice, wage, warnings };
+    return { ...lines, total: round(Object.values(lines).reduce((s, v) => s + v, 0)), leave_days: leaveDays, service_years: g.years, unpaid_days: g.unpaid_days, notice_days: notice, wage, warnings };
   }
 
   return {
@@ -316,6 +319,7 @@ module.exports = ctx => {
           const open = checklist(e.id, 'offboarding').filter(i => !i.done), x = await readBody(req);
           if (open.length && !x.force) bad(`${open.length} checklist items are still open`);
           db.prepare("UPDATE employees SET status='left', end_date=? WHERE id=?").run(ob.last_day, e.id);
+          if (ctx.hooks.onOffboard) ctx.hooks.onOffboard(e, ob.last_day, settlement(e, ob).gratuity);   // settle the end-of-service provision
           db.prepare("UPDATE hr_offboarding SET status='completed', completed=? WHERE employee_id=?").run(today(), e.id);
           for (const u of db.prepare('SELECT id FROM users WHERE employee_id=?').all(e.id)) { db.prepare('UPDATE users SET disabled=1 WHERE id=?').run(u.id); db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id); }
           audit(req, 'complete', 'offboarding', e.id, ob.last_day);

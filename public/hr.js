@@ -3,7 +3,7 @@ const LEAVE = { annual: ['سنوية', 'Annual'], sick: ['مرضية', 'Sick'], 
 const REQT = { salary_certificate: ['شهادة راتب', 'Salary certificate'], employment_certificate: ['شهادة عمل', 'Employment certificate'], noc: ['شهادة عدم ممانعة (NOC)', 'No-objection certificate'], salary_transfer: ['خطاب تحويل راتب', 'Salary transfer letter'],
   experience: ['شهادة خبرة', 'Experience certificate'], advance: ['سلفة على الراتب', 'Salary advance'], id_renewal: ['تجديد إقامة / هوية / جواز', 'Visa / ID / passport renewal'], complaint: ['شكوى / ملاحظة', 'Complaint / feedback'], other: ['طلب آخر', 'Other'] };
 const LETTER_TYPES = ['salary_certificate', 'employment_certificate', 'noc', 'salary_transfer', 'experience'];
-const ATT_ST = { present: ['حاضر', 'Present'], absent: ['غائب', 'Absent'], leave: ['إجازة', 'Leave'], sick: ['مرضية', 'Sick'], holiday: ['عطلة رسمية', 'Public holiday'], off: ['راحة', 'Rest day'] };
+const ATT_ST = { present: ['حاضر', 'Present'], absent: ['غائب', 'Absent'], leave: ['إجازة', 'Leave'], sick: ['مرضية', 'Sick'], holiday: ['عطلة رسمية', 'Public holiday'], off: ['راحة', 'Rest day'], comp_off: ['يوم بديل عن راحة', 'Substitute rest day'] };
 const RS = { pending: ['بانتظار القرار', 'Pending'], approved: ['موافق عليه', 'Approved'], rejected: ['مرفوض', 'Rejected'] };
 const rtag = s => `<span class="tag ${s === 'pending' ? 'unpaid' : s === 'approved' ? 'paid' : 'overdue'}">${tr(...RS[s])}</span>`;
 const lt = t => tr(...(LEAVE[t] || [t, t]));
@@ -58,18 +58,31 @@ PAGES.hrrequests = async () => {
   const [rows, emps] = await Promise.all([api('GET', 'hr/requests'), api('GET', 'employees')]);
   main(`<div class="bar"><h1>${tr('طلبات الموظفين', 'Employee requests')}</h1><span class="sp"></span><button class="btn" id="add">+ ${tr('طلب نيابةً عن موظف', 'Request on behalf')}</button></div>
   <div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('الموظف', 'Employee')}</th><th>${tr('الطلب', 'Request')}</th><th>${tr('التفاصيل', 'Details')}</th><th>${tr('الحالة', 'Status')}</th><th></th></tr></thead><tbody>
-  ${rows.map(r => `<tr><td>${esc(r.created)}</td><td>${esc(r.name)}</td><td>${tr(...REQT[r.type])}${r.amount ? ` — ${money(r.amount)}` : ''}</td><td>${esc(r.details || '')}${r.decision_note ? `<div class="muted">${esc(r.decision_note)}</div>` : ''}</td><td>${rtag(r.status)}</td>
+  ${rows.map(r => `<tr><td>${esc(r.created)}</td><td>${esc(r.name)}</td><td>${tr(...REQT[r.type])}${r.amount ? ` — ${money(r.amount)}${r.type === 'advance' ? ` / ${r.installments || 1} ${tr('قسط', 'instalments')}` : ''}` : ''}</td><td>${esc(r.details || '')}${r.decision_note ? `<div class="muted">${esc(r.decision_note)}</div>` : ''}</td><td>${rtag(r.status)}</td>
    <td>${r.status === 'pending' ? (LETTER_TYPES.includes(r.type) ? `<button class="btn sm" data-iss="${r.id}">${tr('إصدار الخطاب', 'Issue letter')}</button> ` : `<button class="btn sm" data-dec="${r.id}" data-who="${esc(r.name)}">${tr('قرار', 'Decide')}</button> `) : (r.letter_id ? `<a class="btn sec sm" target="_blank" href="/api/doc/letter/${r.letter_id}?print=1">${tr('الخطاب', 'Letter')}</a>` : '')}${r.status === 'pending' && LETTER_TYPES.includes(r.type) ? `<button class="btn sec sm" data-rej="${r.id}">${tr('رفض', 'Reject')}</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد طلبات', 'No requests')}</td></tr>`}</tbody></table></div>`);
   $('#add').onclick = () => simpleModal({ title: tr('طلب جديد', 'New request'), table: 'hr/requests', after: render, fields: [
     { k: 'employee_id', ar: 'الموظف', en: 'Employee', type: 'select', options: refOpts(emps.filter(e => e.status === 'active'), e => e.name, false) }, { k: 'type', ar: 'نوع الطلب', en: 'Request type', type: 'select', options: Object.entries(REQT).map(([k, v]) => [k, tr(...v)]) },
-    { k: 'amount', ar: 'المبلغ (للسلفة)', en: 'Amount (advances)', type: 'number', def: 0 }, { k: 'details', ar: 'التفاصيل', en: 'Details', full: 1 }] });
+    { k: 'amount', ar: 'المبلغ (للسلفة)', en: 'Amount (advances)', type: 'number', def: 0 }, { k: 'installments', ar: 'عدد الأقساط (للسلفة)', en: 'Instalments (advances)', type: 'number', def: 1 }, { k: 'details', ar: 'التفاصيل', en: 'Details', full: 1 }] });
   document.querySelectorAll('[data-dec]').forEach(b => b.onclick = decideReq(`hr/requests/${b.dataset.dec}/decide`, b.dataset.who));
   document.querySelectorAll('[data-rej]').forEach(b => b.onclick = guard(async () => { const note = prompt(tr('سبب الرفض:', 'Reason for rejection:')); if (note !== null) { await api('PUT', `hr/requests/${b.dataset.rej}/decide`, { status: 'rejected', note }); render(); } }));
+  loansCard(emps);
   document.querySelectorAll('[data-iss]').forEach(b => b.onclick = guard(async () => {
     const r = rows.find(x => x.id === +b.dataset.iss);
     await issueLetter(r.type, r.employee_id, r.id, { purpose: r.details });
   }));
 };
+// salary advances: created when an advance request is approved (or here), deducted monthly in payroll
+async function loansCard(emps) {
+  const loans = await api('GET', 'hr/loans'), c = document.createElement('div'); c.className = 'card';
+  c.innerHTML = `<div class="bar"><h2>${tr('السلف وجدول السداد', 'Salary advances & repayment')}</h2><span class="sp"></span><button class="btn sec sm" id="ladd">+ ${tr('سلفة', 'Advance')}</button></div>
+  <div class="tw"><table><thead><tr><th>${tr('الموظف', 'Employee')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th>${tr('الأقساط', 'Instalments')}</th><th class="n">${tr('القسط الشهري', 'Monthly')}</th><th>${tr('من — إلى', 'From — to')}</th><th class="n">${tr('المسدَّد', 'Repaid')}</th><th class="n">${tr('المتبقي', 'Balance')}</th></tr></thead><tbody>
+  ${loans.map(l => `<tr><td>${esc(l.name)}</td><td class="n">${money(l.amount)}</td><td>${l.installments}</td><td class="n">${money(l.monthly)}</td><td>${esc(l.start_month)} — ${esc(l.end_month)}</td><td class="n">${money(l.repaid)}</td><td class="n"><b>${money(l.balance)}</b></td></tr>`).join('') || `<tr><td colspan="7" class="muted">${tr('لا توجد سلف', 'No advances')}</td></tr>`}</tbody></table></div>
+  <p class="muted">${tr('يُخصم القسط تلقائياً عند إنشاء رواتب الشهر، ويظهر الرصيد المتبقي في قسيمة الراتب والتسوية النهائية.', 'The instalment is deducted automatically when the month’s payroll is generated; the remaining balance shows on the payslip and in the final settlement.')}</p>`;
+  $('#main').append(c);
+  $('#ladd', c).onclick = () => simpleModal({ title: tr('سلفة جديدة', 'New advance'), table: 'hr/loans', after: render, fields: [
+    { k: 'employee_id', ar: 'الموظف', en: 'Employee', type: 'select', options: refOpts(emps.filter(e => e.status === 'active'), e => e.name, false) }, { k: 'amount', ar: 'المبلغ', en: 'Amount', type: 'number', req: 1 },
+    { k: 'installments', ar: 'عدد الأقساط', en: 'Instalments', type: 'number', def: 1 }, { k: 'start_month', ar: 'أول شهر خصم (YYYY-MM)', en: 'First deduction month (YYYY-MM)' }, { k: 'note', ar: 'ملاحظة', en: 'Note', full: 1 }] });
+}
 PAGES.letters = async () => {
   const [rows, emps] = await Promise.all([api('GET', 'hr/letters'), api('GET', 'employees')]);
   main(`<div class="bar"><h1>${tr('الخطابات الرسمية', 'Official letters')}</h1><span class="sp"></span><button class="btn" id="add">+ ${tr('خطاب جديد', 'New letter')}</button></div>
@@ -135,7 +148,7 @@ PAGES.portal = async () => {
   $('#rl').onclick = () => simpleModal({ title: tr('طلب إجازة', 'Leave request'), table: 'me/leave', after: render, fields: [
     { k: 'type', ar: 'نوع الإجازة', en: 'Leave type', type: 'select', options: Object.entries(LEAVE).map(([k, v]) => [k, tr(...v)]) }, { k: 'start_date', ar: 'من', en: 'From', type: 'date', def: today() }, { k: 'end_date', ar: 'إلى', en: 'To', type: 'date', def: today() }, { k: 'reason', ar: 'السبب', en: 'Reason', full: 1 }] });
   $('#rq').onclick = () => simpleModal({ title: tr('طلب جديد', 'New request'), table: 'me/request', after: render, fields: [
-    { k: 'type', ar: 'نوع الطلب', en: 'Request type', type: 'select', options: Object.entries(REQT).map(([k, v]) => [k, tr(...v)]) }, { k: 'amount', ar: 'المبلغ (للسلفة)', en: 'Amount (advances)', type: 'number', def: 0 }, { k: 'details', ar: 'التفاصيل (الغرض / الجهة الموجّه إليها)', en: 'Details (purpose / addressed to)', full: 1 }] });
+    { k: 'type', ar: 'نوع الطلب', en: 'Request type', type: 'select', options: Object.entries(REQT).map(([k, v]) => [k, tr(...v)]) }, { k: 'amount', ar: 'المبلغ (للسلفة)', en: 'Amount (advances)', type: 'number', def: 0 }, { k: 'installments', ar: 'عدد الأقساط (للسلفة)', en: 'Instalments (advances)', type: 'number', def: 1 }, { k: 'details', ar: 'التفاصيل (الغرض / الجهة الموجّه إليها)', en: 'Details (purpose / addressed to)', full: 1 }] });
   document.querySelectorAll('[data-cl]').forEach(x => x.onclick = guard(async () => { await api('DELETE', 'me/leave/' + x.dataset.cl); render(); }));
   document.querySelectorAll('[data-cr]').forEach(x => x.onclick = guard(async () => { await api('DELETE', 'me/request/' + x.dataset.cr); render(); }));
 };

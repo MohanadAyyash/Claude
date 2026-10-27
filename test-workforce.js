@@ -120,7 +120,8 @@ server.listen(0, async () => {
     assert.equal(stl.notice_days, 10); assert.equal(stl.notice, -3000);      // 20 days short × 150
     assert.equal(stl.deductions, -200); assert.ok(stl.gratuity > 0); assert.ok(stl.leave_encashment > 0);
     assert.ok(stl.warnings.some(w => /at least 30/.test(w)));
-    assert.equal(stl.total, Math.round((stl.salary + stl.leave_encashment + stl.gratuity + stl.notice + stl.deductions) * 100) / 100);
+    assert.equal(stl.advance, -1000, "approved advance still owed");
+    assert.equal(stl.total, Math.round((stl.salary + stl.leave_encashment + stl.gratuity + stl.notice + stl.advance + stl.deductions) * 100) / 100);
     assert.match((await as('hr1', () => call('POST', `hr/offboarding/${e1}/complete`))).j.error, /still open/);
     ok(await as('hr1', () => call('POST', `hr/offboarding/${e1}/complete`, { force: 1 })));
     assert.equal(ok(await call('GET', 'employees/' + e1)).status, 'left');

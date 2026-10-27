@@ -4,7 +4,7 @@ const { CSP } = require('../lib/render');
 const LEAVE_TYPES = ['annual', 'sick', 'unpaid', 'maternity', 'paternity', 'bereavement', 'other'];
 const REQ_TYPES = ['salary_certificate', 'employment_certificate', 'noc', 'salary_transfer', 'experience', 'advance', 'id_renewal', 'complaint', 'other'];
 const LETTER_TYPES = ['salary_certificate', 'employment_certificate', 'noc', 'salary_transfer', 'experience'];
-const ATT = ['present', 'absent', 'leave', 'sick', 'holiday', 'off'];
+const ATT = ['present', 'absent', 'leave', 'sick', 'holiday', 'off', 'comp_off'];   // comp_off: substitute day for a worked rest day
 
 module.exports = ctx => {
   const { db, send, bad, audit, readBody, getSettings, today, round, C } = ctx;
@@ -30,7 +30,8 @@ module.exports = ctx => {
     const yearAgo = new Date(new Date(asOf).getTime() - 365 * 864e5).toISOString().slice(0, 10);
     const sick = round(approved.filter(l => l.type === 'sick' && l.start_date >= yearAgo).reduce((s, l) => s + l.days, 0));
     const unpaid = round(approved.filter(l => l.type === 'unpaid').reduce((s, l) => s + l.days, 0));
-    return { months_of_service: months, accrued, opening: e.leave_opening || 0, used, balance: round(accrued + (e.leave_opening || 0) - used), sick_used_12m: sick, sick_left: Math.max(0, 90 - sick), unpaid_taken: unpaid };
+    const comp = db.prepare("SELECT COALESCE(SUM(rest_comp='day' AND status='present'),0) earned, COALESCE(SUM(status='comp_off'),0) taken FROM attendance WHERE employee_id=?").get(e.id);
+    return { comp_days: comp.earned - comp.taken, months_of_service: months, accrued, opening: e.leave_opening || 0, used, balance: round(accrued + (e.leave_opening || 0) - used), sick_used_12m: sick, sick_left: Math.max(0, 90 - sick), unpaid_taken: unpaid };
   }
   ctx.hrBalance = balance;
 
@@ -43,6 +44,7 @@ module.exports = ctx => {
     }
     if (checkOnly) return;
     db.prepare(`UPDATE ${table} SET status=?, decided_by=?, decided_at=?, decision_note=? WHERE id=?`).run(status, me.username, today(), note || '', id);
+    if (table === 'hr_requests' && status === 'approved' && r.type === 'advance' && r.amount > 0 && ctx.hooks.onAdvanceApproved) ctx.hooks.onAdvanceApproved(r, me.username);   // repayment schedule
     const what = table === 'leave_requests' ? `${r.type} ${r.start_date} → ${r.end_date}` : r.type;
     if (ctx.notify) ctx.notify({ employee_id: r.employee_id }, { title: status === 'approved' ? 'تمت الموافقة على طلبك / Your request was approved' : 'تم رفض طلبك / Your request was rejected', body: what + (note ? ' — ' + note : ''), url: '#portal' }).catch(() => {});
   };
@@ -62,7 +64,8 @@ module.exports = ctx => {
   function newRequest(employee_id, b) {
     if (!emp(employee_id)) bad('Employee not found');
     if (!REQ_TYPES.includes(b.type)) bad('Invalid request type');
-    const r = db.prepare('INSERT INTO hr_requests(employee_id,type,details,amount,created) VALUES(?,?,?,?,?)').run(employee_id, b.type, b.details || '', +b.amount || 0, today());
+    const inst = b.type === 'advance' ? Math.round(+b.installments || 1) : 1; if (!(inst >= 1 && inst <= 60)) bad('Instalments must be 1–60');
+    const r = db.prepare('INSERT INTO hr_requests(employee_id,type,details,amount,installments,created) VALUES(?,?,?,?,?,?)').run(employee_id, b.type, b.details || '', +b.amount || 0, inst, today());
     const id = Number(r.lastInsertRowid); if (ctx.approvals) ctx.approvals.start('request', id);
     return id;
   }
@@ -82,7 +85,7 @@ module.exports = ctx => {
   };
   ctx.renderers.payslips = id => {
     const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(id); if (!row) { const e = new Error('not found'); e.status = 404; throw e; }
-    return { title: `Payslip ${row.month}`, filename: `payslip-${row.month}`, body: payslipBody({ emp: emp(row.employee_id), row, S: getSettings() }), stamp: false, signature: false };
+    return { title: `Payslip ${row.month}`, filename: `payslip-${row.month}`, body: payslipBody({ emp: emp(row.employee_id), row, S: getSettings(), loan: ctx.loanInfo ? ctx.loanInfo(row) : null }), stamp: false, signature: false };
   };
 
   // ---- payroll integration: unpaid leave + absences reduce days, attendance overtime feeds the sheet ----
@@ -91,7 +94,8 @@ module.exports = ctx => {
     let unpaid = 0;
     for (const l of db.prepare("SELECT * FROM leave_requests WHERE employee_id=? AND type='unpaid' AND status='approved' AND start_date<=? AND end_date>=?").all(e.id, last, first))
       unpaid += spanDays(l.start_date < first ? first : l.start_date, l.end_date > last ? last : l.end_date);
-    const att = db.prepare("SELECT COALESCE(SUM(ot_normal_hours),0) n, COALESCE(SUM(ot_special_hours),0) s, SUM(status='absent') a FROM attendance WHERE employee_id=? AND date>=? AND date<=?").get(e.id, first, last);
+    // a worked rest day compensated with a substitute day (rest_comp='day') earns no +50% pay for those hours
+    const att = db.prepare("SELECT COALESCE(SUM(ot_normal_hours),0) n, COALESCE(SUM(CASE WHEN rest_comp='day' THEN 0 ELSE ot_special_hours END),0) s, SUM(status='absent') a FROM attendance WHERE employee_id=? AND date>=? AND date<=?").get(e.id, first, last);
     // sick leave pay (Art. 31): per year of service 15 days full pay, 30 half, 45 unpaid; unpaid during probation
     const sickDays = new Set();
     for (const l of db.prepare("SELECT start_date,end_date FROM leave_requests WHERE employee_id=? AND type='sick' AND status='approved' AND start_date<=?").all(e.id, last))
@@ -153,14 +157,15 @@ module.exports = ctx => {
         if (m === 'GET' && !b) {
           const date = url.searchParams.get('date'), month = url.searchParams.get('month');
           const rows = date ? db.prepare('SELECT * FROM attendance WHERE date=?').all(date) : db.prepare('SELECT * FROM attendance WHERE date>=? AND date<=? ORDER BY date').all(`${month}-01`, `${month}-31`);
-          return send(res, 200, { roster: db.prepare("SELECT id,name,designation,project_id FROM employees WHERE status='active' ORDER BY name").all(), rows }), true;
+          return send(res, 200, { roster: db.prepare("SELECT id,name,designation,project_id FROM employees WHERE status='active' ORDER BY name").all(), rows, rest_day: getSettings().hr_rest_day || 'fri' }), true;
         }
         if (m === 'PUT' && !b) {
           const x = await readBody(req);
           if (!emp(+x.employee_id)) bad('Employee not found'); if (!/^\d{4}-\d\d-\d\d$/.test(x.date || '')) bad('Invalid date'); if (!ATT.includes(x.status)) bad('Invalid status');
-          db.prepare(`INSERT INTO attendance(employee_id,date,status,ot_normal_hours,ot_special_hours,project_id,note,source) VALUES(?,?,?,?,?,?,?,'manual')
-            ON CONFLICT(employee_id,date) DO UPDATE SET status=excluded.status, ot_normal_hours=excluded.ot_normal_hours, ot_special_hours=excluded.ot_special_hours, project_id=excluded.project_id, note=excluded.note, source='manual'`)
-            .run(+x.employee_id, x.date, x.status, +x.ot_normal_hours || 0, +x.ot_special_hours || 0, +x.project_id || null, x.note || '');
+          const rc = x.rest_comp === 'day' ? 'day' : 'pay';
+          db.prepare(`INSERT INTO attendance(employee_id,date,status,ot_normal_hours,ot_special_hours,project_id,note,source,rest_comp) VALUES(?,?,?,?,?,?,?,'manual',?)
+            ON CONFLICT(employee_id,date) DO UPDATE SET status=excluded.status, ot_normal_hours=excluded.ot_normal_hours, ot_special_hours=excluded.ot_special_hours, project_id=excluded.project_id, note=excluded.note, source='manual', rest_comp=excluded.rest_comp`)
+            .run(+x.employee_id, x.date, x.status, +x.ot_normal_hours || 0, +x.ot_special_hours || 0, +x.project_id || null, x.note || '', rc);
           return send(res, 200, { ok: 1 }), true;
         }
         return false;

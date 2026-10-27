@@ -1,7 +1,7 @@
 // Project control and teamwork: budget per cost category vs actual and committed (open POs / subcontracts) with a forecast
 // at completion, weekly project updates (status + progress, with a snapshot of the numbers), tasks (on a project or any record:
 // assignee, due date, tag, sub-tasks) and notes with @mentions on records. Assignments and mentions notify people (push.js).
-const CATS = ['materials', 'labour', 'subcontract', 'equipment', 'transport', 'permits', 'overhead', 'other'];
+const CATS = ['materials', 'labour', 'subcontract', 'equipment', 'transport', 'permits', 'accommodation', 'visa', 'insurance', 'overhead', 'other'];
 const STATUS = ['on_track', 'at_risk', 'off_track', 'on_hold', 'complete'];
 const TASK_ST = ['todo', 'doing', 'done', 'cancelled'];
 const TAGS = ['site', 'commercial', 'authorities', 'hse', 'qaqc', 'procurement', 'other'];

@@ -29,11 +29,13 @@ const STATUS = { approved: ['معتمد', 'Approved'], pending_v: ['قيد ال�
   paid: ['مدفوع', 'Paid'], unpaid: ['غير مدفوع', 'Unpaid'], partial: ['جزئي', 'Partial'], overdue: ['متأخر', 'Overdue'], credit: ['إشعار دائن', 'Credit note'], void: ['ملغاة', 'Void'], final: ['معتمد', 'Final'], pending: ['قيد التحصيل', 'Pending'], cleared: ['تم صرفه', 'Cleared'], bounced: ['مرتجع', 'Bounced'], left: ['ترك العمل', 'Left'], retention: ['محتجز', 'Retention held'],
 };
 const tag = s => `<span class="tag ${s}">${esc(STATUS[s] ? tr(...STATUS[s]) : s)}</span>`;
-const CATS = { asset: ['شراء أصل ثابت (يُهلك)', 'Fixed asset purchase (depreciated)'], materials: ['مواد', 'Materials'], labour: ['عمالة', 'Labour'], subcontract: ['مقاولو باطن', 'Subcontractor'], equipment: ['معدات', 'Equipment'], transport: ['نقل', 'Transport'], permits: ['رسوم وتراخيص', 'Permits & fees'], overhead: ['مصاريف عامة', 'Overheads'], other: ['أخرى', 'Other'] };
+const CATS = { asset: ['شراء أصل ثابت (يُهلك)', 'Fixed asset purchase (depreciated)'], materials: ['مواد', 'Materials'], labour: ['عمالة', 'Labour'], subcontract: ['مقاولو باطن', 'Subcontractor'], equipment: ['معدات', 'Equipment'], transport: ['نقل', 'Transport'], permits: ['رسوم وتراخيص', 'Permits & fees'], accommodation: ['سكن العمال', 'Accommodation'], visa: ['تأشيرات ورسوم عمل', 'Visas & labour fees'], insurance: ['تأمين طبي', 'Medical insurance'], overhead: ['مصاريف عامة', 'Overheads'], other: ['أخرى', 'Other'] };
 const PTYPE = { client: ['عميل', 'Client'], supplier: ['مورد', 'Supplier'], subcontractor: ['مقاول باطن', 'Subcontractor'] };
 const EMIRATES = { abu_dhabi: ['أبوظبي', 'Abu Dhabi'], dubai: ['دبي', 'Dubai'], sharjah: ['الشارقة', 'Sharjah'], ajman: ['عجمان', 'Ajman'], uaq: ['أم القيوين', 'Umm Al Quwain'], rak: ['رأس الخيمة', 'Ras Al Khaimah'], fujairah: ['الفجيرة', 'Fujairah'] };
 const VATC = { std: ['خاضع 5%', 'Standard 5%'], zero: ['صفري', 'Zero-rated'], exempt: ['معفى', 'Exempt'] };
-const ROLE = { admin: ['مدير النظام', 'Admin'], accountant: ['محاسب', 'Accountant'], manager: ['مدير مشاريع', 'Project manager'], hr: ['موارد بشرية', 'HR'], viewer: ['عرض فقط', 'Viewer'], employee: ['موظف (بوابة الموظف)', 'Employee (portal)'] };
+const ROLE = { admin: ['مدير النظام', 'Admin'], accountant: ['محاسب', 'Accountant'], manager: ['مدير مشاريع', 'Project manager'], qs: ['مهندس كميات (QS)', 'Quantity surveyor'],
+  site_engineer: ['مهندس موقع', 'Site engineer'], foreman: ['مشرف موقع (فورمان)', 'Foreman'], procurement: ['مسؤول مشتريات', 'Procurement officer'], storekeeper: ['أمين مخزن', 'Storekeeper'],
+  hr: ['موارد بشرية', 'HR'], viewer: ['عرض فقط', 'Viewer'], employee: ['موظف (بوابة الموظف)', 'Employee (portal)'] };
 const METHODS = { bank: ['تحويل بنكي', 'Bank transfer'], cheque: ['شيك', 'Cheque'], cash: ['نقد', 'Cash'], card: ['بطاقة', 'Card'] };
 const opts = (map, sel) => Object.entries(map).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(tr(...v))}</option>`).join('');
 
@@ -73,21 +75,23 @@ const setupScreen = needToken => authBox(tr('إعداد النظام لأول م
 
 // ---- shell ------------------------------------------------------------------
 const FINR = ['admin', 'accountant'], READR = ['admin', 'accountant', 'manager', 'viewer'], HRR = ['admin', 'hr'], EMPR = ['admin', 'accountant', 'hr'];
+const MONEYR = [...READR, 'qs'], SITER = ['site_engineer', 'foreman'], STAFFR = Object.keys(ROLE).filter(r => r !== 'employee'), ALLROLES = Object.keys(ROLE);
+const seesMoney = () => MONEYR.includes(ME.role);                       // contract values, costs, margins (site roles never)
 const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
-  ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['portal', 'بوابتي', 'My portal', ['employee']], ['tasks', 'المهام', 'Tasks', ['admin', 'accountant', 'manager', 'hr', 'viewer']],
-  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['tenders', 'المناقصات والفرص', 'Tenders & opportunities', READR], ['projects', 'المشاريع', 'Projects', READR], ['quotes', 'عروض الأسعار', 'Quotations', READR], ['invoices', 'فواتير العملاء', 'Sales invoices', READR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', READR],
-  ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', READR], ['po', 'أوامر الشراء', 'Purchase orders', READR], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', READR],
-  ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', READR], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['parties', 'العملاء والموردون', 'Clients & suppliers', READR],
-  ['stock', 'المخزون', 'Stock', READR], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
+  ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['portal', 'بوابتي', 'My portal', ['employee']], ['tasks', 'المهام', 'Tasks', STAFFR],
+  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['tenders', 'المناقصات والفرص', 'Tenders & opportunities', MONEYR], ['projects', 'المشاريع', 'Projects', [...MONEYR, 'site_engineer']], ['quotes', 'عروض الأسعار', 'Quotations', MONEYR], ['invoices', 'فواتير العملاء', 'Sales invoices', MONEYR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', [...READR, 'qs', ...SITER]],
+  ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', [...READR, 'procurement', 'site_engineer']], ['po', 'أوامر الشراء', 'Purchase orders', [...READR, 'procurement', 'storekeeper']], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', [...MONEYR, 'procurement']],
+  ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', [...READR, 'procurement']], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['parties', 'العملاء والموردون', 'Clients & suppliers', [...READR, 'qs', 'procurement']],
+  ['stock', 'المخزون', 'Stock', [...READR, 'procurement', 'storekeeper', 'site_engineer']], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
   ['#', 'المحاسبة', 'Accounting'], ['financials', 'القوائم المالية', 'Financial statements', FINR], ['ledger', 'دفتر الأستاذ', 'General ledger', FINR], ['journal', 'قيود اليومية', 'Journal entries', FINR], ['coa', 'دليل الحسابات', 'Chart of accounts', FINR], ['bank', 'مطابقة البنك', 'Bank reconciliation', FINR], ['zoho', 'الربط مع Zoho Books', 'Zoho Books link', FINR],
-  ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['approvals', 'الاعتمادات', 'Approvals', ['admin', 'accountant', 'manager', 'hr']], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager']],
+  ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['approvals', 'الاعتمادات', 'Approvals', STAFFR.filter(r => r !== 'viewer')], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager', ...SITER]],
   ['leave', 'الإجازات', 'Leave', HRR], ['hrrequests', 'طلبات الموظفين', 'Employee requests', HRR], ['letters', 'الخطابات الرسمية', 'Official letters', HRR], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS', EMPR],
   ['#', 'الضرائب والامتثال', 'Tax & compliance'], ['vat', 'ضريبة القيمة المضافة', 'VAT report', ['admin', 'accountant', 'viewer']], ['ctax', 'ضريبة الشركات', 'Corporate tax', FINR], ['compliance', 'الامتثال والتدقيق', 'Compliance & audit', FINR], ['documents', 'المستندات', 'Documents', [...READR, 'hr']],
-  ['notifications', 'الإشعارات', 'Notifications', ['admin', 'accountant', 'manager', 'hr', 'viewer', 'employee']],
-  ['settings', 'الإعدادات', 'Settings', ['admin', 'accountant', 'manager', 'hr', 'viewer', 'employee']],
+  ['notifications', 'الإشعارات', 'Notifications', ALLROLES],
+  ['settings', 'الإعدادات', 'Settings', ALLROLES],
 ];
 const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role));
-const landing = () => (ME.role === 'employee' ? 'portal' : ME.role === 'hr' ? 'hrdash' : 'dashboard');
+const landing = () => ({ employee: 'portal', hr: 'hrdash', foreman: 'attendance', site_engineer: 'sitediary', qs: 'projects', procurement: 'po', storekeeper: 'stock' }[ME.role] || 'dashboard');
 function shell() {
   const ok = allowedNav(), okSet = new Set(ok.map(n => n[0]));
   let links = '', pending = '';
@@ -158,6 +162,14 @@ function field(f, v) {
   else if (f.type === 'textarea') inp = `<textarea name="${f.k}">${esc(v ?? '')}</textarea>`;
   else inp = `<input name="${f.k}" type="${f.type || 'text'}" ${f.type === 'number' ? 'step="any"' : ''} value="${esc(v ?? '')}" ${f.req ? 'required' : ''}>`;
   return `<div class="f ${f.full ? 'full' : ''}">${lbl}${inp}</div>`;
+}
+// small create/edit form (leave, requests, advances, stock moves, petty cash top-ups); restored — it was dropped in an earlier refactor while still in use
+async function simpleModal({ title, table, fields, row, after }) {
+  const m = modal(`<h2>${title}</h2><div class="f2">${fields.map(f => field(f, row?.[f.k] ?? f.def)).join('')}</div>
+    <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button><span class="sp"></span>${row ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`);
+  $('#cancel', m).onclick = closeModal;
+  $('#save', m).onclick = guard(async () => { const b = {}; fields.forEach(f => b[f.k] = val(m, f.k)); row ? await api('PUT', `${table}/${row.id}`, b) : await api('POST', table, b); closeModal(); after(); });
+  if (row) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${table}/${row.id}`); closeModal(); after(); } });
 }
 const refOpts = (rows, label, blank = true) => [...(blank ? [['', '—']] : []), ...rows.map(r => [r.id, label(r)])];
 const confirmDel = () => confirm(tr('هل أنت متأكد من الحذف؟', 'Delete this record?'));
@@ -253,6 +265,12 @@ async function editProject(id) {
 }
 PAGES.projects = async id => {
   if (id) return projectDetail(+id);
+  if (!seesMoney()) {                                                     // site engineer: the list without contract values or costs
+    const rows = await api('GET', 'projects');
+    main(`<h1>${tr('المشاريع', 'Projects')}</h1><div class="tw"><table><thead><tr><th>${tr('الرمز', 'Code')}</th><th>${tr('المشروع', 'Project')}</th><th>${tr('الموقع', 'Location')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
+      ${rows.map(p => `<tr class="click" onclick="go('projects/${p.id}')"><td>${esc(p.code || '')}</td><td>${esc(p.name)}</td><td>${esc(p.location || '')}</td><td>${tag(p.status)}</td></tr>`).join('') || `<tr><td colspan="4" class="muted">${tr('لا توجد مشاريع', 'No projects yet')}</td></tr>`}</tbody></table></div>`);
+    return;
+  }
   const rows = await api('GET', 'project-summary');
   const c = await crud({ title: tr('المشاريع', 'Projects'), table: 'projects', load: async () => rows, extra: xl('projects'),
     fields: projectFields,
@@ -261,7 +279,34 @@ PAGES.projects = async id => {
       { ar: 'التكلفة', en: 'Cost', n: 1, f: r => money(r.cost) }, { ar: 'الربح', en: 'Profit', n: 1, f: r => `<span class="${r.profit >= 0 ? 'pos' : 'neg'}">${money(r.profit)}</span>` }] });
   c.setRow(id => go('projects/' + id));
 };
+// ---- site diary: one entry per site per day (weather, manpower, work done, issues) ----
+PAGES.sitediary = async () => {
+  const [rows, projects] = await Promise.all([api('GET', 'site_reports'), api('GET', 'projects')]);
+  const pname = id => { const p = projects.find(x => x.id === id); return p ? `${p.code || ''} ${p.name}` : ''; };
+  rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id));
+  await crud({ title: tr('يومية الموقع', 'Site diary'), table: 'site_reports', load: async () => rows, noAdd: !['admin', 'accountant', 'manager', ...SITER].includes(ME.role),
+    intro: `<p class="muted">${tr('سجل يومي لكل موقع: الطقس، عدد العمال، الأعمال المنجزة، والعوائق. يُطبع بترويسة الشركة.', 'A daily record per site: weather, manpower, work done and issues. Prints on the letterhead.')}</p>`,
+    fields: async () => [{ k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', req: 1, options: refOpts(projects.filter(p => p.status === 'active'), p => `${p.code || ''} ${p.name}`, false) },
+      { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date', def: today() }, { k: 'weather', ar: 'الطقس', en: 'Weather' }, { k: 'labour_count', ar: 'عدد العمال', en: 'Manpower', type: 'number', def: 0 },
+      { k: 'work_done', ar: 'الأعمال المنجزة', en: 'Work done', type: 'textarea', full: 1 }, { k: 'issues', ar: 'العوائق والملاحظات', en: 'Issues / delays', type: 'textarea', full: 1 }, { k: 'notes', ar: 'ملاحظات أخرى', en: 'Other notes', type: 'textarea', full: 1 }],
+    cols: [{ ar: 'التاريخ', en: 'Date', k: 'date' }, { ar: 'المشروع', en: 'Project', f: r => esc(pname(r.project_id)) }, { ar: 'الطقس', en: 'Weather', k: 'weather' }, { ar: 'العمال', en: 'Manpower', n: 1, k: 'labour_count' },
+      { ar: 'الأعمال المنجزة', en: 'Work done', k: 'work_done' }, { ar: 'العوائق', en: 'Issues', f: r => `<span class="neg">${esc(r.issues || '')}</span>` }] });
+};
+// site view of a project: progress on the BOQ (no rates or values), the site diary and documents
+async function siteProjectDetail(id) {
+  const [p, boq, reps] = await Promise.all([api('GET', 'projects/' + id), api('GET', 'boq_items?project_id=' + id).catch(() => []), api('GET', 'site_reports?project_id=' + id).catch(() => [])]);
+  if (!p) return go('projects');
+  const edit = ME.role === 'site_engineer';
+  main(`<div class="bar"><button class="btn sec" onclick="go('projects')">←</button><h1 style="margin:0">${esc(p.code || '')} ${esc(p.name)} ${tag(p.status)}</h1></div>
+    <h2>${tr('نسبة الإنجاز حسب البند', 'Progress by BOQ item')}</h2><div class="tw"><table><thead><tr><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th class="n">${tr('الكمية', 'Qty')}</th><th class="n">${tr('إنجاز %', 'Done %')}</th></tr></thead><tbody>
+    ${boq.map(i => `<tr><td>${esc(i.section ? i.section + ' — ' : '')}${esc(i.description)}</td><td>${esc(i.unit)}</td><td class="n">${money(i.qty)}</td><td class="n">${edit ? `<input type="number" min="0" max="100" step="any" style="width:80px" data-done="${i.id}" value="${i.done_pct}">` : i.done_pct + '%'}</td></tr>`).join('') || `<tr><td colspan="4" class="muted">—</td></tr>`}</tbody></table></div>
+    <h2 style="margin-top:16px">${tr('يومية الموقع', 'Site diary')}</h2><div class="tw"><table><tbody>${reps.slice(0, 10).map(r => `<tr><td>${esc(r.date)}</td><td class="n">${r.labour_count}</td><td>${esc(r.work_done || '')}</td><td class="neg">${esc(r.issues || '')}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>
+    <div class="card" id="pdocs" style="margin-top:16px"></div>`);
+  document.querySelectorAll('[data-done]').forEach(x => x.onchange = guard(async () => { await api('PUT', 'boq_items/' + x.dataset.done, { done_pct: +x.value }); x.style.background = '#eefaf1'; }));
+  if (window.docsPanel) docsPanel($('#pdocs'), 'project', id, edit);
+}
 async function projectDetail(id) {
+  if (!seesMoney()) return siteProjectDetail(id);
   const [rows, inv, bills, boq, vars] = await Promise.all([api('GET', 'project-summary'), api('GET', 'invoices'), api('GET', 'bills'), api('GET', 'boq_items?project_id=' + id), api('GET', 'variations?project_id=' + id)]);
   const p = rows.find(r => r.id === id); if (!p) return go('projects');
   const mine = inv.filter(i => i.project_id === id), bl = bills.filter(b => b.project_id === id);
@@ -513,7 +558,7 @@ PAGES.employees = async () => {
       { k: 'join_date', ar: 'تاريخ الالتحاق', en: 'Join date', type: 'date' }, { k: 'end_date', ar: 'تاريخ انتهاء الخدمة', en: 'End of service date', type: 'date' },
       { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['active', tr(...STATUS.active)], ['left', tr(...STATUS.left)]] },
       { k: 'project_id', ar: 'تحميل التكلفة على', en: 'Cost charged to', type: 'select', options: [['', tr('عمومي — الإدارة / كل الشركة (مصاريف عمومية)', 'General — head office / whole company (overheads)')], ...refOpts(projects, p => `${p.code || ''} ${p.name}`, false)] },
-      { k: 'basic', ar: 'الراتب الأساسي', en: 'Basic wage', type: 'number', def: 0 }, { k: 'housing', ar: 'بدل سكن', en: 'Housing allowance', type: 'number', def: 0 },
+      { k: 'basic', ar: 'الراتب الأساسي', en: 'Basic wage', type: 'number', def: 0 }, { k: 'housing', ar: 'بدل سكن', en: 'Housing allowance', type: 'number', def: 0 }, { k: 'transport', ar: 'بدل مواصلات', en: 'Transport allowance', type: 'number', def: 0 },
       { k: 'other_allowance', ar: 'بدلات أخرى', en: 'Other allowances', type: 'number', def: 0 }, { k: 'bank_name', ar: 'البنك / شركة الصرافة', en: 'Bank / exchange house' },
       { k: 'routing_code', ar: 'رمز التوجيه (٩ أرقام)', en: 'Routing code (9 digits)' }, { k: 'iban', ar: 'الآيبان IBAN', en: 'IBAN' },
       { k: 'eid_expiry', ar: 'انتهاء الهوية', en: 'Emirates ID expiry', type: 'date' }, { k: 'visa_expiry', ar: 'انتهاء الإقامة', en: 'Residence visa expiry', type: 'date' },

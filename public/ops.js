@@ -2,7 +2,9 @@
 Object.assign(STATUS, {
   open: ['مفتوح', 'Open'], awarded: ['تم الترسية', 'Awarded'], received: ['تم الاستلام', 'Received'], closed: ['مغلق', 'Closed'], disposed: ['مستبعد', 'Disposed'],
 });
-const canOps = () => ['admin', 'accountant', 'manager'].includes(ME.role);
+// write buttons per page follow the server rules (lib/acl.js): procurement buys, the storekeeper runs the store, QS values subcontracts
+const OPS_WRITE = { rfqs: ['procurement', 'site_engineer'], purchase_orders: ['procurement'], subcontracts: ['qs'], stock: ['procurement', 'storekeeper'] };
+const canOps = res => ['admin', 'accountant', 'manager', ...((res && OPS_WRITE[res]) || [])].includes(ME.role);
 const canFin = () => ['admin', 'accountant'].includes(ME.role);
 const fileToData = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = no; r.readAsDataURL(f); });
 const size = n => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
@@ -42,7 +44,7 @@ PAGES.documents = async () => {
 PAGES.rfq = async () => {
   const [rows, projects, parties] = await Promise.all([api('GET', 'rfqs'), api('GET', 'projects'), api('GET', 'parties')]);
   const suppliers = parties.filter(p => p.type !== 'client');
-  main(`<div class="bar"><h1>${tr('طلبات الأسعار (RFQ)', 'Requests for quotation')}</h1><span class="sp"></span>${canOps() ? `<button class="btn" id="add">+ ${tr('طلب جديد', 'New RFQ')}</button>` : ''}</div>
+  main(`<div class="bar"><h1>${tr('طلبات الأسعار (RFQ)', 'Requests for quotation')}</h1><span class="sp"></span>${canOps('rfqs') ? `<button class="btn" id="add">+ ${tr('طلب جديد', 'New RFQ')}</button>` : ''}</div>
   <p class="muted">${tr('أدخل البنود المطلوبة ثم أسعار كل مورد؛ يقارن النظام الإجمالي ويُبرز الأقل، وبنقرة واحدة تُحوَّل الترسية إلى أمر شراء.', 'List the items, enter each supplier’s prices; the system compares totals, highlights the lowest and turns the award into a purchase order in one click.')}</p>
   <div class="tw"><table><thead><tr><th>${tr('الرقم', 'No.')}</th><th>${tr('التاريخ', 'Date')}</th><th>${tr('الوصف', 'Description')}</th><th>${tr('المشروع', 'Project')}</th><th class="n">${tr('عروض', 'Quotes')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
   ${rows.map(r => `<tr class="click" data-id="${r.id}"><td>${esc(r.number)}</td><td>${esc(r.date)}</td><td>${esc(r.description || '')}</td><td>${esc(r.project_name || '')}</td><td class="n">${r.quotes.length}</td><td>${tag(r.status)}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد طلبات', 'No RFQs yet')}</td></tr>`}</tbody></table></div>`);
@@ -101,7 +103,7 @@ window.poModal = guard(async (id, preset = {}) => {
     <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button>${row ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button><button class="btn sec" id="mail">${tr('إرسال للمورد', 'Email supplier')}</button>${row.bill_id ? '' : `<button class="btn sec" id="rcv">${tr('استلام وإنشاء فاتورة مورد', 'Receive → create bill')}</button>`}` : ''}
     <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && !row.bill_id ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`, true);
   bindDoc(m, e.row, 1, false);
-  if (row && window.docsPanel) docsPanel(m, 'purchase_order', row.id, canOps());
+  if (row && window.docsPanel) docsPanel(m, 'purchase_order', row.id, canOps('purchase_orders'));
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
     const b = { items: readItems(m) }; head.forEach(f => b[f.k] = val(m, f.k)); b.terms = val(m, 'terms'); b.notes = val(m, 'notes');
@@ -117,7 +119,7 @@ window.poModal = guard(async (id, preset = {}) => {
 });
 PAGES.po = async () => {
   const rows = await api('GET', 'purchase_orders');
-  main(`<div class="bar"><h1>${tr('أوامر الشراء', 'Purchase orders')}</h1><span class="sp"></span>${canOps() ? `<button class="btn" id="add">+ ${tr('أمر شراء', 'New PO')}</button>` : ''}</div>
+  main(`<div class="bar"><h1>${tr('أوامر الشراء', 'Purchase orders')}</h1><span class="sp"></span>${canOps('purchase_orders') ? `<button class="btn" id="add">+ ${tr('أمر شراء', 'New PO')}</button>` : ''}</div>
   <div class="tw"><table><thead><tr><th>${tr('الرقم', 'No.')}</th><th>${tr('التاريخ', 'Date')}</th><th>${tr('المورد', 'Supplier')}</th><th>${tr('المشروع', 'Project')}</th><th class="n">${tr('الإجمالي', 'Total')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
   ${rows.map(r => `<tr class="click" data-id="${r.id}"><td>${esc(r.number)}</td><td>${esc(r.date)}</td><td>${esc(r.supplier_name || '')}</td><td>${esc(r.project_name || '')}</td><td class="n">${money(r.total)}</td><td>${tag(r.status)}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد أوامر شراء', 'No purchase orders yet')}</td></tr>`}</tbody></table></div>`);
   if ($('#add')) $('#add').onclick = () => poModal();
@@ -127,12 +129,12 @@ PAGES.po = async () => {
 // ---- subcontracts & payment certificates -------------------------------------------------------------
 PAGES.subcontracts = async () => {
   const [rows, projects, parties] = await Promise.all([api('GET', 'subcontracts'), api('GET', 'projects'), api('GET', 'parties')]);
-  const c = await crud({ title: tr('مقاولو الباطن وشهادات الدفع', 'Subcontracts & payment certificates'), table: 'subcontracts', load: async () => rows, noAdd: !canOps(),
+  const c = await crud({ title: tr('مقاولو الباطن وشهادات الدفع', 'Subcontracts & payment certificates'), table: 'subcontracts', load: async () => rows, noAdd: !canOps('subcontracts'),
     intro: `<p class="muted">${tr('أنشئ عقد الباطن ثم أصدر شهادات دفع تراكمية؛ يحسب النظام المحتجزات والدفعة المقدمة والضريبة، وعند الاعتماد يُنشئ مصروفاً بتكلفة المشروع.', 'Create the subcontract, then issue cumulative payment certificates; retention, advance recovery and VAT are calculated and approval books the cost to the project.')}</p>`,
     fields: async () => [{ k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`, false) }, { k: 'party_id', ar: 'مقاول الباطن', en: 'Subcontractor', type: 'select', options: refOpts(parties.filter(p => p.type !== 'client'), p => p.name, false) },
       { k: 'description', ar: 'نطاق العمل', en: 'Scope of work', full: 1, req: 1 }, { k: 'contract_value', ar: 'قيمة العقد (بدون ضريبة)', en: 'Contract value (ex VAT)', type: 'number', def: 0 }, { k: 'retention_pct', ar: 'نسبة المحتجزات %', en: 'Retention %', type: 'number', def: 5 },
       { k: 'advance', ar: 'الدفعة المقدمة', en: 'Advance payment', type: 'number', def: 0 }, { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['active', tr(...STATUS.active)], ['completed', tr(...STATUS.completed)], ['cancelled', tr(...STATUS.cancelled)]] }],
-    onModal: (m, row) => row && docsPanel(m, 'subcontract', row.id, canOps()),
+    onModal: (m, row) => row && docsPanel(m, 'subcontract', row.id, canOps('subcontracts')),
     cols: [{ ar: 'المقاول', en: 'Subcontractor', k: 'party_name' }, { ar: 'المشروع', en: 'Project', k: 'project_name' }, { ar: 'النطاق', en: 'Scope', k: 'description' }, { ar: 'قيمة العقد', en: 'Contract', n: 1, f: r => money(r.contract_value) },
       { ar: 'المعتمد', en: 'Certified', n: 1, f: r => money(r.certified) }, { ar: 'محتجزات', en: 'Retention held', n: 1, f: r => money(r.retention_held) }, { ar: 'شهادات', en: 'Certs', n: 1, k: 'certs' }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) }] });
   c.setRow(id => subDetail(rows.find(r => r.id === id), c.edit));
@@ -142,7 +144,7 @@ async function subDetail(sub, edit) {
   const m = modal(`<h2>${esc(sub.party_name || '')} — ${esc(sub.description || '')}</h2><p class="muted">${esc(sub.project_name || '')} · ${tr('قيمة العقد', 'Contract')} ${money(sub.contract_value)} · ${tr('محتجزات', 'Retention')} ${sub.retention_pct}%</p>
     <div class="tw"><table><thead><tr><th>${tr('الشهادة', 'Cert')}</th><th>${tr('التاريخ', 'Date')}</th><th class="n">${tr('التراكمي', 'Cumulative')}</th><th class="n">${tr('هذه الفترة', 'This period')}</th><th class="n">${tr('المستحق الآن', 'Payable now')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
     ${certs.map(x => `<tr class="click" data-c="${x.id}"><td>${esc(x.number)}</td><td>${esc(x.date)}</td><td class="n">${money(x.cumulative)}</td><td class="n">${money(x.gross_this)}</td><td class="n">${money(x.payable_now)}</td><td>${tag(x.status === 'approved' ? 'approved' : 'draft')}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد شهادات', 'No certificates yet')}</td></tr>`}</tbody></table></div>
-    <div class="acts">${canOps() ? `<button class="btn" id="nc">+ ${tr('شهادة دفع', 'New certificate')}</button><button class="btn sec" id="es">${tr('تعديل العقد', 'Edit contract')}</button>` : ''}<button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
+    <div class="acts">${canOps('subcontracts') ? `<button class="btn" id="nc">+ ${tr('شهادة دفع', 'New certificate')}</button><button class="btn sec" id="es">${tr('تعديل العقد', 'Edit contract')}</button>` : ''}<button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
   $('#cancel', m).onclick = closeModal;
   if ($('#nc', m)) $('#nc', m).onclick = () => certModal(sub, null, Math.max(0, ...certs.map(x => x.cumulative)));
   if ($('#es', m)) $('#es', m).onclick = () => { closeModal(); edit(sub); };
@@ -176,7 +178,7 @@ function certModal(sub, row, latest = 0) {
 // ---- stock -------------------------------------------------------------------------------------------
 PAGES.stock = async () => {
   const [items, moves, projects] = await Promise.all([api('GET', 'stock_items'), api('GET', 'stock_moves'), api('GET', 'projects')]);
-  const c = await crud({ title: tr('المخزون ومواد الموقع', 'Stock & site materials'), table: 'stock_items', load: async () => items, noAdd: !canOps(), extra: `${canOps() ? `<button class="btn sec" id="mv">${tr('حركة مخزون', 'Stock movement')}</button>` : ''}${xl('stock')}`,
+  const c = await crud({ title: tr('المخزون ومواد الموقع', 'Stock & site materials'), table: 'stock_items', load: async () => items, noAdd: !canOps('stock'), extra: `${canOps('stock') ? `<button class="btn sec" id="mv">${tr('حركة مخزون', 'Stock movement')}</button>` : ''}${xl('stock')}`,
     fields: async () => [{ k: 'code', ar: 'الرمز', en: 'Code' }, { k: 'name', ar: 'الصنف', en: 'Item', req: 1 }, { k: 'unit', ar: 'الوحدة', en: 'Unit' }, { k: 'min_qty', ar: 'حد إعادة الطلب', en: 'Reorder level', type: 'number', def: 0 }, { k: 'location', ar: 'الموقع / المخزن', en: 'Location' }],
     cols: [{ ar: 'الرمز', en: 'Code', k: 'code' }, { ar: 'الصنف', en: 'Item', f: r => `${esc(r.name)} ${r.low ? `<span class="tag overdue">${tr('منخفض', 'Low')}</span>` : ''}` }, { ar: 'الوحدة', en: 'Unit', k: 'unit' }, { ar: 'الكمية', en: 'Qty', n: 1, f: r => money(r.qty) }, { ar: 'متوسط التكلفة', en: 'Avg cost', n: 1, f: r => money(r.avg_cost) }, { ar: 'القيمة', en: 'Value', n: 1, f: r => money(r.value) }] });
   document.querySelector('#main').insertAdjacentHTML('beforeend', `<h2 style="margin-top:18px">${tr('آخر الحركات', 'Recent movements')}</h2><div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('الصنف', 'Item')}</th><th>${tr('النوع', 'Type')}</th><th class="n">${tr('الكمية', 'Qty')}</th><th class="n">${tr('التكلفة', 'Unit cost')}</th><th>${tr('المشروع', 'Project')}</th><th>${tr('مرجع', 'Ref')}</th></tr></thead><tbody>

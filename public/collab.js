@@ -1,5 +1,5 @@
 // Project control & teamwork screens: budget vs actual vs committed with forecast, weekly updates, tasks board, notes with @mentions.
-const BCAT = ['materials', 'labour', 'subcontract', 'equipment', 'transport', 'permits', 'overhead', 'other'];
+const BCAT = ['materials', 'labour', 'subcontract', 'equipment', 'transport', 'permits', 'accommodation', 'visa', 'insurance', 'overhead', 'other'];
 const PST = { on_track: ['على المسار', 'On track', 'paid'], at_risk: ['في خطر', 'At risk', 'unpaid'], off_track: ['خارج المسار', 'Off track', 'overdue'], on_hold: ['متوقف', 'On hold', ''], complete: ['مكتمل', 'Complete', 'paid'] };
 const TST = { todo: ['جديدة', 'To do'], doing: ['قيد التنفيذ', 'In progress'], done: ['منجزة', 'Done'], cancelled: ['ملغاة', 'Cancelled'] };
 const TTAG = { site: ['الموقع', 'Site'], commercial: ['تجاري', 'Commercial'], authorities: ['الجهات الحكومية', 'Authorities'], hse: ['السلامة', 'HSE'], qaqc: ['الجودة', 'QA/QC'], procurement: ['المشتريات', 'Procurement'], other: ['أخرى', 'Other'] };
@@ -67,6 +67,16 @@ const baseProjectDetail2 = projectDetail;
 projectDetail = async id => {
   await baseProjectDetail2(id);
   if (!$('#main')) return;
+  if (!seesMoney()) {                                                     // site roles: tasks and notes only (no budget, no forecasts)
+    const [tasks, us] = await Promise.all([api('GET', `tasks?project_id=${id}`), users()]);
+    const tc = document.createElement('div'); tc.className = 'card';
+    tc.innerHTML = `<div class="bar"><h2 style="margin:0">${tr('المهام', 'Tasks')}</h2><span class="sp"></span><button class="btn sm" id="padd">+ ${tr('مهمة', 'Task')}</button></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">${['todo', 'doing', 'done'].map(s => `<div><h3>${tr(...TST[s])}</h3>${tasks.filter(t => t.status === s).map(t => taskCard(t, us)).join('') || '<p class="muted">—</p>'}</div>`).join('')}</div>`;
+    const nc = document.createElement('div'); nc.className = 'card';
+    $('#main').append(tc, nc); notesPanel(nc, 'project', id); wireTasks(tc);
+    $('#padd').onclick = () => taskModal(null, { project_id: id });
+    return;
+  }
   const [b, ups, tasks, us] = await Promise.all([api('GET', `projects/${id}/budget`), api('GET', `projects/${id}/updates`), api('GET', `tasks?project_id=${id}`), users()]);
   const edit = ['admin', 'accountant', 'manager'].includes(ME.role), F = b.forecast;
   const bc = document.createElement('div'); bc.className = 'card';

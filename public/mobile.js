@@ -1,6 +1,6 @@
 // Phone app layer: service worker (instant start, update prompt), "install app" button / iPhone hint,
 // notifications bell + page (in-app inbox and push to this device).
-const ALLR = ['admin', 'accountant', 'manager', 'hr', 'viewer', 'employee'];
+const ALLR = Object.keys(ROLE);
 let installEvt = null, swReg = null;
 const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent), standaloneApp = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const pushOk = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;

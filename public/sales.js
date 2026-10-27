@@ -1,7 +1,7 @@
 // Tenders & opportunities pipeline: stages board, pipeline value, weighted forecast, win rate; quotation and project from a tender.
 const TSTAGE = { lead: ['فرصة', 'Lead'], invited: ['دعوة لمناقصة', 'Invited'], preparing: ['قيد التسعير', 'Preparing'], submitted: ['مُقدَّمة', 'Submitted'], negotiation: ['تفاوض', 'Negotiation'], won: ['فزنا', 'Won'], lost: ['خسرنا', 'Lost'] };
 PAGES.tenders = async () => {
-  const d = await api('GET', 'tenders'), s = d.summary, ops = ['admin', 'accountant', 'manager'].includes(ME.role);
+  const d = await api('GET', 'tenders'), s = d.summary, ops = ['admin', 'accountant', 'manager', 'qs'].includes(ME.role);
   const k = (l, v, c = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${c}">${v}</div></div>`;
   const card = t => `<div class="card click" data-t="${t.id}" style="padding:10px;margin:6px 0;cursor:pointer"><b>${esc(t.title)}</b><div class="muted" style="font-size:12px">${esc(t.client || '')}</div>
     <div style="font-size:13px">${money(t.value)} · ${t.probability}%${t.submission_date ? ` · <span class="${t.due_soon ? 'neg' : 'muted'}">${tr('تقديم', 'due')} ${esc(t.submission_date)}</span>` : ''}</div>
@@ -15,7 +15,7 @@ PAGES.tenders = async () => {
   document.querySelectorAll('[data-t]').forEach(c => c.onclick = () => tenderModal(d.rows.find(t => t.id === +c.dataset.t)));
 };
 async function tenderModal(t) {
-  const [parties, people] = await Promise.all([api('GET', 'parties'), api('GET', 'tasks/people').catch(() => [])]), ops = ['admin', 'accountant', 'manager'].includes(ME.role);
+  const [parties, people] = await Promise.all([api('GET', 'parties'), api('GET', 'tasks/people').catch(() => [])]), ops = ['admin', 'accountant', 'manager', 'qs'].includes(ME.role);
   const f = [{ k: 'title', ar: 'اسم المناقصة / الفرصة', en: 'Tender / opportunity', req: 1, full: 1 }, { k: 'client_id', ar: 'العميل', en: 'Client', type: 'select', options: refOpts(parties.filter(p => p.type === 'client'), p => p.name) },
     { k: 'client_name', ar: 'أو اسم جهة جديدة', en: 'Or a new organisation name' }, { k: 'source', ar: 'المصدر (دعوة، علاقة، منصة مناقصات…)', en: 'Source (invitation, referral, tender portal…)' },
     { k: 'stage', ar: 'المرحلة', en: 'Stage', type: 'select', options: Object.entries(TSTAGE).map(([k, v]) => [k, tr(...v)]) }, { k: 'value', ar: 'القيمة التقديرية', en: 'Estimated value', type: 'number' },

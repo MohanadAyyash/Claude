@@ -139,7 +139,7 @@ function projectRows() {
     const bl = [...direct, ...bills.filter(b => b.allocation.some(a => a.project_id === p.id)).map(b => { const pct = b.allocation.find(a => a.project_id === p.id).pct; return { ...b, amount: round(b.amount * pct / 100), balance: round(b.balance * pct / 100) }; })];
     const invoiced = round(inv.reduce((s, i) => s + i.revenue, 0));
     const collected = round(inv.reduce((s, i) => s + i.paid, 0) + inv.reduce((s, i) => s + (i.retention - i.retention_open), 0));
-    const pr = db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final' AND project_id=?").get(p.id).g;
+    const pr = ctx.projectPayrollCost ? ctx.projectPayrollCost(p.id) : db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final' AND project_id=?").get(p.id).g;
     const costBills = bl.filter(b => b.category !== 'asset');
     const cost = round(costBills.reduce((s, b) => s + b.amount, 0) + pr);
     const byCat = {};
@@ -284,7 +284,7 @@ function clean(table, body) {
 }
 
 const { ROLES } = ACLX, can = ACLX.can;
-const SETTING_KEYS = ['mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to'];
+const SETTING_KEYS = ['mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -319,7 +319,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/contract'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -494,7 +494,9 @@ async function api(req, res, url) {
   // ---- employees / payroll / WPS ----
   if (a === 'employees' && c === 'gratuity') {
     const e = db.prepare('SELECT * FROM employees WHERE id=?').get(+b);
-    return e ? send(res, 200, C.gratuity(e, url.searchParams.get('end'))) : send(res, 404, { error: 'not found' });
+    if (!e) return send(res, 404, { error: 'not found' });
+    const end = url.searchParams.get('end') || today();
+    return send(res, 200, C.gratuity(e, end, ctx.unpaidDays ? ctx.unpaidDays(e, end) : 0));
   }
   if (a === 'payroll') {
     const month = url.searchParams.get('month') || '';
@@ -508,7 +510,10 @@ async function api(req, res, url) {
         const from = e.join_date && e.join_date > first ? e.join_date : first, to = e.end_date && e.end_date < last ? e.end_date : last;
         const days = Math.min(30, Math.round((new Date(to) - new Date(from)) / 864e5) + 1);
         const r = db.prepare('INSERT INTO payroll(month,employee_id,project_id,days_worked) VALUES(?,?,?,?)').run(m, e.id, e.project_id, days);
-        applyPayroll(Number(r.lastInsertRowid), ctx.hooks.payrollInputs ? ctx.hooks.payrollInputs(e, m, days) : {}); n++;
+        const inp = ctx.hooks.payrollInputs ? ctx.hooks.payrollInputs(e, m, days) : {};
+        const loan = ctx.hooks.loanDeduction ? ctx.hooks.loanDeduction(e, m) : { amount: 0 };   // advance instalment due this month
+        if (loan.amount) { inp.deductions = round((+inp.deductions || 0) + loan.amount); inp.notes = `Advance repayment ${loan.amount}`; }
+        applyPayroll(Number(r.lastInsertRowid), inp); if (loan.amount) ctx.hooks.afterPayrollRow(Number(r.lastInsertRowid), e, m, loan.parts); n++;
       }
       audit(req, 'generate', 'payroll', 0, `${m}: ${n} rows`);
       return send(res, 200, { created: n });
@@ -518,6 +523,7 @@ async function api(req, res, url) {
       const issues = C.payrollIssues(getSettings(), payrollRows(m)).filter(i => !i.warn);
       if (issues.length) return send(res, 400, { error: 'WPS data incomplete', issues });
       db.prepare("UPDATE payroll SET status='final' WHERE month=?").run(m);
+      if (ctx.hooks.onPayrollFinal) ctx.hooks.onPayrollFinal(m);   // end-of-service provision + project cost split
       audit(req, 'finalize', 'payroll', 0, m);
       return send(res, 200, { ok: 1 });
     }
@@ -549,7 +555,7 @@ async function api(req, res, url) {
     if (b && method === 'DELETE') {
       const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(+b);
       if (row?.status === 'final') return send(res, 409, { error: 'payroll is finalized' });
-      db.prepare('DELETE FROM payroll WHERE id=?').run(+b);
+      db.prepare('DELETE FROM payroll WHERE id=?').run(+b); db.prepare('DELETE FROM loan_repayments WHERE payroll_id=?').run(+b);
       return send(res, 200, { ok: 1 });
     }
   }
@@ -586,6 +592,8 @@ async function api(req, res, url) {
 
   if (TABLES[a]) {
     const spec = TABLES[a], id = b ? +b : null;
+    // site engineers record progress on the BOQ; quantities, rates and new items stay with QS / management
+    if (a === 'boq_items' && me.role === 'site_engineer' && method !== 'GET' && method !== 'PUT') return send(res, 403, { error: 'your role does not allow this action' });
     if (method === 'GET') {
       const e = enrich();
       if (['boq_items','variations','site_reports'].includes(a)) { const pid = url.searchParams.get('project_id'); const rows = pid ? db.prepare(`SELECT * FROM ${a} WHERE project_id=? ORDER BY ${a === 'site_reports' ? 'date DESC,' : ''} id`).all(+pid) : all(a); return send(res, 200, id ? rows.find(x => x.id === id) || null : rows); }
@@ -607,7 +615,9 @@ async function api(req, res, url) {
       return send(res, 200, { id: Number(r.lastInsertRowid) });
     }
     if (method === 'PUT' && id) {
-      const row = clean(a, await readBody(req)), ks = Object.keys(row);
+      let row = clean(a, await readBody(req));
+      if (a === 'boq_items' && me.role === 'site_engineer') row = 'done_pct' in row ? { done_pct: row.done_pct } : {};
+      const ks = Object.keys(row);
       spec.check?.(row);
       if (a === 'invoices') { const cur = db.prepare('SELECT voided FROM invoices WHERE id=?').get(id); if (cur?.voided) bad('voided invoices cannot be edited'); }
       audit(req, 'update', a, id, ks.join(','));

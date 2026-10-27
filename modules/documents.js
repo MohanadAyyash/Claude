@@ -1,7 +1,8 @@
 // Attachments: contracts, licences, invoices from suppliers, employee papers… with expiry tracking.
-const { READERS, OPS, FIN } = require('../lib/acl');
+const { READERS, OPS, FIN, SITE } = require('../lib/acl');
 const ENTITIES = {                     // entity: [read roles, write roles]
-  project: [READERS, OPS], party: [READERS, OPS], bill: [READERS, FIN], invoice: [READERS, FIN], purchase_order: [READERS, OPS], subcontract: [READERS, OPS],
+  project: [[...READERS, 'qs', ...SITE, 'procurement'], [...OPS, 'qs', 'site_engineer']], party: [READERS, OPS], bill: [READERS, FIN], invoice: [READERS, FIN],
+  purchase_order: [[...READERS, 'procurement', 'storekeeper'], [...OPS, 'procurement']], subcontract: [[...READERS, 'qs', 'procurement'], [...OPS, 'qs']],
   employee: [['admin', 'accountant', 'hr'], ['admin', 'hr']], company: [['admin', 'accountant', 'hr'], ['admin', 'accountant']],
 };
 const MIMES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'text/plain', 'text/csv', 'application/msword', 'application/vnd.ms-excel',

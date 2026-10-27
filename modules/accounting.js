@@ -1,7 +1,7 @@
 // General ledger derived from the operational documents + manual journals; trial balance, statements, bank reconciliation, CSV exports.
 const CHART = [
   ['1000', 'Bank accounts', 'الحسابات البنكية', 'asset'], ['1010', 'Petty cash', 'العهدة النقدية', 'asset'], ['1020', 'Cash on hand', 'النقدية', 'asset'], ['1050', 'Cheques in hand (PDC)', 'شيكات برسم التحصيل', 'asset'],
-  ['1100', 'Accounts receivable', 'ذمم العملاء', 'asset'], ['1150', 'Retention receivable', 'محتجزات لدى العملاء', 'asset'], ['1200', 'VAT input (recoverable)', 'ضريبة القيمة المضافة - مدخلات', 'asset'],
+  ['1100', 'Accounts receivable', 'ذمم العملاء', 'asset'], ['1150', 'Retention receivable', 'محتجزات لدى العملاء', 'asset'], ['1200', 'VAT input (recoverable)', 'ضريبة القيمة المضافة - مدخلات', 'asset'], ['1300', 'Employee advances', 'سلف الموظفين', 'asset'],
   ['1400', 'Advances to subcontractors', 'دفعات مقدمة لمقاولي الباطن', 'asset'], ['1600', 'Fixed assets (cost)', 'الأصول الثابتة', 'asset'], ['1690', 'Accumulated depreciation', 'مجمع الإهلاك', 'asset'],
   ['2000', 'Accounts payable', 'ذمم الموردين', 'liability'], ['2050', 'Cheques issued (PDC payable)', 'شيكات برسم الدفع', 'liability'], ['2100', 'VAT output', 'ضريبة القيمة المضافة - مخرجات', 'liability'],
   ['2200', 'Salaries payable', 'رواتب مستحقة', 'liability'], ['2250', 'Employee deductions payable', 'خصومات موظفين مستحقة', 'liability'], ['2300', 'End-of-service provision', 'مخصص نهاية الخدمة', 'liability'], ['2400', 'Advances from customers', 'دفعات مقدمة من العملاء', 'liability'],
@@ -9,8 +9,9 @@ const CHART = [
   ['4000', 'Contract revenue', 'إيرادات العقود', 'revenue'],
   ['5100', 'Materials', 'مواد', 'expense'], ['5200', 'Labour & payroll', 'عمالة ورواتب', 'expense'], ['5300', 'Subcontractors', 'مقاولو الباطن', 'expense'], ['5400', 'Equipment', 'معدات', 'expense'],
   ['5500', 'Transport', 'نقل', 'expense'], ['5600', 'Permits & fees', 'رسوم وتراخيص', 'expense'], ['5700', 'Other direct costs', 'تكاليف مباشرة أخرى', 'expense'], ['6000', 'Overheads', 'مصاريف عمومية', 'expense'], ['6100', 'Depreciation', 'الإهلاك', 'expense'], ['6200', 'Administrative salaries (head office)', 'رواتب إدارية (المكتب الرئيسي)', 'expense'],
+  ['5260', 'End-of-service benefits', 'مكافأة نهاية الخدمة', 'expense'], ['5710', 'Accommodation', 'سكن العمال', 'expense'], ['5720', 'Visas & labour fees', 'تأشيرات ورسوم عمل', 'expense'], ['5730', 'Medical insurance', 'تأمين طبي', 'expense'],
 ];
-const CAT = { materials: '5100', labour: '5200', subcontract: '5300', equipment: '5400', transport: '5500', permits: '5600', overhead: '6000', other: '5700', asset: '1600' };
+const CAT = { materials: '5100', labour: '5200', subcontract: '5300', equipment: '5400', transport: '5500', permits: '5600', overhead: '6000', other: '5700', asset: '1600', accommodation: '5710', visa: '5720', insurance: '5730' };
 const TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense'];
 
 module.exports = ctx => {
@@ -38,9 +39,12 @@ module.exports = ctx => {
       else add(p.date, p.ref_label, `Payment — ${p.party_name || ''}`, 'payment', [mk('2000', p.amount), mk(bankAcct(p, 'out'), 0, p.amount)]);
     }
     for (const t of db.prepare('SELECT * FROM petty_topups').all()) add(t.date, 'PETTY', `Petty cash top-up ${t.note || ''}`, 'petty', [mk('1010', t.amount), mk('1000', 0, t.amount)]);
+    const rep = Object.fromEntries(db.prepare('SELECT payroll_id, SUM(amount) a FROM loan_repayments GROUP BY payroll_id').all().map(x => [x.payroll_id, round(x.a)]));
+    for (const l of db.prepare('SELECT l.*, e.name FROM loans l JOIN employees e ON e.id=l.employee_id').all()) add(l.created.slice(0, 10), `ADV-${l.id}`, `Salary advance — ${l.name}`, 'payroll', [mk('1300', l.amount), mk('1000', 0, l.amount)]);
+    for (const x of ctx.eosEntries ? ctx.eosEntries() : []) add(x.date, x.ref, x.memo, 'payroll', x.lines.map(l => mk(...l)));
     for (const r of db.prepare("SELECT * FROM payroll WHERE status='final'").all()) {
       add(monthEnd(r.month), `PAY-${r.month}`, `Payroll ${r.month}`, 'payroll', [mk(r.project_id ? '5200' : '6200', r.gross),   // site staff → direct labour; no project → head-office overhead
-         mk('2200', 0, r.net), mk('2250', 0, r.deductions)]);
+         mk('2200', 0, r.net), mk('2250', 0, round(r.deductions - (rep[r.id] || 0))), mk('1300', 0, rep[r.id] || 0)]);   // advance instalments reduce the advance
       if (r.paid_date) add(r.paid_date, `PAY-${r.month}`, `Salaries paid ${r.month}`, 'payroll', [mk('2200', r.net), mk('1000', 0, r.net)]);
     }
     for (const a of ctx.assetRegister('9999-12-31')) {
