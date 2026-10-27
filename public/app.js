@@ -496,13 +496,14 @@ PAGES.bills = async () => {
 };
 
 async function paymentModal(pre = {}) {
-  const [invs, bills] = await Promise.all([api('GET', 'invoices'), api('GET', 'bills')]);
+  const [invs, bills, BANKS] = await Promise.all([api('GET', 'invoices'), api('GET', 'bills'), api('GET', 'bank_accounts').catch(() => [])]);
   const kind = pre.kind || 'in';
   const m = modal(`<h2>${tr('تسجيل دفعة', 'Record payment')}</h2><div class="f2">
     <div class="f"><label>${tr('النوع', 'Type')}</label><select name="kind"><option value="in" ${kind === 'in' ? 'selected' : ''}>${tr('مقبوضات من عميل', 'Receipt from client')}</option><option value="out" ${kind === 'out' ? 'selected' : ''}>${tr('دفعة لمورد', 'Payment to supplier')}</option></select></div>
     <div class="f"><label>${tr('مرتبطة بـ', 'Against')}</label><select name="ref"></select></div>
     ${field({ k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' }, today())}${field({ k: 'amount', ar: 'المبلغ', en: 'Amount', type: 'number', req: 1 }, pre.amount || '')}
     <div class="f"><label>${tr('طريقة الدفع', 'Method')}</label><select name="method">${opts(METHODS)}</select></div>
+    ${BANKS.length > 1 ? `<div class="f bk"><label>${tr('الحساب البنكي', 'Bank account')}</label><select name="bank_account_id">${BANKS.map(k => `<option value="${k.id}">${esc(k.name)}</option>`).join('')}</select></div>` : ''}
     <div class="f ck"><label>${tr('تاريخ استحقاق الشيك', 'Cheque date')}</label><input type="date" name="cheque_date"></div><div class="f ck"><label>${tr('حالة الشيك', 'Cheque status')}</label><select name="cheque_status"><option value="pending">${tr(...STATUS.pending)}</option><option value="cleared">${tr(...STATUS.cleared)}</option><option value="bounced">${tr(...STATUS.bounced)}</option></select></div>${field({ k: 'reference', ar: 'المرجع / رقم الشيك', en: 'Reference / cheque no.' }, '')}
     <div class="f full" id="retbox"><label><input type="checkbox" name="is_retention" style="width:auto"> ${tr('هذه دفعة تحرير محتجزات', 'This is a retention release')}</label></div></div>
     <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button></div>`);
@@ -513,14 +514,14 @@ async function paymentModal(pre = {}) {
     $('#retbox', m).style.display = k === 'in' ? '' : 'none';
   };
   $('[name=kind]', m).onchange = fill; fill();
-  const ck = () => m.querySelectorAll('.ck').forEach(x => x.style.display = val(m, 'method') === 'cheque' ? '' : 'none'); $('[name=method]', m).onchange = ck; ck();
+  const ck = () => { m.querySelectorAll('.ck').forEach(x => x.style.display = val(m, 'method') === 'cheque' ? '' : 'none'); m.querySelectorAll('.bk').forEach(x => x.style.display = ['bank', 'cheque', 'card'].includes(val(m, 'method')) ? '' : 'none'); }; $('[name=method]', m).onchange = ck; ck();
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
     const k = val(m, 'kind'), ref = +val(m, 'ref');
     if (!ref) throw new Error(tr('اختر الفاتورة', 'Select a document'));
     if (!(+val(m, 'amount') > 0)) throw new Error(tr('أدخل المبلغ', 'Enter an amount'));
     await api('POST', 'payments', { kind: k, date: val(m, 'date'), amount: val(m, 'amount'), method: val(m, 'method'), reference: val(m, 'reference'),
-      invoice_id: k === 'in' ? ref : null, bill_id: k === 'out' ? ref : null, is_retention: k === 'in' && $('[name=is_retention]', m).checked ? 1 : 0,
+      invoice_id: k === 'in' ? ref : null, bill_id: k === 'out' ? ref : null, is_retention: k === 'in' && $('[name=is_retention]', m).checked ? 1 : 0, bank_account_id: ['bank', 'cheque', 'card'].includes(val(m, 'method')) && val(m, 'bank_account_id') ? +val(m, 'bank_account_id') : null,
       ...(val(m, 'method') === 'cheque' ? { cheque_date: val(m, 'cheque_date'), cheque_status: val(m, 'cheque_status') } : { cheque_status: 'cleared' }) });
     closeModal(); render();
   });

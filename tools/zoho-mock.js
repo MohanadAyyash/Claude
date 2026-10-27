@@ -4,13 +4,18 @@ function mockZoho() {
   const CLIENT_ID = '1000.TESTCLIENT', CLIENT_SECRET = 'test-secret-xyz', ORG = '900000001';
   let codes = new Set(['1000.code.one']), refresh = new Set(), access = new Set(), seq = 4600000000000, n = 0;
   const id = () => String(++seq);                                                    // Zoho ids are long numeric strings
-  const T = { contacts: [], invoices: [], creditnotes: [], bills: [], expenses: [], customerpayments: [], vendorpayments: [],
+  const T = { contacts: [], invoices: [], creditnotes: [], bills: [], expenses: [], customerpayments: [], vendorpayments: [], journals: [],
+    reporting_tags: [{ tag_id: '7001', tag_name: 'Project', options: [{ option_id: '7101', option_name: 'Villa 12' }, { option_id: '7102', option_name: 'Roads' }] }],
+    projects: [{ project_id: '8001', project_name: 'Villa 12 (Zoho project)' }],
     taxes: [{ tax_id: '1001', tax_name: 'Standard Rate', tax_percentage: 5, tax_type: 'tax' }, { tax_id: '1002', tax_name: 'Zero Rate', tax_percentage: 0, tax_type: 'tax' }, { tax_id: '1003', tax_name: 'Exempt', tax_percentage: 0, tax_type: 'tax' }],
     bankaccounts: [{ account_id: '2001', account_name: 'Emirates NBD', account_type: 'bank', is_active: true }, { account_id: '2002', account_name: 'Petty Cash', account_type: 'cash', is_active: true }],
     chartofaccounts: [{ account_id: '3001', account_name: 'Cost of Goods Sold', account_type: 'cost_of_goods_sold' }, { account_id: '3002', account_name: 'Materials', account_type: 'expense' },
-      { account_id: '3003', account_name: 'Travel Expense', account_type: 'expense' }, { account_id: '3004', account_name: 'Sales', account_type: 'income' }] };
+      { account_id: '3003', account_name: 'Travel Expense', account_type: 'expense' }, { account_id: '3004', account_name: 'Sales', account_type: 'income' },
+      { account_id: '3101', account_name: 'Salaries and Employee Wages', account_type: 'expense' }, { account_id: '3102', account_name: 'Salaries Payable', account_type: 'other_current_liability' },
+      { account_id: '3103', account_name: 'Employee Advance', account_type: 'other_current_asset' }, { account_id: '3104', account_name: 'Deductions Payable', account_type: 'other_current_liability' },
+      { account_id: '3105', account_name: 'End of Service Expense', account_type: 'expense' }, { account_id: '3106', account_name: 'Provision for End of Service', account_type: 'other_liability' }] };
   const calls = [], api = { domain: '' };
-  const KEY = { invoices: ['invoice', 'invoice_id', 'invoice_number'], creditnotes: ['creditnote', 'creditnote_id', 'creditnote_number'], bills: ['bill', 'bill_id', 'bill_number'], expenses: ['expense', 'expense_id'], contacts: ['contact', 'contact_id'] };
+  const KEY = { journals: ['journal', 'journal_id'], invoices: ['invoice', 'invoice_id', 'invoice_number'], creditnotes: ['creditnote', 'creditnote_id', 'creditnote_number'], bills: ['bill', 'bill_id', 'bill_number'], expenses: ['expense', 'expense_id'], contacts: ['contact', 'contact_id'] };
   const total = d => Math.round((d.line_items || []).reduce((s, l) => { const t = T.taxes.find(x => x.tax_id === l.tax_id); return s + l.quantity * l.rate * (1 + (t ? t.tax_percentage : 0) / 100); }, 0) * 100) / 100;
   const err = (status, code, message) => Object.assign(new Error(message), { status, code });
 
@@ -21,6 +26,15 @@ function mockZoho() {
     if (q.get('organization_id') !== ORG) throw err(400, 6041, 'Invalid value passed for organization_id');
     if (p[0] === 'settings' && p[1] === 'taxes') return { taxes: T.taxes };
     if (p[0] === 'bankaccounts' || p[0] === 'chartofaccounts') return { [p[0]]: T[p[0]] };
+    if (p[0] === 'reportingtags' && p.length === 1) return { reporting_tags: T.reporting_tags.map(({ options, ...t }) => t) };
+    if (p[0] === 'reportingtags' && p[2] === 'options') return { results: (T.reporting_tags.find(t => t.tag_id === p[1]) || { options: [] }).options.map(o => ({ ...o, depth: 0 })) };
+    if (p[0] === 'projects' && method === 'GET') return { projects: T.projects };
+    if (p[0] === 'journals' && (method === 'POST' || method === 'PUT') && p.length <= 2) {          // a journal must balance and use known accounts
+      const ls = body.line_items || [], dr = ls.filter(l => l.debit_or_credit === 'debit').reduce((s, l) => s + l.amount, 0), cr = ls.filter(l => l.debit_or_credit === 'credit').reduce((s, l) => s + l.amount, 0);
+      if (!body.journal_date) throw err(400, 2, 'journal_date required');
+      if (Math.abs(dr - cr) > 0.005) throw err(400, 4, `Debits (${dr}) and credits (${cr}) do not match`);
+      if (ls.some(l => !T.chartofaccounts.concat(T.bankaccounts).some(a => a.account_id === l.account_id))) throw err(400, 4, 'Invalid account');
+    }
     const tb = T[p[0]], [one, idf, numf] = KEY[p[0]] || [];
     if (!tb) throw err(404, 5, 'Invalid URL Passed');
     if (p[0] === 'customerpayments' || p[0] === 'vendorpayments') {
@@ -51,6 +65,7 @@ function mockZoho() {
       if (p[0] === 'expenses' && (!body.account_id || !body.paid_through_account_id)) throw err(400, 2, 'account required');
       if (p[0] === 'contacts' && tb.some(r => r.contact_name === body.contact_name)) throw err(400, 3062, 'Contact name already exists');
       const r = { [idf]: id(), ...body, status: p[0] === 'contacts' ? 'active' : p[0] === 'expenses' ? 'nonbillable' : 'draft' };
+      if (p[0] === 'journals') { tb.push(r); return { journal: r }; }
       if (p[0] === 'contacts') r.contact_persons = (body.contact_persons || []).map(cp => ({ contact_person_id: id(), ...cp }));
       if (one !== 'contact' && one !== 'expense') r.total = r.balance = total(r);
       tb.push(r); return { [one]: r };

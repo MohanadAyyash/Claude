@@ -12,7 +12,7 @@ PAGES.zoho = async () => {
   const on = c.enabled === '1', connected = c.connected === '1';
   const chk = (id, val, label) => `<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" style="width:auto" id="${id}"${val ? ' checked' : ''}> ${label}</label>`;
   main(`<div class="bar"><h1>${tr('الربط مع Zoho Books', 'Zoho Books link')}</h1><span class="sp"></span>
-    ${live && on && connected ? `<button class="btn" id="sync">${tr('إرسال إلى Zoho الآن', 'Send to Zoho now')}</button>` : ''}</div>
+    ${live ? `<button class="btn sec" id="dry">${tr('تجربة بدون إرسال (Dry run)', 'Dry run (nothing sent)')}</button>` : ''}${live && on && connected ? `<button class="btn" id="sync">${tr('إرسال إلى Zoho الآن', 'Send to Zoho now')}</button>` : ''}</div><div id="dry-res"></div>
   <p class="muted">${tr('يرسل النظام معاملات كل يوم إلى Zoho Books: جهات الاتصال، الفواتير الضريبية والإشعارات الدائنة بنفس أرقامها، فواتير الموردين والمصروفات، والمقبوضات والمدفوعات مربوطة بفاتورتها. كل معاملة تُرسل مرة واحدة فلا تتكرر.', 'Every day the system sends its transactions to Zoho Books: contacts, tax invoices and credit notes under our own numbers, vendor bills and expenses, and receipts and payments applied to their invoice or bill. Each record is sent once, so nothing is duplicated.')}</p>
   <div class="grid">${k(tr('الحالة', 'Status'), on && connected ? tr('مفعّل', 'On') : tr('غير مفعّل', 'Off'), on && connected ? 'ok' : 'warn')}${k(tr('أُرسل', 'Sent'), d.counts.ok || 0)}${k(tr('أخطاء / تحتاج مراجعة', 'Errors / need review'), (d.counts.error || 0) + (d.counts.changed || 0), (d.counts.error || d.counts.changed) ? 'warn' : '')}${k(tr('آخر إرسال', 'Last run'), d.runs[0] ? esc(d.runs[0].finished.slice(0, 16)) : '—')}</div>
 
@@ -29,8 +29,9 @@ PAGES.zoho = async () => {
       <li>${tr('انسخ الكود الناتج والصقه في «كود الربط» واضغط ربط. الكود يُستخدم مرة واحدة.', 'Copy the generated code into “Grant code” and press Connect. The code works once.')}</li></ol>
     <div class="f"><label>Scope</label><input id="z-scope" dir="ltr" readonly value="${esc(d.scope)}" onclick="this.select()"></div>
     <div class="f2"><div class="f"><label>${tr('مركز بيانات Zoho', 'Zoho data centre')}</label><select id="z-dc">${d.centres.map(v => `<option value="${v}"${c.dc === v ? ' selected' : ''}>${tr(...(ZOHO_DC[v] || [v, v]))}</option>`).join('')}</select></div>
-    <div class="f"><label>Client ID</label><input id="z-id" dir="ltr" value="${esc(c.client_id || '')}"></div>
-    <div class="f"><label>Client Secret</label><input id="z-secret" type="password" dir="ltr" autocomplete="new-password" placeholder="${c.secret_set ? tr('محفوظ — اتركه فارغاً للإبقاء عليه', 'saved — leave empty to keep it') : ''}"></div></div>
+    <div class="f"><label>Client ID</label><input id="z-id" dir="ltr" value="${esc(c.client_id || '')}"${/client_id/.test(c.env || '') ? ' disabled' : ''}></div>
+    <div class="f"><label>Client Secret</label><input id="z-secret" type="password" dir="ltr" autocomplete="new-password"${/client_secret/.test(c.env || '') ? ' disabled' : ''} placeholder="${/client_secret/.test(c.env || '') ? tr('من ملف .env', 'from the .env file') : c.secret_set ? tr('محفوظ — اتركه فارغاً للإبقاء عليه', 'saved — leave empty to keep it') : ''}"></div></div>
+    ${c.env ? `<p class="ok">✔ ${tr('مفاتيح Zoho مقروءة من ملف .env على الخادم — لا تُعدّل من هنا ولا تظهر في المتصفح', 'Zoho keys are read from the .env file on the server — they cannot be changed here and never reach the browser')} (${esc(c.env)})</p>` : `<p class="muted">${tr('الأفضل: ضع ZOHO_CLIENT_ID و ZOHO_CLIENT_SECRET في ملف .env بجانب server.js ثم أعد تشغيل النظام.', 'Preferred: put ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET in the .env file next to server.js and restart the system.')}</p>`}
     <div class="bar"><button class="btn sec" id="z-save-client">${tr('حفظ', 'Save')}</button></div>
     <div class="f2" style="margin-top:12px"><div class="f"><label>${tr('كود الربط (Grant code)', 'Grant code')}</label><input id="z-code" dir="ltr" autocomplete="off" placeholder="1000.xxxx…"></div>
     <div class="f" style="align-self:end"><button class="btn" id="z-connect">${connected ? tr('إعادة الربط', 'Reconnect') : tr('ربط', 'Connect')}</button></div></div>
@@ -61,7 +62,19 @@ PAGES.zoho = async () => {
     $('#sync').disabled = true; toast(tr('جارٍ الإرسال…', 'Sending…'));
     try { const r = await api('POST', 'zoho/sync', {}); toast(`${tr('أُرسل', 'Sent')} ${r.sent} · ${tr('حُدّث', 'updated')} ${r.updated} · ${tr('فشل', 'failed')} ${r.failed}`); } finally { render(); }
   });
+  if ($('#dry')) $('#dry').onclick = guard(async () => {
+    const box = $('#dry-res'); box.innerHTML = `<div class="card"><p class="muted">${tr('جارٍ التجربة…', 'Running…')}</p></div>`;
+    const r = await api('POST', 'zoho/dry-run', {});
+    const OPN = { '/contacts': ['جهة اتصال', 'Contact'], '/invoices': ['فاتورة', 'Invoice'], '/creditnotes': ['إشعار دائن', 'Credit note'], '/bills': ['فاتورة مورد', 'Bill'], '/expenses': ['مصروف', 'Expense'], '/customerpayments': ['مقبوض', 'Receipt'], '/vendorpayments': ['مدفوع', 'Payment'], '/journals': ['قيد يومية', 'Journal'] };
+    box.innerHTML = `<div class="card"><h2>${tr('نتيجة التجربة — لم يُرسل شيء', 'Dry run — nothing was sent')}</h2>
+      <p class="muted">${r.offline ? tr('غير مرتبط بـZoho: استُخدمت قيم تجريبية بدل الحسابات والضرائب.', 'Not connected to Zoho: stand-ins were used for accounts and taxes.') : tr('قُرئت البيانات من Zoho فعلاً، ولم يُكتب فيه شيء.', 'Data was read from Zoho; nothing was written.')}
+      ${tr('سيُنشأ', 'Would create')} ${r.would_send} · ${tr('سيُحدّث', 'update')} ${r.would_update} · ${tr('أخطاء', 'errors')} ${r.failed}</p>
+      ${r.errors.length ? `<ul class="err">${r.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
+      <div class="tw"><table><thead><tr><th>${tr('العملية', 'Operation')}</th><th>${tr('النوع', 'Type')}</th><th>${tr('المرجع', 'Reference')}</th><th class="n">${tr('المبلغ', 'Amount')}</th></tr></thead><tbody>
+      ${r.ops.map(o => { const base = o.path.replace(/\/(:id|DRY-\d+).*$/, ''); return `<tr><td>${o.method === 'POST' && !/status/.test(o.path) ? tr('إنشاء', 'Create') : o.method === 'PUT' ? tr('تحديث', 'Update') : tr('تغيير حالة', 'Status')}</td><td>${tr(...(OPN[base] || [base, base]))}</td><td>${esc(String(o.what || ''))}</td><td class="n">${o.amount === '' ? '' : money(o.amount)}</td></tr>`; }).join('') || `<tr><td colspan="4" class="muted">${tr('لا شيء للإرسال', 'Nothing to send')}</td></tr>`}</tbody></table></div></div>`;
+  });
   if ($('#retry')) $('#retry').onclick = guard(async () => { await api('POST', 'zoho/retry'); toast(tr('ستُعاد محاولة الأخطاء في الإرسال القادم', 'Failed records will be retried on the next send')); render(); });
+  if (live && connected) zohoMapping(admin);
   if (!$('#z-save')) return;
   const clientBody = () => ({ dc: $('#z-dc').value, client_id: $('#z-id').value.trim(), client_secret: $('#z-secret').value.trim() || undefined });
   $('#z-save-client').onclick = guard(async () => { await api('PUT', 'zoho/config', clientBody()); toast(tr('تم الحفظ', 'Saved')); render(); });
@@ -86,3 +99,23 @@ PAGES.zoho = async () => {
     } catch (e) { $('#z-res').innerHTML = `<p class="err">✘ ${esc(e.message)}</p>`; }
   });
 };
+
+// our accounts → Zoho accounts; our projects → a Zoho reporting-tag option or a Zoho project
+async function zohoMapping(admin) {
+  const d = await api('GET', 'zoho/mapping'), card = document.createElement('div'); card.className = 'card';
+  const saved = (kind, key) => (d.saved.find(x => x.kind === kind && x.local_key === String(key)) || {}).zoho_id || '';
+  if (!d.zoho) { card.innerHTML = `<h2>${tr('ربط الحسابات والمشاريع', 'Account & project mapping')}</h2><p class="err">${esc(d.error || '')}</p>`; $('#main').append(card); return; }
+  const accOpts = v => `<option value="">${tr('— تلقائي / غير مربوط —', '— automatic / not mapped —')}</option>${d.zoho.accounts.map(a => `<option value="${esc(a.id)}"${a.id === v ? ' selected' : ''}>${esc(a.name)} (${esc(a.type)})</option>`).join('')}`;
+  const projOpts = v => `<option value="">—</option>${d.zoho.tags.map(t => `<optgroup label="${esc(tr('وسم', 'Tag'))}: ${esc(t.name)}">${t.options.map(o => { const k = `tag:${t.id}:${o.id}`; return `<option value="${k}"${k === v ? ' selected' : ''}>${esc(t.name)} = ${esc(o.name)}</option>`; }).join('')}</optgroup>`).join('')}
+    ${d.zoho.projects.length ? `<optgroup label="${tr('مشاريع Zoho', 'Zoho projects')}">${d.zoho.projects.map(p => { const k = 'project:' + p.id; return `<option value="${k}"${k === v ? ' selected' : ''}>${esc(p.name)}</option>`; }).join('')}</optgroup>` : ''}`;
+  card.innerHTML = `<h2>${tr('ربط الحسابات والمشاريع', 'Account & project mapping')}</h2>
+    <p class="muted">${tr('قيود الرواتب ونهاية الخدمة والسلف تحتاج ربط كل حساب من حساباتنا بحساب في Zoho. فئات المصروفات بدون ربط تذهب لحساب اسمه يطابق الفئة أو Cost of Goods Sold.', 'Payroll, end-of-service and advance journals need each of our accounts mapped to a Zoho account. Unmapped expense categories go to an account whose name matches, or Cost of Goods Sold.')}</p>
+    <div class="f2"><div><h3>${tr('الحسابات', 'Accounts')}</h3><table>${d.local.accounts.map(a => `<tr><td>${esc(a.label)}</td><td><select data-acc="${esc(a.key)}">${accOpts(saved('account', a.key))}</select></td></tr>`).join('')}</table></div>
+    <div><h3>${tr('المشاريع', 'Projects')}</h3><p class="muted" style="font-size:12px">${tr('اختر خيار وسم التقارير (Reporting tag) أو مشروع Zoho لكل مشروع. يُضاف على بنود الفواتير وفواتير الموردين والقيود.', 'Pick a reporting-tag option or a Zoho project for each project. It is added to invoice, bill and journal lines.')}</p>
+      <table>${d.local.projects.map(p => `<tr><td>${esc(p.code || '')} ${esc(p.name)}</td><td><select data-proj="${p.id}">${projOpts(saved('project', p.id))}</select></td></tr>`).join('')}</table></div></div>`;
+  $('#main').append(card);
+  if (!admin) return card.querySelectorAll('select').forEach(x => (x.disabled = true));
+  const put = (kind, key, el) => guard(async () => { await api('PUT', 'zoho/mapping', { kind, local_key: key, zoho_id: el.value, label: el.selectedOptions[0]?.textContent || '' }); toast(tr('تم الحفظ', 'Saved')); });
+  card.querySelectorAll('[data-acc]').forEach(x => x.onchange = put('account', x.dataset.acc, x));
+  card.querySelectorAll('[data-proj]').forEach(x => x.onchange = put('project', x.dataset.proj, x));
+}

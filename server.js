@@ -10,6 +10,8 @@ const { sendMail, validEmail } = require('./lib/mailer');
 const { docHtml, toText } = require('./lib/docs');
 const ACLX = require('./lib/acl');
 
+// secrets (Zoho OAuth client…) live in .env next to server.js — never in the code, the database or git
+try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env */ }
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -50,7 +52,7 @@ const TABLES = {
   quotes:   { cols: ['number','date','client_id','project_name','validity_days','status','items','vat_pct','notes','terms'], num: ['validity_days','vat_pct'], json: ['items'], prefix: 'QT' },
   invoices: { cols: ['number','date','due_date','project_id','items','vat_pct','retention_pct','notes'], num: ['vat_pct','retention_pct'], json: ['items'], prefix: 'INV' },
   bills:    { cols: ['date','party_id','project_id','category','description','amount','vat_amount','reference'], num: ['amount','vat_amount'] },
-  payments: { cols: ['kind','date','amount','method','reference','invoice_id','bill_id','is_retention','notes','cheque_date','cheque_status'], num: ['amount'] },
+  payments: { cols: ['kind','date','amount','method','reference','invoice_id','bill_id','is_retention','notes','cheque_date','cheque_status','bank_account_id'], num: ['amount'] },
   employees: { cols: ['name','person_code','emirates_id','passport_no','nationality','designation','join_date','end_date','status','basic','housing','other_allowance','bank_name','routing_code','iban','project_id','eid_expiry','visa_expiry','passport_expiry','card_expiry','notes'], num: ['basic','housing','other_allowance'],
     check: r => { if (r.person_code && !C.validPersonCode(r.person_code)) bad('Person code / labour card no. must be 14 digits'); if (r.emirates_id && !C.validEid(r.emirates_id)) bad('Emirates ID must be 15 digits starting with 784');
       if (r.routing_code && !C.validRouting(r.routing_code)) bad('Bank routing code must be 9 digits'); if (r.iban && !C.validIban(r.iban)) bad('Invalid UAE IBAN'); } },

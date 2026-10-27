@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "start": "node --no-warnings server.js",
-    "test": "node --no-warnings test.js && node --no-warnings test-zoho.js && node --no-warnings test-mobile.js && node --no-warnings test-workforce.js && node --no-warnings test-contract.js && node --no-warnings test-statements.js && node --no-warnings test-collab.js && node --no-warnings test-sales.js && node --no-warnings test-void.js && node --no-warnings test-roles.js && node --no-warnings test-payroll2.js && node --no-warnings test-ipc.js",
+    "test": "node --no-warnings test.js && node --no-warnings test-zoho.js && node --no-warnings test-mobile.js && node --no-warnings test-workforce.js && node --no-warnings test-contract.js && node --no-warnings test-statements.js && node --no-warnings test-collab.js && node --no-warnings test-sales.js && node --no-warnings test-void.js && node --no-warnings test-roles.js && node --no-warnings test-payroll2.js && node --no-warnings test-ipc.js && node --no-warnings test-zoho2.js && node --no-warnings test-banks.js",
     "build:standalone": "node standalone/build.js",
     "test:standalone": "node standalone/selftest.js && node standalone/selftest-cloud.js"
   },

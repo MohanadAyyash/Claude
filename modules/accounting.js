@@ -20,11 +20,19 @@ module.exports = ctx => {
   CREATE TABLE IF NOT EXISTS journal_entries(id INTEGER PRIMARY KEY, date TEXT, memo TEXT, lines TEXT DEFAULT '[]', created_by TEXT);
   CREATE TABLE IF NOT EXISTS bank_lines(id INTEGER PRIMARY KEY, date TEXT, description TEXT, amount REAL, payment_id INTEGER);`);
   const seed = db.prepare('INSERT OR IGNORE INTO accounts(code,name,name_ar,type,system) VALUES(?,?,?,?,1)'); for (const c of CHART) seed.run(...c);
+  // bank accounts: the first one keeps ledger account 1000, each further one gets 1001, 1002…
+  db.exec('CREATE TABLE IF NOT EXISTS bank_accounts(id INTEGER PRIMARY KEY, name TEXT, bank TEXT, iban TEXT, ledger_code TEXT UNIQUE, active INTEGER DEFAULT 1)');
+  for (const [t, c] of [['payments', 'bank_account_id'], ['bank_lines', 'bank_account_id']]) if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} INTEGER`);
+  if (!db.prepare('SELECT 1 FROM bank_accounts').get()) db.prepare("INSERT INTO bank_accounts(name,bank,iban,ledger_code) VALUES(?,?,?,'1000')").run('Main bank account', ctx.getSettings().employer_bank || '', ctx.getSettings().employer_iban || '');
+  const banks = () => db.prepare('SELECT * FROM bank_accounts ORDER BY id').all();
+  const mainBank = () => banks()[0];
+  const codeOf = id => ((id && db.prepare('SELECT ledger_code FROM bank_accounts WHERE id=?').get(+id)) || mainBank()).ledger_code;
+  ctx.bankAccounts = banks; ctx.bankCode = codeOf;
   const acct = () => Object.fromEntries(db.prepare('SELECT * FROM accounts ORDER BY code').all().map(a => [a.code, a]));
 
   const mk = (acc, dr = 0, cr = 0) => { dr = round(dr); cr = round(cr); if (dr < 0) { cr = round(cr - dr); dr = 0; } if (cr < 0) { dr = round(dr - cr); cr = 0; } return { account: acc, debit: dr, credit: cr }; };
   const monthEnd = ym => `${ym}-${String(C.daysInMonth(ym)).padStart(2, '0')}`;
-  const bankAcct = (p, kind) => p.method === 'cash' ? '1020' : p.method === 'petty' ? '1010' : p.method === 'offset' ? '1400' : p.method === 'cheque' && p.cheque_status === 'pending' ? (kind === 'in' ? '1050' : '2050') : '1000';
+  const bankAcct = (p, kind) => p.method === 'cash' ? '1020' : p.method === 'petty' ? '1010' : p.method === 'offset' ? '1400' : p.method === 'cheque' && p.cheque_status === 'pending' ? (kind === 'in' ? '1050' : '2050') : codeOf(p.bank_account_id);
 
   function entries() {
     const out = [], e = enrich();
@@ -74,8 +82,9 @@ module.exports = ctx => {
   }
 
   // ---- bank reconciliation ----
-  const eligible = () => db.prepare("SELECT p.* FROM payments p WHERE p.reconciled=0 AND p.method IN ('bank','card','cheque') AND COALESCE(p.cheque_status,'cleared')!='bounced' AND p.method!='petty'").all()
-    .filter(p => p.method !== 'cheque' || p.cheque_status === 'cleared').map(p => ({ ...p, signed: p.kind === 'in' ? p.amount : -p.amount }));
+  const sameBank = (a, b) => codeOf(a) === codeOf(b);                                   // null = the main account
+  const eligible = acc => db.prepare("SELECT p.* FROM payments p WHERE p.reconciled=0 AND p.method IN ('bank','card','cheque') AND COALESCE(p.cheque_status,'cleared')!='bounced' AND p.method!='petty'").all()
+    .filter(p => (p.method !== 'cheque' || p.cheque_status === 'cleared') && (acc === undefined || sameBank(p.bank_account_id, acc))).map(p => ({ ...p, signed: p.kind === 'in' ? p.amount : -p.amount }));
   const parseCsv = text => String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split(/[,;\t]/).map(x => x.replace(/^"|"$/g, '').trim()))
     .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r[0]) || /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(r[0]))
     .map(r => { let d = r[0]; if (!/^\d{4}/.test(d)) { const [dd, mm, yy] = d.split(/[/-]/); d = `${yy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`; } return { date: d, description: r.slice(1, -1).join(' ') || '', amount: +String(r[r.length - 1]).replace(/,/g, '') }; });
@@ -123,24 +132,45 @@ module.exports = ctx => {
       }
       if (a === 'financials' && m === 'GET') return send(res, 200, financials(q('from') || `${new Date().getFullYear()}-01-01`, q('to') || today())), true;
 
+      if (a === 'bank_accounts') {
+        if (m === 'GET') return send(res, 200, banks()), true;
+        const x = ['POST', 'PUT'].includes(m) ? await readBody(req) : {};
+        if (x.iban && !C.validIban(x.iban)) bad('Invalid UAE IBAN');
+        if (m === 'POST') {
+          if (!String(x.name || '').trim()) bad('Enter the account name');
+          const used = banks().map(k => +k.ledger_code); let code = 1001; while (used.includes(code) || acct()[String(code)]) code++;
+          if (code > 1009) bad('Up to 10 bank accounts');
+          db.prepare('INSERT INTO accounts(code,name,name_ar,type,system) VALUES(?,?,?,?,1)').run(String(code), `Bank — ${x.name}`, `بنك — ${x.name}`, 'asset');
+          const r = db.prepare('INSERT INTO bank_accounts(name,bank,iban,ledger_code) VALUES(?,?,?,?)').run(String(x.name).trim(), x.bank || '', String(x.iban || '').replace(/\s/g, ''), String(code));
+          audit(req, 'create', 'bank_accounts', Number(r.lastInsertRowid), x.name); return send(res, 200, { id: Number(r.lastInsertRowid), ledger_code: String(code) }), true;
+        }
+        if (m === 'PUT' && b) {
+          const k = db.prepare('SELECT * FROM bank_accounts WHERE id=?').get(+b); if (!k) bad('Not found');
+          db.prepare('UPDATE bank_accounts SET name=?, bank=?, iban=?, active=? WHERE id=?').run(x.name ?? k.name, x.bank ?? k.bank, x.iban != null ? String(x.iban).replace(/\s/g, '') : k.iban, x.active == null ? k.active : (+x.active ? 1 : 0), k.id);
+          if (x.name) db.prepare('UPDATE accounts SET name=?, name_ar=? WHERE code=? AND code!=?').run(`Bank — ${x.name}`, `بنك — ${x.name}`, k.ledger_code, '1000');
+          audit(req, 'update', 'bank_accounts', k.id, x.name || ''); return send(res, 200, { ok: 1 }), true;
+        }
+        return false;
+      }
       if (a === 'bank') {
+        const accId = q('account') ? +q('account') : mainBank().id, inAcc = l => sameBank(l.bank_account_id, accId);
         if (m === 'GET' && !b) {
-          const lines = db.prepare('SELECT l.*, p.kind pkind, p.reference pref FROM bank_lines l LEFT JOIN payments p ON p.id=l.payment_id ORDER BY l.date DESC, l.id DESC').all(), pay = eligible();
-          const bookBal = round(flat(null, today()).filter(l => l.account === '1000').reduce((s, l) => s + l.debit - l.credit, 0));
+          const lines = db.prepare('SELECT l.*, p.kind pkind, p.reference pref FROM bank_lines l LEFT JOIN payments p ON p.id=l.payment_id ORDER BY l.date DESC, l.id DESC').all().filter(inAcc), pay = eligible(accId);
+          const bookBal = round(flat(null, today()).filter(l => l.account === codeOf(accId)).reduce((s, l) => s + l.debit - l.credit, 0));
           const unL = lines.filter(l => !l.payment_id);
-          return send(res, 200, { lines, unmatched_payments: pay, summary: { statement_balance: round(lines.reduce((s, l) => s + l.amount, 0)), book_balance: bookBal, unmatched_lines: round(unL.reduce((s, l) => s + l.amount, 0)), unmatched_payments: round(pay.reduce((s, p) => s + p.signed, 0)) } }), true;
+          return send(res, 200, { account: banks().find(k => k.id === accId), accounts: banks(), lines, unmatched_payments: pay, summary: { statement_balance: round(lines.reduce((s, l) => s + l.amount, 0)), book_balance: bookBal, unmatched_lines: round(unL.reduce((s, l) => s + l.amount, 0)), unmatched_payments: round(pay.reduce((s, p) => s + p.signed, 0)) } }), true;
         }
         if (m === 'POST' && b === 'import') {
           const x = await readBody(req, 3e6), rows = Array.isArray(x.lines) ? x.lines : parseCsv(x.csv); let added = 0;
           for (const r of rows) {
             if (!/^\d{4}-\d\d-\d\d$/.test(r.date || '') || !Number.isFinite(+r.amount)) continue;
-            if (db.prepare('SELECT 1 FROM bank_lines WHERE date=? AND description=? AND amount=?').get(r.date, r.description || '', +r.amount)) continue;
-            db.prepare('INSERT INTO bank_lines(date,description,amount) VALUES(?,?,?)').run(r.date, r.description || '', +r.amount); added++;
+            if (db.prepare('SELECT bank_account_id FROM bank_lines WHERE date=? AND description=? AND amount=?').all(r.date, r.description || '', +r.amount).some(inAcc)) continue;
+            db.prepare('INSERT INTO bank_lines(date,description,amount,bank_account_id) VALUES(?,?,?,?)').run(r.date, r.description || '', +r.amount, accId); added++;
           }
           audit(req, 'import', 'bank', 0, `${added} lines`); return send(res, 200, { added, skipped: rows.length - added }), true;
         }
         if (m === 'POST' && b === 'match') {
-          const x = await readBody(req), l = db.prepare('SELECT * FROM bank_lines WHERE id=?').get(+x.line_id), p = eligible().find(y => y.id === +x.payment_id);
+          const x = await readBody(req), l = db.prepare('SELECT * FROM bank_lines WHERE id=?').get(+x.line_id), p = l && eligible(l.bank_account_id).find(y => y.id === +x.payment_id);
           if (!l || l.payment_id) bad('Statement line not available'); if (!p) bad('Payment not available for matching');
           if (Math.abs(l.amount - p.signed) > 0.005 && !x.force) bad(`Amounts differ (statement ${l.amount}, book ${p.signed})`);
           db.prepare('UPDATE bank_lines SET payment_id=? WHERE id=?').run(p.id, l.id); db.prepare('UPDATE payments SET reconciled=1 WHERE id=?').run(p.id);
@@ -149,8 +179,8 @@ module.exports = ctx => {
         if (m === 'POST' && b === 'unmatch') { const x = await readBody(req), l = db.prepare('SELECT * FROM bank_lines WHERE id=?').get(+x.line_id); if (l?.payment_id) { db.prepare('UPDATE payments SET reconciled=0 WHERE id=?').run(l.payment_id); db.prepare('UPDATE bank_lines SET payment_id=NULL WHERE id=?').run(l.id); } return send(res, 200, { ok: 1 }), true; }
         if (m === 'POST' && b === 'auto-match') {
           let n = 0;
-          for (const l of db.prepare('SELECT * FROM bank_lines WHERE payment_id IS NULL ORDER BY date').all()) {
-            const cand = eligible().filter(p => Math.abs(p.signed - l.amount) < 0.005 && Math.abs(new Date(p.date) - new Date(l.date)) <= 7 * 864e5);
+          for (const l of db.prepare('SELECT * FROM bank_lines WHERE payment_id IS NULL ORDER BY date').all().filter(inAcc)) {
+            const cand = eligible(accId).filter(p => Math.abs(p.signed - l.amount) < 0.005 && Math.abs(new Date(p.date) - new Date(l.date)) <= 7 * 864e5);
             if (cand.length >= 1) { db.prepare('UPDATE bank_lines SET payment_id=? WHERE id=?').run(cand[0].id, l.id); db.prepare('UPDATE payments SET reconciled=1 WHERE id=?').run(cand[0].id); n++; }
           }
           return send(res, 200, { matched: n }), true;
