@@ -22,6 +22,24 @@ server.listen(0, async () => {
     const emp = (await call('POST', 'employees', { name: 'Worker', join_date: '2025-01-01', basic: 1500, project_id: p })).j.id;
     await call('POST', 'invoices', { project_id: p, items: [{ description: 'x', qty: 1, rate: 100 }] });
 
+    // ---- site roles see only the projects assigned to them
+    const p2 = (await call('POST', 'projects', { name: 'Villas', client_id: cl, status: 'active' })).j.id;
+    const bq2 = (await call('POST', 'boq_items', { project_id: p2, description: 'Paving', unit: 'm2', qty: 10, rate: 5 })).j.id;
+    const emp2 = (await call('POST', 'employees', { name: 'Other Crew', join_date: '2025-01-01', basic: 1500, project_id: p2 })).j.id;
+    const users = (await call('GET', 'users')).j, uid = n => users.find(u => u.username === n).id;
+    assert.equal((await as('siteengineer', () => call('GET', 'projects'))).j.length, 0, 'nothing assigned → no projects');
+    for (const n of ['siteengineer', 'foreman']) assert.equal((await call('PUT', 'users/' + uid(n), { projects: [p] })).s, 200);
+    assert.deepEqual((await call('GET', 'users')).j.find(u => u.username === 'foreman').projects, [p]);
+    const seP = (await as('siteengineer', () => call('GET', 'projects'))).j; assert.deepEqual(seP.map(x => x.id), [p], 'only own project listed');
+    await expect('siteengineer', 'GET', 'projects/' + p2, null, 403, 'other project');
+    await expect('siteengineer', 'GET', 'boq_items?project_id=' + p2, null, 403);
+    await expect('siteengineer', 'PUT', 'boq_items/' + bq2, { done_pct: 10 }, 403, 'other project BOQ');
+    await expect('siteengineer', 'POST', 'site_reports', { project_id: p2, date: '2026-10-27', labour_count: 3 }, 403);
+    await expect('foreman', 'POST', 'attendance/clock', { employee_ids: [emp2], kind: 'in' }, 403, 'crew of another project');
+    const roster = (await as('foreman', () => call('GET', 'attendance?date=2026-10-27'))).j.roster.map(r => r.id);
+    assert.ok(roster.includes(emp) && !roster.includes(emp2), 'roster limited to own crew');
+    assert.equal((await as('siteengineer', () => call('GET', 'boq_items'))).j.every(i => i.project_id === p), true);
+
     // ---- site engineer: progress, site diary, crews, material requests — no money
     const SE = 'siteengineer';
     await expect(SE, 'GET', 'projects', null, 200);
@@ -67,6 +85,7 @@ server.listen(0, async () => {
     await expect(SK, 'GET', 'purchase_orders', null, 200); await expect(SK, 'POST', 'purchase_orders', { party_id: sup, items: [] }, 403);
     for (const u of ['invoices', 'bills', 'project-summary', 'parties']) await expect(SK, 'GET', u, null, 403);
     assert.ok(st.id);
+    console.log('✔ site roles: only assigned projects and their crews (lists, details, BOQ, diary, clocking)');
     console.log('✔ site engineer (progress only on BOQ, no money), foreman (crew + diary), QS (commercial, no invoicing), procurement, storekeeper');
     console.log('ROLE TESTS PASSED');
   } catch (e) { console.error('FAIL', e); process.exitCode = 1; }

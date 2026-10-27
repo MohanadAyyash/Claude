@@ -88,6 +88,22 @@ module.exports = ctx => {
     return { title: `Payslip ${row.month}`, filename: `payslip-${row.month}`, body: payslipBody({ emp: emp(row.employee_id), row, S: getSettings(), loan: ctx.loanInfo ? ctx.loanInfo(row) : null }), stamp: false, signature: false };
   };
 
+  // sick leave pay (Art. 31): per year of service 15 days full pay, 30 half, 45 unpaid; unpaid during probation → Map date → unpaid share of the day (0, 0.5, 1)
+  function sickCuts(e, upTo) {
+    const sickDays = new Set(), out = new Map();
+    for (const l of db.prepare("SELECT start_date,end_date FROM leave_requests WHERE employee_id=? AND type='sick' AND status='approved' AND start_date<=?").all(e.id, upTo))
+      for (let t = Date.parse(l.start_date + 'T00:00:00Z'); t <= Date.parse(l.end_date + 'T00:00:00Z'); t += 864e5) sickDays.add(new Date(t).toISOString().slice(0, 10));
+    const all = [...sickDays].sort();
+    for (const d of all.filter(d => d <= upTo)) {
+      if (e.probation_end && d <= e.probation_end) { out.set(d, 1); continue; }
+      let ys = e.join_date ? d.slice(0, 4) + e.join_date.slice(4) : d.slice(0, 4) + '-01-01'; if (ys > d) ys = (+d.slice(0, 4) - 1) + ys.slice(4);
+      const n = all.filter(x => x >= ys && x <= d).length;
+      out.set(d, n <= 15 ? 0 : n <= 45 ? 0.5 : 1);
+    }
+    return out;
+  }
+  ctx.sickCuts = sickCuts;
+
   // ---- payroll integration: unpaid leave + absences reduce days, attendance overtime feeds the sheet ----
   ctx.hooks.payrollInputs = (e, month, baseDays) => {
     const first = `${month}-01`, last = `${month}-${String(C.daysInMonth(month)).padStart(2, '0')}`;
@@ -96,17 +112,7 @@ module.exports = ctx => {
       unpaid += spanDays(l.start_date < first ? first : l.start_date, l.end_date > last ? last : l.end_date);
     // a worked rest day compensated with a substitute day (rest_comp='day') earns no +50% pay for those hours
     const att = db.prepare("SELECT COALESCE(SUM(ot_normal_hours),0) n, COALESCE(SUM(CASE WHEN rest_comp='day' THEN 0 ELSE ot_special_hours END),0) s, SUM(status='absent') a FROM attendance WHERE employee_id=? AND date>=? AND date<=?").get(e.id, first, last);
-    // sick leave pay (Art. 31): per year of service 15 days full pay, 30 half, 45 unpaid; unpaid during probation
-    const sickDays = new Set();
-    for (const l of db.prepare("SELECT start_date,end_date FROM leave_requests WHERE employee_id=? AND type='sick' AND status='approved' AND start_date<=?").all(e.id, last))
-      for (let t = Date.parse(l.start_date + 'T00:00:00Z'); t <= Date.parse(l.end_date + 'T00:00:00Z'); t += 864e5) sickDays.add(new Date(t).toISOString().slice(0, 10));
-    let sickCut = 0;
-    for (const d of [...sickDays].filter(d => d >= first && d <= last)) {
-      if (e.probation_end && d <= e.probation_end) { sickCut += 1; continue; }
-      let ys = e.join_date ? d.slice(0, 4) + e.join_date.slice(4) : d.slice(0, 4) + '-01-01'; if (ys > d) ys = (+d.slice(0, 4) - 1) + ys.slice(4);
-      const n = [...sickDays].filter(x => x >= ys && x <= d).length;
-      sickCut += n <= 15 ? 0 : n <= 45 ? 0.5 : 1;
-    }
+    let sickCut = 0; for (const [d, cut] of sickCuts(e, last)) if (d >= first) sickCut += cut;
     const away = Math.min(30, unpaid + (att.a || 0) + sickCut);
     return { days_worked: Math.max(0, baseDays - away), leave_days: away, ot_normal_hours: att.n, ot_special_hours: att.s };
   };

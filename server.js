@@ -141,10 +141,12 @@ function projectRows() {
     const collected = round(inv.reduce((s, i) => s + i.paid, 0) + inv.reduce((s, i) => s + (i.retention - i.retention_open), 0));
     const pr = ctx.projectPayrollCost ? ctx.projectPayrollCost(p.id) : db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final' AND project_id=?").get(p.id).g;
     const costBills = bl.filter(b => b.category !== 'asset');
-    const cost = round(costBills.reduce((s, b) => s + b.amount, 0) + pr);
+    const cost = round(costBills.reduce((s, b) => s + b.amount, 0) + pr + (ctx.projectEosCost ? ctx.projectEosCost(p.id) : 0));
     const byCat = {};
     costBills.forEach(b => byCat[b.category] = round((byCat[b.category] || 0) + b.amount));
     if (pr) byCat.payroll = round(pr);
+    const eos = ctx.projectEosCost ? ctx.projectEosCost(p.id) : 0;      // end-of-service provision of the staff on this project
+    if (eos) byCat.eos = eos;
     const vars = round(db.prepare("SELECT COALESCE(SUM(amount),0) a FROM variations WHERE project_id=? AND status='approved'").get(p.id).a);
     const boq = db.prepare('SELECT * FROM boq_items WHERE project_id=?').all(p.id);
     const boqValue = round(boq.reduce((x, i) => x + i.qty * i.rate, 0)), boqCost = round(boq.reduce((x, i) => x + i.qty * i.cost_rate, 0));
@@ -259,16 +261,56 @@ const MIME = { '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff
 const gzipOk = res => zlib.gzipSync && /\bgzip\b/.test((res.req && res.req.headers['accept-encoding']) || '');
 const send = (res, code, body, headers = {}) => {
   const isObj = typeof body === 'object' && !Buffer.isBuffer(body);
+  if (isObj && res._scope && code === 200) body = scopeFilter(res._scope, body);
   let out = isObj ? JSON.stringify(body) : body;
   const h = { 'Content-Type': isObj ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8', ...headers };
   if (isObj && out.length > 2048 && gzipOk(res)) { out = zlib.gzipSync(out); h['Content-Encoding'] = 'gzip'; h.Vary = 'Accept-Encoding'; }   // big lists load faster on mobile data
   res.writeHead(code, h);
   res.end(out);
 };
-const readBody = (req, max = 5e6) => new Promise((ok, no) => {
+const readBody = (req, max = 5e6) => req._body !== undefined ? Promise.resolve(req._body) : new Promise((ok, no) => {
   let b = ''; req.on('data', c => { b += c; if (b.length > max) req.destroy(); });
   req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch (e) { no(e); } });
 });
+
+// ---- site roles (site engineer, foreman) work only on the projects assigned to them in Users ----
+db.exec('CREATE TABLE IF NOT EXISTS user_projects(user_id INTEGER, project_id INTEGER, PRIMARY KEY(user_id, project_id))');
+const SITE_ROLES = ['site_engineer', 'foreman'];
+function siteScope(me) {
+  if (!SITE_ROLES.includes(me.role)) return null;
+  const projects = new Set(db.prepare('SELECT project_id FROM user_projects WHERE user_id=?').all(me.id).map(r => r.project_id));
+  const emps = new Set(projects.size ? db.prepare(`SELECT id FROM employees WHERE project_id IN (${[...projects].map(() => '?').join(',')})`).all(...projects).map(r => r.id) : []);
+  return { projects, emps, list: null };
+}
+// list responses: drop rows of other projects (and of crews on other projects)
+function scopeFilter(sc, body) {
+  const keep = x => {
+    if (!x || typeof x !== 'object' || Array.isArray(x)) return true;
+    if (sc.list === 'projects') return sc.projects.has(x.id);
+    if ('employee_id' in x && x.employee_id != null) return sc.emps.has(x.employee_id);
+    if ('project_id' in x && x.project_id != null) return sc.projects.has(x.project_id);
+    if (x.entity === 'project' && x.entity_id) return sc.projects.has(x.entity_id);
+    return true;
+  };
+  if (Array.isArray(body)) return body.filter(keep);
+  if (body && typeof body === 'object' && sc.list !== 'projects') { const o = { ...body }; for (const k of Object.keys(o)) if (Array.isArray(o[k])) o[k] = o[k].filter(x => keep(x) && (k !== 'roster' || sc.emps.has(x.id))); return o; }
+  return body;
+}
+async function scopeCheck(sc, req, method, url, a, b) {
+  const p = x => x == null || x === '' || sc.projects.has(+x), e = x => x == null || x === '' || sc.emps.has(+x);
+  if (a === 'projects' && b && !sc.projects.has(+b)) return false;
+  if (!p(url.searchParams.get('project_id'))) return false;
+  if (url.searchParams.get('entity') === 'project' && !p(url.searchParams.get('entity_id'))) return false;
+  if (b && /^\d+$/.test(b) && TABLES[a]?.cols.includes('project_id')) { const row = db.prepare(`SELECT project_id FROM ${a} WHERE id=?`).get(+b); if (row && !p(row.project_id)) return false; }
+  if (a === 'documents' && b && /^\d+$/.test(b)) { const d = db.prepare('SELECT entity, entity_id FROM documents WHERE id=?').get(+b); if (d && d.entity === 'project' && !p(d.entity_id)) return false; }
+  if (['POST', 'PUT', 'DELETE'].includes(method) && /json/.test(req.headers['content-type'] || '')) {
+    const x = req._body = await readBody(req);
+    if (!p(x.project_id) || !e(x.employee_id) || (x.entity === 'project' && !p(x.entity_id))) return false;
+    if (Array.isArray(x.employee_ids) && !x.employee_ids.every(e)) return false;
+  }
+  if (a === 'projects' && !b) sc.list = 'projects';
+  return true;
+}
 
 function clean(table, body) {
   const spec = TABLES[table], out = {};
@@ -358,6 +400,8 @@ async function api(req, res, url) {
   const me = sessionUser(req);
   if (!me) return send(res, 401, { error: 'unauthorized' });
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
+  const scope = siteScope(me);
+  if (scope) { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }
 
   const mailCfg = mailCfgFor;
   if (a === 'settings' && b === 'test-email' && method === 'POST') {
@@ -388,7 +432,8 @@ async function api(req, res, url) {
   if (a === 'users') {
     const admins = () => db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n;
     const hrOnly = me.role === 'hr';
-    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all());
+    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all()
+      .map(u => ({ ...u, projects: db.prepare('SELECT project_id FROM user_projects WHERE user_id=?').all(u.id).map(r => r.project_id) })));
     const body = ['POST', 'PUT'].includes(method) ? await readBody(req) : {};
     if (method === 'POST') {
       if (!body.username || !/^[\w.@-]{3,40}$/.test(body.username)) bad('Username must be 3–40 characters (letters, digits, . _ - @)');
@@ -417,7 +462,11 @@ async function api(req, res, url) {
         db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(body.password, salt), u.id);
         db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
       }
-      audit(req, 'update', 'users', u.id, `${u.username}${body.role ? ' role=' + body.role : ''}${body.password ? ' password reset' : ''}`);
+      if (Array.isArray(body.projects) && !hrOnly) {                          // projects a site engineer / foreman works on
+        db.prepare('DELETE FROM user_projects WHERE user_id=?').run(u.id);
+        for (const pid of body.projects) if (db.prepare('SELECT 1 FROM projects WHERE id=?').get(+pid)) db.prepare('INSERT OR IGNORE INTO user_projects VALUES(?,?)').run(u.id, +pid);
+      }
+      audit(req, 'update', 'users', u.id, `${u.username}${body.role ? ' role=' + body.role : ''}${body.password ? ' password reset' : ''}${Array.isArray(body.projects) ? ' projects=' + body.projects.join(',') : ''}`);
       return send(res, 200, { ok: 1 });
     }
     if (method === 'DELETE') {

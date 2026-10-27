@@ -41,7 +41,7 @@ module.exports = ctx => {
   function budget(pid) {
     const p = ctx.projectRows().find(r => r.id === pid); if (!p) return null;
     const set = Object.fromEntries(db.prepare('SELECT category, amount FROM project_budgets WHERE project_id=?').all(pid).map(r => [r.category, r.amount]));
-    const actual = { ...p.cost_by_category }; actual.labour = round((actual.labour || 0) + (actual.payroll || 0)); delete actual.payroll;
+    const actual = { ...p.cost_by_category }; actual.labour = round((actual.labour || 0) + (actual.payroll || 0) + (actual.eos || 0)); delete actual.payroll; delete actual.eos;
     const committed = {};
     for (const po of db.prepare("SELECT * FROM purchase_orders WHERE project_id=? AND status NOT IN ('draft','cancelled') AND bill_id IS NULL").all(pid)) {
       let items = []; try { items = JSON.parse(po.items || '[]'); } catch { /* bad json */ }

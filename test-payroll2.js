@@ -35,6 +35,8 @@ server.listen(0, async () => {
     assert.equal(st.gratuity, 0);
     ok(await call('POST', `hr/offboarding/${P}/complete`, { force: 1 }));
     assert.equal(await bal2300(), 0, '2300 back to zero');
+    const eosA = ok(await call('GET', 'project-summary')).find(x => x.id === A).cost_by_category.eos || 0;
+    assert.equal(eosA, 0, 'released provision taken back off the project');
     const fin = ok(await call('GET', 'financials?from=2026-01-01&to=2026-12-31'));
     out.push(`provision after 3 months = 262.50, left before 1 year: gratuity ${st.gratuity}, 2300 balance ${await bal2300()}`);
 
@@ -46,13 +48,24 @@ server.listen(0, async () => {
     const gApi = ok(await call('GET', `employees/${G}/gratuity?end=2026-10-27`));
     assert.equal(gApi.unpaid_days, 60); assert.equal(gApi.amount, 3506.71);
     out.push(`API gratuity: 50 unpaid-leave days + 10 absent days = ${gApi.unpaid_days} → ${gApi.amount}`);
-    ok(await call('PUT', `employees/${G}`, { status: 'left' }));
+    // sick leave: 15 days full, 30 half, then unpaid — the unpaid sick days are not service; half-pay days are
+    const SK = ok(await call('POST', 'employees', { name: 'Sick Worker', join_date: '2023-04-27', basic: 1500, project_id: A, ...WPS })).id;
+    const sl = ok(await call('POST', 'hr/leave', { employee_id: SK, type: 'sick', start_date: '2025-06-01', end_date: '2025-07-30' })).id;   // 60 days: 15 full, 30 half, 15 unpaid
+    ok(await call('PUT', `hr/leave/${sl}/decide`, { status: 'approved' }));
+    const gS = ok(await call('GET', `employees/${SK}/gratuity?end=2026-10-27`));
+    assert.equal(gS.unpaid_days, 15);
+    out.push(`sick leave 60 days (15 full / 30 half / 15 unpaid) → ${gS.unpaid_days} days off the service, gratuity ${gS.amount}`);
+    ok(await call('PUT', `employees/${G}`, { status: 'left' })); ok(await call('PUT', `employees/${SK}`, { status: 'left' }));
 
     // ---- 4. advances: request with 3 instalments → monthly deduction, balance on payslip and settlement
     const L = ok(await call('POST', 'employees', { name: 'Advance Worker', join_date: '2025-01-01', basic: 2000, project_id: A, ...WPS })).id;
     const rq = ok(await call('POST', 'hr/requests', { employee_id: L, type: 'advance', amount: 1000, installments: 3, details: 'family' })).id;
     ok(await call('PUT', `hr/requests/${rq}/decide`, { status: 'approved' }));
     const loan = ok(await call('GET', 'hr/loans')).find(l => l.employee_id === L);
+    assert.equal(loan.method, 'bank'); ok(await call('PUT', 'hr/loans/' + loan.id, { method: 'cash' }));
+    const advLines = ok(await call('GET', 'ledger')).lines.filter(l => l.ref === 'ADV-' + loan.id);
+    assert.ok(advLines.some(l => l.account === '1020' && l.credit === 1000) && advLines.some(l => l.account === '1300' && l.debit === 1000), 'cash advance: Dr 1300 / Cr 1020');
+    out.push('advance paid in cash → Dr 1300 employee advances / Cr 1020 cash');
     assert.ok(loan, 'loan created on approval'); assert.equal(loan.installments, 3); assert.equal(loan.monthly, 333.33);
     const ded = [];
     for (const m of [loan.start_month, ...[1, 2, 3].map(k => { let y = +loan.start_month.slice(0, 4), mo = +loan.start_month.slice(5) + k; while (mo > 12) { mo -= 12; y++; } return `${y}-${String(mo).padStart(2, '0')}`; })]) {
@@ -84,6 +97,9 @@ server.listen(0, async () => {
     const costOf = (rows, id) => rows.find(p => p.id === id).cost_by_category.payroll || 0;
     const rowX = ok(await call('GET', 'payroll?month=2027-11')).find(r => r.employee_id === X); assert.equal(rowX.gross, 3000);
     assert.equal(costOf(before, PA), 2000); assert.equal(costOf(before, PB), 1000);
+    const eosOf = (rows, id) => rows.find(p => p.id === id).cost_by_category.eos || 0;
+    assert.equal(eosOf(before, PA), 116.67); assert.equal(eosOf(before, PB), 58.33);       // provision 3000/30×21/12 = 175, split 2/3 – 1/3
+    out.push(`provision 175 charged like the salary → A ${eosOf(before, PA)}, B ${eosOf(before, PB)}`);
     out.push(`cost split 3,000 (20 days A / 10 days B) → A ${costOf(before, PA)}, B ${costOf(before, PB)}`);
     // a month without project attendance → all to the main project
     const Y = ok(await call('POST', 'employees', { name: 'Office Worker', join_date: '2025-01-01', basic: 3000, project_id: PB, ...WPS })).id;

@@ -40,7 +40,7 @@ module.exports = ctx => {
     }
     for (const t of db.prepare('SELECT * FROM petty_topups').all()) add(t.date, 'PETTY', `Petty cash top-up ${t.note || ''}`, 'petty', [mk('1010', t.amount), mk('1000', 0, t.amount)]);
     const rep = Object.fromEntries(db.prepare('SELECT payroll_id, SUM(amount) a FROM loan_repayments GROUP BY payroll_id').all().map(x => [x.payroll_id, round(x.a)]));
-    for (const l of db.prepare('SELECT l.*, e.name FROM loans l JOIN employees e ON e.id=l.employee_id').all()) add(l.created.slice(0, 10), `ADV-${l.id}`, `Salary advance — ${l.name}`, 'payroll', [mk('1300', l.amount), mk('1000', 0, l.amount)]);
+    for (const l of db.prepare('SELECT l.*, e.name FROM loans l JOIN employees e ON e.id=l.employee_id').all()) add(l.created.slice(0, 10), `ADV-${l.id}`, `Salary advance — ${l.name}`, 'payroll', [mk('1300', l.amount), mk(l.method === 'cash' ? '1020' : '1000', 0, l.amount)]);
     for (const x of ctx.eosEntries ? ctx.eosEntries() : []) add(x.date, x.ref, x.memo, 'payroll', x.lines.map(l => mk(...l)));
     for (const r of db.prepare("SELECT * FROM payroll WHERE status='final'").all()) {
       add(monthEnd(r.month), `PAY-${r.month}`, `Payroll ${r.month}`, 'payroll', [mk(r.project_id ? '5200' : '6200', r.gross),   // site staff → direct labour; no project → head-office overhead

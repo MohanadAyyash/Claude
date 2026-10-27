@@ -10,6 +10,7 @@ DROP TABLE IF EXISTS loan_repayments;
 DROP TABLE IF EXISTS loans;
 DROP INDEX IF EXISTS payroll_alloc_pay;
 DROP TABLE IF EXISTS payroll_alloc;
+DROP TABLE IF EXISTS user_projects;
 ALTER TABLE employees DROP COLUMN transport;
 ALTER TABLE hr_requests DROP COLUMN installments;
 ALTER TABLE attendance DROP COLUMN rest_comp;
