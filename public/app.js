@@ -159,6 +159,14 @@ function field(f, v) {
   else inp = `<input name="${f.k}" type="${f.type || 'text'}" ${f.type === 'number' ? 'step="any"' : ''} value="${esc(v ?? '')}" ${f.req ? 'required' : ''}>`;
   return `<div class="f ${f.full ? 'full' : ''}">${lbl}${inp}</div>`;
 }
+// small create/edit form (leave, requests, stock moves, petty cash top-ups); restored — it was dropped in an earlier refactor while still in use
+async function simpleModal({ title, table, fields, row, after }) {
+  const m = modal(`<h2>${title}</h2><div class="f2">${fields.map(f => field(f, row?.[f.k] ?? f.def)).join('')}</div>
+    <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button><span class="sp"></span>${row ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`);
+  $('#cancel', m).onclick = closeModal;
+  $('#save', m).onclick = guard(async () => { const b = {}; fields.forEach(f => b[f.k] = val(m, f.k)); row ? await api('PUT', `${table}/${row.id}`, b) : await api('POST', table, b); closeModal(); after(); });
+  if (row) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${table}/${row.id}`); closeModal(); after(); } });
+}
 const refOpts = (rows, label, blank = true) => [...(blank ? [['', '—']] : []), ...rows.map(r => [r.id, label(r)])];
 const confirmDel = () => confirm(tr('هل أنت متأكد من الحذف؟', 'Delete this record?'));
 
