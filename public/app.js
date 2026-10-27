@@ -337,7 +337,7 @@ async function docModal(kind, row, preset = {}) {
     ${row && !dead ? `<button class="btn sec" id="mail">${tr('إرسال بالإيميل', 'Email')}</button>` : ''}${row && !isQ && !isCN && !dead && row.balance > 0 && row.status === 'overdue' ? `<button class="btn sec" id="remind">${tr('تذكير بالسداد', 'Payment reminder')}</button>` : ''}
     ${row && !isQ && !isCN && !dead ? `<button class="btn sec" id="pay">${tr('تسجيل دفعة', 'Record payment')}</button><button class="btn sec" id="cn">${tr('إصدار إشعار دائن', 'Issue credit note')}</button>` : ''}
     ${row && isQ && !row.project_id ? `<button class="btn sec" id="conv">${tr('تحويل إلى مشروع', 'Convert to project')}</button>` : ''}${row && isQ && !row.accepted_at && !row.rejected_at && !window.STANDALONE ? `<button class="btn sec" id="share">🔗 ${tr('رابط القبول للعميل', 'Client acceptance link')}</button>` : ''}
-    <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && isQ ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}${row && !isQ && !dead ? `<button class="btn bad" id="void">${tr('إلغاء الفاتورة', 'Void')}</button>` : ''}</div>`, true);
+    <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && isQ ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}${row && !isQ && !dead && ME.role === 'admin' ? `<button class="btn bad" id="void">${tr('إلغاء الفاتورة', 'Void')}</button>` : ''}</div>`, true);
   if (dead) m.querySelectorAll('input,select,textarea').forEach(x => x.disabled = true);
   bindDoc(m, e.row, 1, !isQ);
   $('#cancel', m).onclick = closeModal;
