@@ -167,6 +167,16 @@ async function simpleModal({ title, table, fields, row, after }) {
   $('#save', m).onclick = guard(async () => { const b = {}; fields.forEach(f => b[f.k] = val(m, f.k)); row ? await api('PUT', `${table}/${row.id}`, b) : await api('POST', table, b); closeModal(); after(); });
   if (row) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${table}/${row.id}`); closeModal(); after(); } });
 }
+// project page buttons: BOQ item, variation order, progress invoice (restored with simpleModal)
+window.boqModal = guard(async (pid, id) => simpleModal({ title: tr('بند جدول الكميات', 'BOQ item'), table: 'boq_items', after: render, row: id ? await api('GET', `boq_items/${id}`) : null, fields: [
+  { k: 'project_id', ar: '', en: '', type: 'hidden', def: pid }, { k: 'section', ar: 'القسم', en: 'Section' }, { k: 'description', ar: 'الوصف', en: 'Description', full: 1 }, { k: 'unit', ar: 'الوحدة', en: 'Unit' },
+  { k: 'qty', ar: 'الكمية', en: 'Quantity', type: 'number', def: 1 }, { k: 'rate', ar: 'سعر البيع للوحدة', en: 'Sell rate / unit', type: 'number', def: 0 }, { k: 'cost_rate', ar: 'التكلفة المقدّرة للوحدة', en: 'Budget cost / unit', type: 'number', def: 0 },
+  { k: 'done_pct', ar: 'نسبة الإنجاز %', en: 'Completion %', type: 'number', def: 0 }] }));
+window.varModal = guard(async (pid, id) => simpleModal({ title: tr('أمر تغيير', 'Variation order'), table: 'variations', after: render, row: id ? await api('GET', `variations/${id}`) : null, fields: [
+  { k: 'project_id', type: 'hidden', def: pid }, { k: 'number', ar: 'الرقم', en: 'Number' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date', def: today() }, { k: 'description', ar: 'الوصف', en: 'Description', full: 1 },
+  { k: 'amount', ar: 'المبلغ (بدون ضريبة، سالب للتخفيض)', en: 'Amount (ex VAT, negative for omission)', type: 'number', def: 0 },
+  { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['pending', tr('قيد الاعتماد', 'Pending')], ['approved', tr(...STATUS.approved)], ['rejected', tr(...STATUS.rejected)]] }] }));
+window.progressInvoice = guard(async pid => { const r = await api('POST', `projects/${pid}/progress-invoice`); go('invoices'); setTimeout(() => openInvoice(r.id), 400); });
 const refOpts = (rows, label, blank = true) => [...(blank ? [['', '—']] : []), ...rows.map(r => [r.id, label(r)])];
 const confirmDel = () => confirm(tr('هل أنت متأكد من الحذف؟', 'Delete this record?'));
 
