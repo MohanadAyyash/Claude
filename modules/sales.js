@@ -132,7 +132,7 @@ module.exports = ctx => {
         if (t.quote_id) bad('This tender already has a quotation');
         if (!t.client_id) bad('Choose the client (from Clients & suppliers) first');
         const st = getSettings(), number = ctx.brandRef('quotes', 'number', (enrich().parties[t.client_id] || {}).name);
-        const r = db.prepare("INSERT INTO quotes(number,date,client_id,project_name,validity_days,status,items,vat_pct,terms) VALUES(?,?,?,?,30,'draft','[]',?,?)").run(number, today(), t.client_id, t.title, +st.vat_pct || 5, st.terms || '');
+        const r = db.prepare("INSERT INTO quotes(number,date,client_id,project_name,validity_days,status,items,vat_pct,terms) VALUES(?,?,?,?,30,'draft','[]',?,?)").run(number, today(), t.client_id, t.title, (st.vat_registered === '0' ? 0 : +st.vat_pct || 5), st.terms || '');
         db.prepare("UPDATE tenders SET quote_id=?, stage=CASE WHEN stage IN ('lead','invited') THEN 'preparing' ELSE stage END WHERE id=?").run(Number(r.lastInsertRowid), t.id);
         audit(req, 'create', 'quotes', Number(r.lastInsertRowid), `from tender ${t.title}`); return send(res, 200, { quote_id: Number(r.lastInsertRowid) }), true;
       }

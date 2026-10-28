@@ -623,7 +623,7 @@ async function api(req, res, url) {
     const rec = ctx.advanceRecoveryLine && ctx.advanceRecoveryLine(proj, round(items.reduce((s, i) => s + i.qty * i.rate, 0)));
     if (rec) items.push(rec);                                               // contract advance recovered from each progress invoice
     const r = db.prepare('INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes) VALUES(?,?,?,?,?,?,?)')
-      .run(nextNumber('invoices', 'INV'), date, proj.id, JSON.stringify(items), +st.vat_pct || 5, proj.retention_pct || 0, 'Progress invoice');
+      .run(nextNumber('invoices', 'INV'), date, proj.id, JSON.stringify(items), (st.vat_registered === '0' ? 0 : +st.vat_pct || 5), proj.retention_pct || 0, 'Progress invoice');
     if (ctx.ipcSnapshot) ctx.ipcSnapshot(proj.id, Number(r.lastInsertRowid));   // payment certificate: previous / this period / cumulative per BOQ item
     db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=?').run(+b);
     audit(req, 'create', 'progress_invoice', Number(r.lastInsertRowid), `project ${proj.name}`);
@@ -661,7 +661,7 @@ async function api(req, res, url) {
       if (a === 'quotes' && !row.number) row.number = brandRef('quotes', 'number', db.prepare('SELECT name FROM parties WHERE id=?').get(+row.client_id)?.name);
       else if (spec.prefix && !row.number) row.number = nextNumber(a, spec.prefix);
       if (a === 'projects' && !row.code) row.code = nextNumber('projects', 'PRJ', 'code');
-      if (['quotes','invoices'].includes(a) && row.vat_pct === undefined) row.vat_pct = +getSettings().vat_pct || 5;
+      if (['quotes','invoices'].includes(a) && row.vat_pct === undefined) { const st = getSettings(); row.vat_pct = (st.vat_registered === '0' ? 0 : +st.vat_pct || 5); }                // not VAT-registered → 0%
       if (!row.date && spec.cols.includes('date')) row.date = today();
       const ks = Object.keys(row);
       const r = db.prepare(`INSERT INTO ${a}(${ks.join(',')}) VALUES(${ks.map(() => '?').join(',')})`).run(...Object.values(row));

@@ -111,7 +111,7 @@ module.exports = ctx => {
     const orgs = (await cl.get('/organizations')).organizations || [], org = orgs.find(o => String(o.organization_id) === String(c.org));
     if (!org) throw new Error('The chosen organisation is not in this Zoho account any more — connect again');
     const lk = await lookups(cl), missing = [];
-    if (!lk.std) missing.push('5% VAT tax'); if (!lk.bank && !lk.cash) missing.push('bank or cash account'); if (!lk.cogs) missing.push('expense account');
+    if (!lk.std) missing.push('5% VAT tax (needed only once VAT-registered)'); if (!lk.bank && !lk.cash) missing.push('bank or cash account'); if (!lk.cogs) missing.push('expense account');
     return { ok: true, org: org.name, currency: org.currency_code, lookups: { tax: lk.std && lk.std.tax_name, zero: lk.zero && lk.zero.tax_name, exempt: lk.exempt && lk.exempt.tax_name,
       bank: lk.bank && lk.bank.account_name, cash: lk.cash && lk.cash.account_name, expense: lk.cogs && lk.cogs.account_name }, missing };
   }
@@ -304,11 +304,11 @@ module.exports = ctx => {
     let offline = false;
     running = (async () => {
       const cl = dryRun ? dryClient(c) : client(c), lk = await lookups(cl); offline = !!cl.offline;
-      if (!lk.std) throw new Error('No 5% VAT tax in Zoho Books — set up UAE VAT first');
       const { e, invoices, bills, payments } = data(from || c.start || null, to || today()); run.e = e;
       const each = async (kind, id, label, fn) => { try { await fn(); } catch (err) { run.failed++; run.errors.push(`${label}: ${err.message}`); mark(kind, id, null, null, 'error', err.message.slice(0, 500), null); } };
       for (const i of invoices) await each('invoice', i.id, i.number, async () => {
         if (!i.client_id) throw new Error('invoice project has no client');
+        if (!lk.std && i.vat > 0.004) throw new Error('this invoice has VAT but Zoho Books has no 5% VAT tax — set up UAE VAT in Zoho first');
         const d = invoiceDoc(i, e), cust = await contactId(cl, i.client_id, run), credit = d.type === 'creditnote';
         const vals = { customer_id: cust, [credit ? 'creditnote_number' : 'invoice_number']: d.number, date: d.date, ...(!credit && d.due ? { due_date: d.due } : {}),
           reference_number: (credit ? d.original : d.project).slice(0, 100), place_of_supply: d.place, is_inclusive_tax: false, notes: d.notes, line_items: lineItems(d.lines, lk, i.project_id) };
@@ -316,6 +316,7 @@ module.exports = ctx => {
       });
       for (const b of bills) await each('bill', b.id, b.reference || b.description || `#${b.id}`, async () => {
         const d = billDoc(b, e), acct = accountFor(lk, d.category), tax = d.vat > 0.004 ? lk.std : null;
+        if (d.vat > 0.004 && !tax) { d.amount = round(d.amount + d.vat); d.notes = [d.notes, `VAT ${d.vat.toFixed(2)} not recoverable (not VAT-registered) — included in the cost`].filter(Boolean).join('\n'); }   // not registered: input VAT is part of the cost
         if (!acct) throw new Error('no expense account in Zoho');
         if (d.type === 'expense') {
           const paid = d.cash ? (lk.cash || lk.bank) : (lk.bank || lk.cash); if (!paid) throw new Error('no bank or cash account in Zoho');

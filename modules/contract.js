@@ -50,7 +50,7 @@ module.exports = ctx => {
         const amount = round(p.contract_value * pct / 100), rec = p.advance_recovery_pct || pct;
         const items = [{ description: `Advance payment ${pct}% of the contract value (${p.contract_value.toFixed(2)} AED)`, unit: '', qty: 1, rate: amount, vat: 'std' }];
         const r = db.prepare("INSERT INTO invoices(number,date,due_date,project_id,items,vat_pct,retention_pct,notes,kind) VALUES(?,?,?,?,?,?,0,?,'advance')")
-          .run(nextNumber('invoices', 'INV'), x.date || today(), x.due_date || null, p.id, JSON.stringify(items), +st.vat_pct || 5,
+          .run(nextNumber('invoices', 'INV'), x.date || today(), x.due_date || null, p.id, JSON.stringify(items), (st.vat_registered === '0' ? 0 : +st.vat_pct || 5),
             `Advance payment against the advance payment guarantee; recovered at ${rec}% of each progress invoice. VAT is due on the advance (tax point = date of invoice / receipt).`);
         if (!p.advance_pct) db.prepare('UPDATE projects SET advance_pct=? WHERE id=?').run(pct, p.id);
         audit(req, 'create', 'advance_invoice', Number(r.lastInsertRowid), `${p.name} ${pct}%`);

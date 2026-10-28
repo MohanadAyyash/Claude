@@ -368,7 +368,7 @@ const readItems = m => [...m.querySelectorAll('#items tr')].map(r => ({ descript
 async function docModal(kind, row, preset = {}) {
   const isQ = kind === 'quotes', e = itemsEditor(row?.items || []);
   const parties = await api('GET', 'parties'), projects = isQ ? [] : await api('GET', 'projects');
-  const r = row || { date: today(), vat_pct: S.vat_pct || 5, retention_pct: 0, validity_days: 30, status: 'draft', terms: S.terms, ...preset };
+  const r = row || { date: today(), vat_pct: S.vat_registered === '0' ? 0 : S.vat_pct || 5, retention_pct: 0, validity_days: 30, status: 'draft', terms: S.terms, ...preset };
   const head = isQ ? [
     { k: 'number', ar: 'رقم العرض', en: 'Quote no.', def: '' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' },
     { k: 'client_id', ar: 'العميل', en: 'Client', type: 'select', options: refOpts(parties.filter(p => p.type === 'client'), p => p.name) },
@@ -381,7 +381,7 @@ async function docModal(kind, row, preset = {}) {
   const isCN = r.kind === 'credit_note', dead = !!r.voided, W = {
     customer_trn_missing: tr('العميل بدون رقم ضريبي (TRN) — مطلوب في الفاتورة الضريبية للشركات', 'Client has no TRN — required on tax invoices to VAT-registered businesses'),
     customer_address_missing: tr('عنوان العميل غير مسجّل — مطلوب في الفاتورة الضريبية', 'Client address missing — required on tax invoices') };
-  const m = modal(`<h2>${isQ ? tr('عرض سعر', 'Quotation') : isCN ? tr('إشعار دائن', 'Credit note') : tr('فاتورة ضريبية', 'Tax invoice')} ${esc(r.number || '')} ${dead ? tag('void') : ''}</h2>
+  const m = modal(`<h2>${isQ ? tr('عرض سعر', 'Quotation') : isCN ? tr('إشعار دائن', 'Credit note') : S.vat_registered === '0' ? tr('فاتورة', 'Invoice') : tr('فاتورة ضريبية', 'Tax invoice')} ${esc(r.number || '')} ${dead ? tag('void') : ''}</h2>
     ${dead ? `<p class="err">${tr('ملغاة', 'Voided')}: ${esc(r.void_reason || '')}</p>` : ''}
     ${isQ && r.accepted_at ? `<p class="ok">✔ ${tr('قبله العميل إلكترونياً', 'Accepted online by the client')}: <b>${esc(r.accepted_by)}</b> — ${esc(r.accepted_at)}${/^data:image\/png;base64,/.test(r.signature || '') ? `<br><img src="${r.signature}" alt="" style="height:60px;background:#fff;border:1px solid #ddd">` : ''}</p>` : ''}
     ${isQ && r.rejected_at ? `<p class="err">${tr('رفضه العميل', 'Declined by the client')} — ${esc(r.rejected_at)}${r.client_comment ? `: ${esc(r.client_comment)}` : ''}</p>` : ''}${(r.warnings || []).map(w => `<p class="err" style="color:var(--warn)">⚠ ${W[w] || w}</p>`).join('')}<div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>
