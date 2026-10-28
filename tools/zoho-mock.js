@@ -13,7 +13,8 @@ function mockZoho() {
       { account_id: '3003', account_name: 'Travel Expense', account_type: 'expense' }, { account_id: '3004', account_name: 'Sales', account_type: 'income' },
       { account_id: '3101', account_name: 'Salaries and Employee Wages', account_type: 'expense' }, { account_id: '3102', account_name: 'Salaries Payable', account_type: 'other_current_liability' },
       { account_id: '3103', account_name: 'Employee Advance', account_type: 'other_current_asset' }, { account_id: '3104', account_name: 'Deductions Payable', account_type: 'other_current_liability' },
-      { account_id: '3105', account_name: 'End of Service Expense', account_type: 'expense' }, { account_id: '3106', account_name: 'Provision for End of Service', account_type: 'other_liability' }] };
+      { account_id: '3105', account_name: 'End of Service Expense', account_type: 'expense' }, { account_id: '3106', account_name: 'Provision for End of Service', account_type: 'other_liability' },
+      { account_id: '3201', account_name: 'Accounts Receivable', account_type: 'accounts_receivable' }, { account_id: '3202', account_name: 'Retention Receivable', account_type: 'other_current_asset' }] };
   const calls = [], api = { domain: '' };
   const KEY = { journals: ['journal', 'journal_id'], invoices: ['invoice', 'invoice_id', 'invoice_number'], creditnotes: ['creditnote', 'creditnote_id', 'creditnote_number'], bills: ['bill', 'bill_id', 'bill_number'], expenses: ['expense', 'expense_id'], contacts: ['contact', 'contact_id'] };
   const total = d => Math.round((d.line_items || []).reduce((s, l) => { const t = T.taxes.find(x => x.tax_id === l.tax_id); return s + l.quantity * l.rate * (1 + (t ? t.tax_percentage : 0) / 100); }, 0) * 100) / 100;
@@ -57,6 +58,7 @@ function mockZoho() {
     const row = p[1] && tb.find(r => r[idf] === p[1]);
     if (p[1] && !row) throw err(404, 1002, `${one} does not exist.`);
     if (method === 'GET') return { [one]: row };
+    if (method === 'DELETE' && p.length === 2) { tb.splice(tb.indexOf(row), 1); return { message: 'deleted' }; }
     if (method === 'POST' && p.length === 1) {
       if (numf && body[numf] && q.get('ignore_auto_number_generation') !== 'true') throw err(400, 4097, 'Auto number generation is enabled; pass ignore_auto_number_generation');
       if (numf && tb.some(r => r[numf] === body[numf] && (p[0] !== 'bills' || r.vendor_id === body.vendor_id))) throw err(400, 1001, `${numf} already exists`);

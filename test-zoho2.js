@@ -49,7 +49,7 @@ server.listen(0, async () => {
     // ---- 4. mapping: accounts, project → reporting-tag option / Zoho project
     const mp = ok(await call('GET', 'zoho/mapping'));
     assert.ok(mp.zoho.accounts.length > 5); assert.equal(mp.zoho.tags[0].options.length, 2); assert.equal(mp.zoho.projects[0].id, '8001');
-    for (const [k, z] of [['acct:5200', '3101'], ['acct:6200', '3101'], ['acct:2200', '3102'], ['acct:2250', '3104'], ['acct:1300', '3103'], ['acct:5260', '3105'], ['acct:2300', '3106']]) ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: k, zoho_id: z }));
+    for (const [k, z] of [['acct:5200', '3101'], ['acct:6200', '3101'], ['acct:2200', '3102'], ['acct:2250', '3104'], ['acct:1300', '3103'], ['acct:5260', '3105'], ['acct:2300', '3106'], ['acct:1150', '3202']]) ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: k, zoho_id: z }));
     ok(await call('PUT', 'zoho/mapping', { kind: 'project', local_key: A, zoho_id: 'tag:7001:7101' }));
     ok(await call('PUT', 'zoho/mapping', { kind: 'project', local_key: B, zoho_id: 'project:8001' }));
 
@@ -78,6 +78,26 @@ server.listen(0, async () => {
     const n = zoho.T.journals.length; ok(await call('POST', 'zoho/sync', RANGE)); assert.equal(zoho.T.journals.length, n, 'nothing sent twice');
     const log = ok(await call('GET', 'zoho/log')); assert.ok(log.some(l => l.kind === 'jv_payroll' && l.status === 'ok'));
     out.push('second run sends nothing again; journals in the send log');
+
+    // ---- 7. retention: invoice at full value, retained part moved from the client's receivable to 1150, release moves it back
+    const iv = ok(await call('GET', 'invoices/' + inv)), ret = iv.retention; assert.ok(ret > 0, 'invoice has retention');
+    const rj = J('RET-' + iv.number)[0]; assert.ok(rj, 'retention journal sent');
+    const cust = zoho.T.contacts.find(c => c.contact_name === 'Emaar Test').contact_id;
+    assert.deepEqual(rj.line_items.map(l => [l.account_id, l.debit_or_credit, l.amount, l.customer_id || null]), [['3202', 'debit', ret, null], ['3201', 'credit', ret, cust]]);
+    assert.deepEqual(rj.line_items[0].tags, [{ tag_id: '7001', tag_option_id: '7101' }], 'retention tagged with its project');
+    assert.equal(zoho.T.invoices[0].total, iv.total, 'invoice goes at full value');
+    ok(await call('POST', 'payments', { kind: 'in', date: '2026-12-20', amount: ret, method: 'bank', invoice_id: inv, is_retention: 1 }));
+    assert.equal(ok(await call('POST', 'zoho/sync', RANGE)).failed, 0);
+    const rr = J('RET-REL-' + iv.number)[0]; assert.ok(rr, 'release journal sent');
+    assert.deepEqual(rr.line_items.map(l => [l.account_id, l.debit_or_credit, l.amount, l.customer_id || null]), [['3201', 'debit', ret, cust], ['3202', 'credit', ret, null]]);
+    const bal = a => round2(zoho.T.journals.filter(j => /^RET-/.test(j.reference_number)).flatMap(j => j.line_items).filter(l => l.account_id === a).reduce((s, l) => s + (l.debit_or_credit === 'debit' ? l.amount : -l.amount), 0));
+    assert.equal(bal('3202'), 0, 'retention receivable back to 0 after release'); assert.equal(bal('3201'), 0, "client's receivable nets to 0");
+    // a cancelled invoice: its retention journal is removed from Zoho
+    const inv2 = ok(await call('POST', 'invoices', { project_id: A, date: '2026-12-05', retention_pct: 10, items: [{ description: 'Kerbs', qty: 10, rate: 100 }] }));
+    ok(await call('POST', 'zoho/sync', RANGE)); const num2 = ok(await call('GET', 'invoices/' + inv2.id)).number; assert.equal(J('RET-' + num2).length, 1);
+    ok(await call('POST', `invoices/${inv2.id}/void`, { reason: 'test' })); ok(await call('POST', 'zoho/sync', RANGE));
+    assert.equal(J('RET-' + num2).length, 0, 'retention journal deleted with the void');
+    out.push(`retention ${ret}: Dr Retention receivable / Cr client receivable at invoice date; release reverses it (both back to 0); a void deletes the journal`);
     // the secret never in the log tables or audit
     const all = JSON.stringify([log, ok(await call('GET', 'zoho')).runs]); assert.ok(!all.includes(zoho.CLIENT_SECRET));
     console.log(out.map(x => '✔ ' + x).join('\n'));

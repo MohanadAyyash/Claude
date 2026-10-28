@@ -45,7 +45,7 @@ module.exports = ctx => {
   const gone = e => e.status === 404 || e.code === 1002 || /does not exist/i.test(e.message);
 
   // ---------- our accounts / projects → Zoho accounts / projects or reporting-tag options ----------
-  const LEDGER = { 5200: 'Site labour salaries (projects)', 6200: 'Head-office salaries', 2200: 'Salaries payable', 2250: 'Employee deductions payable', 1300: 'Employee advances', 5260: 'End-of-service benefits (expense)', 2300: 'End-of-service provision', 1150: 'Retention receivable' };
+  const LEDGER = { 1100: 'Accounts receivable (default: Zoho Accounts Receivable)', 5200: 'Site labour salaries (projects)', 6200: 'Head-office salaries', 2200: 'Salaries payable', 2250: 'Employee deductions payable', 1300: 'Employee advances', 5260: 'End-of-service benefits (expense)', 2300: 'End-of-service provision', 1150: 'Retention receivable' };
   const mapOf = (kind, key) => (db.prepare('SELECT zoho_id FROM zoho_map WHERE kind=? AND local_key=?').get(kind, String(key)) || {}).zoho_id || null;
   // a project's reference on a line: a Zoho project (project:<id>) or a reporting-tag option (tag:<tag_id>:<option_id>)
   const projectRef = pid => {
@@ -95,7 +95,7 @@ module.exports = ctx => {
     const coa = ((await cl.get('/chartofaccounts', { filter_by: 'AccountType.Active' })).chartofaccounts || []);
     const tax = (pct, re) => taxes.find(t => +t.tax_percentage === pct && t.tax_type !== 'tax_group' && (!re || re.test(t.tax_name || '')));
     const expense = coa.filter(a => EXPENSE_TYPES.includes(a.account_type));
-    return { std: tax(5), zero: tax(0, /zero/i), exempt: tax(0, /exempt/i), bank: banks.find(a => a.account_type === 'bank'), cash: banks.find(a => a.account_type === 'cash'),
+    return { std: tax(5), zero: tax(0, /zero/i), exempt: tax(0, /exempt/i), bank: banks.find(a => a.account_type === 'bank'), cash: banks.find(a => a.account_type === 'cash'), ar: coa.find(a => a.account_type === 'accounts_receivable'), retention: coa.find(a => /retention/i.test(a.account_name || '') && /asset/.test(a.account_type || '')),
       expense, assets: coa.filter(a => a.account_type === 'fixed_asset'), cogs: expense.find(a => a.account_type === 'cost_of_goods_sold') || expense[0] };
   }
   const taxOf = (lk, k) => (k === 'std' ? lk.std : k === 'zero' ? lk.zero : k === 'exempt' ? lk.exempt : null);
@@ -199,7 +199,7 @@ module.exports = ctx => {
     mark('payment', p.id, id, d.inbound ? 'customerpayment' : 'vendorpayment', 'ok', null, null); run.sent++;
   }
 
-  // ---------- manual journals: payroll by project, salaries paid, end-of-service provision / settlement, salary advances ----------
+  // ---------- manual journals: payroll by project, salaries paid, end-of-service provision / settlement, salary advances, retention ----------
   const ym = m => +m.replace('-', ''), mEnd = m => `${m}-${String(ctx.C.daysInMonth(m)).padStart(2, '0')}`;
   const has = t => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
   // a payroll row's cost by project: the attendance split when there is one, else its own project (null = head office)
@@ -235,6 +235,17 @@ module.exports = ctx => {
           lines: [{ acct: 2300, dc: 'debit', amount: s.provision, desc: 'Provision used' }, { acct: 2200, dc: 'credit', amount: s.gratuity, desc: 'Gratuity payable' }, { acct: 5260, dc: diff > 0 ? 'debit' : 'credit', amount: Math.abs(diff), project_id: s.project_id || null, desc: diff > 0 ? 'Gratuity above the provision' : 'Provision released' }] });
       }
     }
+    // retention: the invoice goes at full value, then the retained part moves from the client's receivable to 1150; a release receipt moves it back
+    const { e: E, invoices, payments } = data(from, to);
+    for (const i of invoices) if (i.kind !== 'credit_note' && (i.retention > 0.004 || i.voided))          // a void invoice: removes a journal sent earlier
+      out.push({ kind: 'jv_retention', local_id: i.id, date: i.date, ref: `RET-${i.number}`, notes: `Retention ${i.retention_pct}% held on ${i.number}${i.project_name ? ' — ' + i.project_name : ''}`, voided: !!i.voided, invoice: i.id,
+        lines: [{ acct: 1150, dc: 'debit', amount: i.retention, project_id: i.project_id || null, desc: `Retention on ${i.number}` }, { acct: 'ar', customer: i.client_id, dc: 'credit', amount: i.retention, desc: `Retention on ${i.number}` }] });
+    for (const p of payments) {
+      if (p.kind !== 'in' || !p.is_retention || !p.invoice_id || (p.method === 'cheque' && p.cheque_status === 'pending')) continue;
+      const d = payDoc(p, E); if (!d.inv) continue;
+      out.push({ kind: 'jv_ret_release', local_id: p.id, date: d.date, ref: `RET-REL-${d.inv.number}`, notes: `Retention released on ${d.inv.number}`,
+        lines: [{ acct: 'ar', customer: d.inv.client_id, dc: 'debit', amount: round(p.amount), desc: 'Retention released' }, { acct: 1150, dc: 'credit', amount: round(p.amount), project_id: d.inv.project_id || null, desc: 'Retention released' }] });
+    }
     if (has('loans')) for (const l of db.prepare('SELECT l.*, e.name FROM loans l JOIN employees e ON e.id=l.employee_id').all()) {
       const d = l.created.slice(0, 10); if (!inR(d)) continue;
       out.push({ kind: 'jv_advance', local_id: l.id, date: d, ref: `ADV-${l.id}`, notes: `Salary advance — ${l.name} (${l.installments} instalments)`,
@@ -243,11 +254,20 @@ module.exports = ctx => {
     return out;
   }
   async function pushJournal(cl, j, lk, run) {
-    const lines = j.lines.filter(l => l.amount > 0.004).map(l => {
-      const acc = l.acct === 'bank' ? (mapOf('account', 'acct:1000') || (lk.bank || {}).account_id) : l.acct === 'cash' ? (mapOf('account', 'acct:1020') || (lk.cash || lk.bank || {}).account_id) : mapOf('account', 'acct:' + l.acct);
-      if (!acc) throw new Error(`map our account ${l.acct}${LEDGER[l.acct] ? ' (' + LEDGER[l.acct] + ')' : ''} to a Zoho account first`);
-      return { account_id: acc, debit_or_credit: l.dc, amount: round(l.amount), description: l.desc || '', ...projectRef(l.project_id) };
-    });
+    const r0 = rec(j.kind, j.local_id);
+    if (j.voided) {                                                                   // invoice cancelled here → its retention journal is removed there
+      if (!r0 || !r0.zoho_id || r0.status === 'cancelled') return;
+      try { await cl.del('/journals/' + r0.zoho_id); } catch (e) { if (!gone(e)) throw e; }
+      mark(j.kind, j.local_id, r0.zoho_id, 'journal', 'cancelled', null, null); run.updated++; return;
+    }
+    if (j.invoice) { const ir = rec('invoice', j.invoice); if (!ir || ir.status !== 'ok') return; }          // retention follows its invoice: not sent / not updated while the invoice is not in step
+    const lines = [];
+    for (const l of j.lines.filter(l => l.amount > 0.004)) {
+      const acc = l.acct === 'bank' ? (mapOf('account', 'acct:1000') || (lk.bank || {}).account_id) : l.acct === 'cash' ? (mapOf('account', 'acct:1020') || (lk.cash || lk.bank || {}).account_id)
+        : l.acct === 'ar' ? (mapOf('account', 'acct:1100') || (lk.ar || {}).account_id) : l.acct === 1150 ? (mapOf('account', 'acct:1150') || (lk.retention || {}).account_id) : mapOf('account', 'acct:' + l.acct);
+      if (!acc) throw new Error(`map our account ${l.acct === 'ar' ? '1100 (Accounts receivable)' : l.acct}${LEDGER[l.acct] ? ' (' + LEDGER[l.acct] + ')' : ''} to a Zoho account first`);
+      lines.push({ account_id: acc, debit_or_credit: l.dc, amount: round(l.amount), description: l.desc || '', ...(l.customer ? { customer_id: await contactId(cl, l.customer, run) } : {}), ...projectRef(l.project_id) });
+    }
     const vals = { journal_date: j.date, reference_number: j.ref.slice(0, 100), notes: j.notes, line_items: lines }, h = hashOf(vals), r = rec(j.kind, j.local_id);
     if (r && r.status === 'ok' && r.zoho_id) {
       if (r.hash === h) return;
