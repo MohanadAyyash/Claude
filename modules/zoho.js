@@ -334,7 +334,7 @@ module.exports = ctx => {
     let message = '';
     try { await running; } catch (err) { message = err.message; run.failed++; } finally { running = null; }
     if (!message && run.errors.length) message = run.errors.slice(0, 5).join(' | ');
-    if (dryRun) { const ops = dry.ops; dry = null; return { dry_run: true, offline, would_send: run.sent, would_update: run.updated, failed: run.failed, skipped: run.skipped, errors: run.errors, ops: ops.map(({ body, ...o }) => o), payloads: ops.slice(0, 200) }; }
+    if (dryRun) { const ops = dry.ops; dry = null; return { dry_run: true, offline, would_send: run.sent, would_update: run.updated, failed: run.failed, skipped: run.skipped, errors: message && !run.errors.length ? [message] : run.errors, ops: ops.map(({ body, ...o }) => o), payloads: ops.slice(0, 200) }; }
     db.prepare('INSERT INTO zoho_runs(started,finished,trigger,user,sent,updated,failed,skipped,message) VALUES(?,?,?,?,?,?,?,?,?)').run(started, now(), trigger, user, run.sent, run.updated, run.failed, run.skipped, message);
     setCfg('last_run', today());
     return { sent: run.sent, updated: run.updated, failed: run.failed, skipped: run.skipped, message };
