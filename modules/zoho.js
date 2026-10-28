@@ -96,7 +96,7 @@ module.exports = ctx => {
     const tax = (pct, re) => taxes.find(t => +t.tax_percentage === pct && t.tax_type !== 'tax_group' && (!re || re.test(t.tax_name || '')));
     const expense = coa.filter(a => EXPENSE_TYPES.includes(a.account_type));
     return { std: tax(5), zero: tax(0, /zero/i), exempt: tax(0, /exempt/i), bank: banks.find(a => a.account_type === 'bank'), cash: banks.find(a => a.account_type === 'cash'), ar: coa.find(a => a.account_type === 'accounts_receivable'), retention: coa.find(a => /retention/i.test(a.account_name || '') && /asset/.test(a.account_type || '')),
-      expense, assets: coa.filter(a => a.account_type === 'fixed_asset'), cogs: expense.find(a => a.account_type === 'cost_of_goods_sold') || expense[0] };
+      expense, assets: coa.filter(a => a.account_type === 'fixed_asset'), cogs: expense.find(a => /^cost of goods sold$/i.test(a.account_name || '')) || expense.find(a => a.account_type === 'cost_of_goods_sold') || expense[0] };   // the standard account, not another COGS account (e.g. site salaries)
   }
   const taxOf = (lk, k) => (k === 'std' ? lk.std : k === 'zero' ? lk.zero : k === 'exempt' ? lk.exempt : null);
   // expense account for a bill category: an account whose name contains the category (e.g. "Materials"), else Cost of Goods Sold
