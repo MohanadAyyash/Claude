@@ -123,9 +123,7 @@ module.exports = ctx => {
     const date = body.date || today(); if (!/^\d{4}-\d\d-\d\d$/.test(date)) bad('Invalid date');
     let due = body.due_date || null;
     if (!due && +p.payment_terms_days > 0) { const x = new Date(Date.parse(date + 'T00:00:00Z')); x.setUTCDate(x.getUTCDate() + +p.payment_terms_days); due = x.toISOString().slice(0, 10); }
-    const notes = [`Against Payment Certificate ${pc.number}${pc.issue_date ? ` dated ${pc.issue_date}` : ''}${pc.period_to ? ` for works up to ${pc.period_to}` : ''}.`,
-      v.app_number ? `Payment Application No. ${v.app_seq} (${v.app_number}).` : '', p.client_contract_ref ? `Contract / sub-contract: ${p.client_contract_ref}.` : '',
-      v.basis === 'net' ? 'VAT on the certified amount after retention and contra charges; VAT on retention is invoiced at its release.' : ''].filter(Boolean).join(' ');
+    const notes = '';                                                      // PC no., contract no. and main contract print in the details block
     const r = db.prepare('INSERT INTO invoices(number,date,due_date,project_id,items,vat_pct,retention_pct,notes,client_ref,retention_amount,vat_basis,pc_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(nextNumber('invoices', 'INV'), date, due, p.id, JSON.stringify(items), vatPct(), +p.retention_pct || 0, notes, `PC ${pc.number}`, Math.max(0, d.retention), v.basis, pc.id);
     const id = Number(r.lastInsertRowid);
@@ -156,8 +154,7 @@ module.exports = ctx => {
     let sec = null;
     const body = lines.map(l => { const h = l.section && l.section !== sec ? `<tr class="sec"><td colspan="10">${esc(l.section)}</td></tr>` : ''; sec = l.section;
       return `${h}<tr><td>${esc(l.item || '')}</td><td>${esc(l.description)}</td><td>${esc(l.unit)}</td><td class="n">${money(l.qty)}</td><td class="n">${money(l.rate)}</td><td class="n">${money(l.prev_qty)}</td><td class="n">${money(l.this_qty)}</td><td class="n">${money(l.cum_qty)}</td><td class="n">${money(l.cum_amount)}</td><td class="n">${l.qty ? round(l.cum_qty / l.qty * 100) : 0}%</td></tr>`; }).join('');
-    const thisTotal = round(lines.reduce((s, l) => s + l.this_amount, 0));
-    return { title: `Proforma Invoice ${a.number}`, filename: a.number, ref: a.number, date: a.date, trn: false, label: 'Submitted by', receiver: 'Received by (main contractor)',
+    return { title: `Proforma Invoice ${a.number}`, filename: a.number, ref: a.number, date: a.date, trn: false, stamp: false, signature: false,
       body: `<style>.boqp{width:100%;table-layout:fixed;font-size:7.5pt}.boqp th{font-size:6pt;letter-spacing:0;white-space:normal;padding:1mm .8mm}.boqp td{padding:1.1mm .8mm;word-wrap:break-word}.boqp .n{white-space:nowrap}
         .boqp tr.sec td{font-weight:700;padding-top:2mm;border-bottom:.5pt solid #8A8578}.boqp tfoot td{font-weight:700;border-top:1pt solid #1F3A5F;border-bottom:0}
         .cv{display:flex;gap:4mm;margin:0 0 3mm;font-size:8pt}.cv div{flex:1;border-bottom:.5pt solid #D6D2C8;padding:1mm 0;display:flex;justify-content:space-between}.cv span{color:#8A8578}
@@ -174,9 +171,7 @@ module.exports = ctx => {
         ${sum('Value of work done to date', a.work)}${a.materials ? sum('Materials on site', a.materials) : ''}${a.adv_rec_cum ? sum(`Less: advance payment recovery (${a.recovery_pct}%)`, a.adv_rec_cum, 0, 1) : ''}${sum('Amount due to date (A)', a.A, 1)}
         ${sum(`Retention ${a.retention_pct}% (cumulative)`, a.retention_cum)}${a.release_cum ? sum('Less: retention released', a.release_cum, 0, 1) : ''}${a.contra_cum ? sum('Contra charges (as last certified)', a.contra_cum) : ''}${sum('Previous payments certified', a.prev_payments)}${sum('Total deductions (B)', a.B, 1)}
         <tr class="net"><td>NET AMOUNT (A − B) ${esc(cur)}</td><td class="n">${money(a.net)}</td></tr></tbody></table>
-      <p style="font-size:8.5pt;text-align:end"><b>(${esc(amountInWords(a.net, cur))})</b></p>
-      <p class="muted" style="font-size:8pt">Work done this period: ${money(thisTotal)}. Please check the quantities against your records; the tax invoice will be issued for the amount you certify.</p>
-      ${a.notes ? `<p style="font-size:8.5pt"><b>Notes:</b><br>${esc(a.notes).replace(/\n/g, '<br>')}</p>` : ''}` };
+      <p style="font-size:8.5pt;text-align:end"><b>(${esc(amountInWords(a.net, cur))})</b></p>` };
   };
 
   const appFields = b => ({ date: b.date, period_to: b.period_to || null, materials: num(b.materials), notes: b.notes || '' });

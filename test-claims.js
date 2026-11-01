@@ -46,8 +46,10 @@ server.listen(0, async () => {
     near(iv.due_now, 16712.87, 'due now'); near(iv.vat, 795.85, 'invoice VAT'); near(iv.retention, 3464.91, 'retention this period'); near(iv.revenue, 34649.12 - 15267.19, 'revenue = work less contra');
     near(iv.std_total, 15917.02, 'VAT base for the return'); assert.equal(iv.due_date, '2026-05-11', '90 days payment terms'); assert.equal(iv.client_ref, 'PC 6');
     assert.equal(iv.contract_ref, 'EM831/2197/2024 dated 02 January 2025');
+    ok(await call('PUT', 'settings', { bank_details: 'Emirates NBD — Trigon\nIBAN AE070331234567890123456' }));
     const html = docHtml({ kind: 'invoices', doc: iv, settings: ok(await call('GET', 'settings')), mode: 'print' });
-    assert.ok(/EM831\/2197\/2024/.test(html) && /PC 6/.test(html) && /after retention/.test(html), 'contract ref, PC and VAT basis on the invoice');
+    assert.ok(/class="tb"><div class="bank"><b>Bank details/.test(html), 'bank details beside the totals');
+    assert.ok(/EM831\/2197\/2024/.test(html) && /PC 6/.test(html) && !/after retention/.test(html) && !/Notes/.test(html), 'contract ref and PC on the invoice; no VAT note or generated notes');
     assert.equal((await call('POST', `claims/pc-invoice/${pc6.id}`, {})).s, 400, 'only one invoice per PC');
     assert.equal((await call('PUT', `claims/pcs/${pc6.id}`, { notes: 'x' })).s, 400, 'an invoiced PC is locked');
     // VAT return: the base is the amount after retention
@@ -70,7 +72,7 @@ server.listen(0, async () => {
     near(app2.net, app2.work - app2.retention_cum - 26400 - 164984.21, 'net claimed'); near(app2.vat, app2.net * 0.05, 'VAT on net');
     const pa = await fetch(base + 'doc/pay_app/' + app.id, { headers: { cookie } }); const pt = await pa.text();
     assert.equal(pa.status, 200); assert.ok(/PROFORMA INVOICE/.test(pt) && /Application no\./.test(pt) && /Dirhams/.test(pt) && /EM831\/2197/.test(pt), 'printable proforma');
-    assert.ok(!/TRN|VAT|IBAN|Bank details|tax invoice/i.test(pt.replace(/the tax invoice will be issued/i, '')), 'no VAT, TRN or bank details on the proforma');
+    assert.ok(!/TRN|VAT|IBAN|Bank details|tax invoice|Notes|Submitted by|Received by/i.test(pt), 'no VAT, TRN, bank details, notes or signature lines on the proforma');
     // the main contractor certifies less (cuts 100 m of roll over kerb) and deducts 1,000 more contra charges
     const f7 = ok(await call('GET', `claims/pcs/new?project_id=${p}&app_id=${app.id}`));
     assert.equal(f7.first, false); near(f7.prev_payments, 164984.21, 'prefilled previous payments'); near(f7.prev_work, 212649.12, 'prefilled previous work');
