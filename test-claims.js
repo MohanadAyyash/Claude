@@ -61,7 +61,7 @@ server.listen(0, async () => {
     near(ok(await call('GET', `boq_items?project_id=${p}`)).find(x => x.id === b1).billed_pct, 7000 / 7500 * 100, 'billed % = certified on PC 6');
     ok(await call('PUT', 'boq_items/' + b1, { done_pct: 96 }));             // 7,200 m done
     const app = ok(await call('POST', 'claims/apps', { project_id: p, date: '2026-02-20', period_to: '2026-01-31' }));
-    assert.equal(app.seq, 1); assert.match(app.number, /^PA-\d{4}-001$/); assert.equal(app.previous_pc, '6');
+    assert.equal(app.seq, 1); assert.match(app.number, /^PF-\d{4}-001$/); assert.equal(app.previous_pc, '6');
     near(app.prev_payments, 164984.21, 'previous payments = cumulative net certified (149,067.19 + 15,917.02)');
     const l1 = app.lines.find(l => l.key === 'b' + b1); assert.equal(l1.prev_qty, 7000); assert.equal(l1.cum_qty, 7200);
     const app2 = ok(await call('PUT', 'claims/apps/' + app.id, { lines: [{ key: 'b' + b2, cum_qty: 500 }], status: 'submitted' }));
@@ -69,7 +69,8 @@ server.listen(0, async () => {
     near(app2.retention_cum, app2.work * 0.1, 'retention 10%'); near(app2.contra_cum, 26400, 'contra as last certified');
     near(app2.net, app2.work - app2.retention_cum - 26400 - 164984.21, 'net claimed'); near(app2.vat, app2.net * 0.05, 'VAT on net');
     const pa = await fetch(base + 'doc/pay_app/' + app.id, { headers: { cookie } }); const pt = await pa.text();
-    assert.equal(pa.status, 200); assert.ok(/NOT A TAX INVOICE/.test(pt) && /Payment Application No. 1/.test(pt) && /Dirhams/.test(pt) && /EM831\/2197/.test(pt), 'printable application');
+    assert.equal(pa.status, 200); assert.ok(/PROFORMA INVOICE/.test(pt) && /Application no\./.test(pt) && /Dirhams/.test(pt) && /EM831\/2197/.test(pt), 'printable proforma');
+    assert.ok(!/TRN|VAT|IBAN|Bank details|tax invoice/i.test(pt.replace(/the tax invoice will be issued/i, '')), 'no VAT, TRN or bank details on the proforma');
     // the main contractor certifies less (cuts 100 m of roll over kerb) and deducts 1,000 more contra charges
     const f7 = ok(await call('GET', `claims/pcs/new?project_id=${p}&app_id=${app.id}`));
     assert.equal(f7.first, false); near(f7.prev_payments, 164984.21, 'prefilled previous payments'); near(f7.prev_work, 212649.12, 'prefilled previous work');

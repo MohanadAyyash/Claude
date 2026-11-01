@@ -145,31 +145,38 @@ module.exports = ctx => {
   }
 
   // ---- printable payment application -------------------------------------------------------------------------------------------
+  // Proforma invoice: the BOQ with quantities and amounts for the main contractor to check against their records before the PC —
+  // English only, no VAT, no TRN, no bank details (the tax invoice follows the PC)
   ctx.renderers.pay_app = id => {
     const app = db.prepare('SELECT * FROM pay_apps WHERE id=?').get(id) || notFound(), p = proj(app.project_id), a = appView(app, p), S = getSettings(), cur = S.currency || 'AED';
     const client = db.prepare('SELECT * FROM parties WHERE id=?').get(p.client_id) || {};
-    const kv = (k, v) => v ? `<tr><td>${k}</td><td><b>${v}</b></td></tr>` : '';
-    const row = (k, v, b, neg) => `<tr${b ? ' style="font-weight:700"' : ''}><td>${k}</td><td class="n">${neg && v ? '(' + money(v) + ')' : money(v)}</td></tr>`;
+    const row = (k, v) => v ? `<tr><td>${k}</td><td>${v}</td></tr>` : '';
+    const sum = (k, v, b, neg) => `<tr${b ? ' class="b"' : ''}><td>${k}</td><td class="n">${neg && v ? '(' + money(v) + ')' : money(v)}</td></tr>`;
     const lines = a.lines.filter(l => l.cum_qty || l.prev_qty || l.qty);
     let sec = null;
-    const body = lines.map(l => { const h = l.section && l.section !== sec ? `<tr><td colspan="10" style="font-weight:700;padding-top:2mm">${esc(l.section)}</td></tr>` : ''; sec = l.section;
+    const body = lines.map(l => { const h = l.section && l.section !== sec ? `<tr class="sec"><td colspan="10">${esc(l.section)}</td></tr>` : ''; sec = l.section;
       return `${h}<tr><td>${esc(l.item || '')}</td><td>${esc(l.description)}</td><td>${esc(l.unit)}</td><td class="n">${money(l.qty)}</td><td class="n">${money(l.rate)}</td><td class="n">${money(l.prev_qty)}</td><td class="n">${money(l.this_qty)}</td><td class="n">${money(l.cum_qty)}</td><td class="n">${money(l.cum_amount)}</td><td class="n">${l.qty ? round(l.cum_qty / l.qty * 100) : 0}%</td></tr>`; }).join('');
-    return { title: `Payment Application ${a.seq} — ${a.number}`, filename: a.number, ref: a.number, date: a.date, label: 'Submitted by / مقدّم من', receiver: 'Received by (main contractor) / استلام المقاول الرئيسي',
-      body: `<h2 class="t">Payment Application No. ${a.seq} / طلب دفعة رقم ${a.seq}</h2>
-      <div style="border:1pt solid #8A8578;padding:2mm 3mm;margin:0 0 3mm;font-size:9pt"><b>PROFORMA — THIS IS NOT A TAX INVOICE / فاتورة مبدئية — ليست فاتورة ضريبية.</b> A tax invoice will be issued for the amount certified in the payment certificate.</div>
-      <table class="kv"><tbody>${kv('Application no.', `${a.seq} &nbsp; <span class="mono">${esc(a.number)}</span>`)}${kv('Date', esc(a.date))}${kv('For works up to', esc(a.period_to || ''))}
-      ${kv('To (main contractor)', `${esc(client.name || '')}${client.trn ? ` · TRN ${esc(client.trn)}` : ''}`)}${kv('Main contract', esc(p.main_contract || ''))}${kv('Project', esc(`${p.code || ''} ${p.name}`))}
-      ${kv('Contract / sub-contract no.', esc(p.client_contract_ref || ''))}${kv('Previous certificate', esc(a.previous_pc ? 'PC ' + a.previous_pc : 'none'))}${kv('Our TRN', esc(S.trn || ''))}</tbody></table>
-      <table style="width:100%;margin:3mm 0"><tbody>${row('Contract value (excl. VAT)', a.contract_value)}${row('Approved variations', a.variations)}${row('Adjusted contract value (excl. VAT)', a.adjusted, 1)}</tbody></table>
-      <style>.boqp{width:100%;table-layout:fixed;font-size:7.5pt}.boqp th{font-size:6pt;letter-spacing:0;white-space:normal;padding:1mm .8mm}.boqp td{padding:1.2mm .8mm;word-wrap:break-word}.boqp .n{white-space:nowrap}</style>
-      <table class="boqp"><colgroup><col style="width:4%"><col style="width:30%"><col style="width:5%"><col style="width:9%"><col style="width:8%"><col style="width:9%"><col style="width:8%"><col style="width:9%"><col style="width:12%"><col style="width:6%"></colgroup><thead><tr><th>Item</th><th>Description</th><th>Unit</th><th class="n">Contract<br>qty</th><th class="n">Rate</th><th class="n">Previous<br>qty</th><th class="n">This<br>period</th><th class="n">Cumulative<br>qty</th><th class="n">Cumulative<br>amount</th><th class="n">%</th></tr></thead><tbody>${body}</tbody></table>
-      <table style="width:100%;margin-top:4mm"><tbody>
-        ${row('Value of work done to date', a.work)}${a.materials ? row('Materials on site', a.materials) : ''}${a.adv_rec_cum ? row(`Less: advance payment recovery (${a.recovery_pct}%)`, a.adv_rec_cum, 0, 1) : ''}${row('Amount due to date (A)', a.A, 1)}
-        ${row(`Retention ${a.retention_pct}% (cumulative)`, a.retention_cum)}${a.release_cum ? row('Less: retention released', a.release_cum, 0, 1) : ''}${a.contra_cum ? row('Contra charges (as previously certified)', a.contra_cum) : ''}${row('Previous payments certified (excl. VAT)', a.prev_payments)}${row('Total deductions (B)', a.B, 1)}
-        ${row('Net amount this application (A − B)', a.net, 1)}${row(`VAT ${a.vat_pct}%${a.basis === 'net' ? ' on the net amount' : ''}`, a.vat)}${row(`NET AMOUNT CLAIMED INCLUDING VAT (${esc(cur)})`, a.total, 1)}</tbody></table>
-      <p><b>(${esc(amountInWords(a.total, cur))})</b></p>
-      <table style="width:60%"><thead><tr><th>VAT summary</th><th class="n">Previous</th><th class="n">This application</th><th class="n">Cumulative</th></tr></thead><tbody><tr><td>VAT ${a.vat_pct}%</td><td class="n">${money(a.prev_vat)}</td><td class="n">${money(a.vat)}</td><td class="n">${money(a.vat_cum)}</td></tr></tbody></table>
-      ${a.notes ? `<p><b>Notes:</b><br>${esc(a.notes).replace(/\n/g, '<br>')}</p>` : ''}` };
+    const thisTotal = round(lines.reduce((s, l) => s + l.this_amount, 0));
+    return { title: `Proforma Invoice ${a.number}`, filename: a.number, ref: a.number, date: a.date, trn: false, label: 'Submitted by', receiver: 'Received by (main contractor)',
+      body: `<style>.boqp{width:100%;table-layout:fixed;font-size:7.5pt}.boqp th{font-size:6pt;letter-spacing:0;white-space:normal;padding:1mm .8mm}.boqp td{padding:1.1mm .8mm;word-wrap:break-word}.boqp .n{white-space:nowrap}
+        .boqp tr.sec td{font-weight:700;padding-top:2mm;border-bottom:.5pt solid #8A8578}.boqp tfoot td{font-weight:700;border-top:1pt solid #1F3A5F;border-bottom:0}
+        .cv{display:flex;gap:4mm;margin:0 0 3mm;font-size:8pt}.cv div{flex:1;border-bottom:.5pt solid #D6D2C8;padding:1mm 0;display:flex;justify-content:space-between}.cv span{color:#8A8578}
+        .psum{width:95mm;margin:3mm 0 0 auto;font-size:8.5pt}.psum td{padding:.9mm 1mm}.psum tr.b td{font-weight:700;border-top:1pt solid #1F3A5F}.psum tr.net td{font-size:10pt;font-weight:800;border-top:1.5pt solid #1F3A5F;border-bottom:1.5pt solid #1F3A5F}</style>
+      <h2 class="t">PROFORMA INVOICE</h2>
+      <div class="info"><div><h4>To</h4><div class="nm">${esc(client.name || '')}</div>${client.address ? `<div class="muted">${esc(client.address)}</div>` : ''}
+          <table style="margin-top:1.5mm"><tbody>${row('Project', esc(`${p.code ? p.code + ' — ' : ''}${p.name}`))}${row('Main contract', esc(p.main_contract || ''))}${row('Contract no.', esc(p.client_contract_ref || ''))}</tbody></table></div>
+        <div><h4>Proforma details</h4><table><tbody>${row('Proforma no.', `<b class="mono">${esc(a.number)}</b>`)}${row('Application no.', String(a.seq))}${row('Date', esc(a.date))}${row('For works up to', esc(a.period_to || ''))}${row('Previous certificate', esc(a.previous_pc ? 'PC ' + a.previous_pc : ''))}</tbody></table></div></div>
+      <div class="cv"><div><span>Contract value</span><b class="mono">${money(a.contract_value)}</b></div><div><span>Approved variations</span><b class="mono">${money(a.variations)}</b></div><div><span>Adjusted contract value</span><b class="mono">${money(a.adjusted)}</b></div></div>
+      <table class="boqp"><colgroup>${[4, 30, 5, 9, 8, 9, 8, 9, 12, 6].map(w => `<col style="width:${w}%">`).join('')}</colgroup>
+        <thead><tr><th>Item</th><th>Description</th><th>Unit</th><th class="n">Contract<br>qty</th><th class="n">Rate</th><th class="n">Previous<br>qty</th><th class="n">This<br>period</th><th class="n">Cumulative<br>qty</th><th class="n">Cumulative<br>amount</th><th class="n">%</th></tr></thead>
+        <tbody>${body}</tbody><tfoot><tr><td colspan="6">Total</td><td class="n"></td><td></td><td class="n">${money(a.work)}</td><td class="n">${a.adjusted ? round(a.work / a.adjusted * 100) : 0}%</td></tr></tfoot></table>
+      <table class="psum"><tbody>
+        ${sum('Value of work done to date', a.work)}${a.materials ? sum('Materials on site', a.materials) : ''}${a.adv_rec_cum ? sum(`Less: advance payment recovery (${a.recovery_pct}%)`, a.adv_rec_cum, 0, 1) : ''}${sum('Amount due to date (A)', a.A, 1)}
+        ${sum(`Retention ${a.retention_pct}% (cumulative)`, a.retention_cum)}${a.release_cum ? sum('Less: retention released', a.release_cum, 0, 1) : ''}${a.contra_cum ? sum('Contra charges (as last certified)', a.contra_cum) : ''}${sum('Previous payments certified', a.prev_payments)}${sum('Total deductions (B)', a.B, 1)}
+        <tr class="net"><td>NET AMOUNT (A − B) ${esc(cur)}</td><td class="n">${money(a.net)}</td></tr></tbody></table>
+      <p style="font-size:8.5pt;text-align:end"><b>(${esc(amountInWords(a.net, cur))})</b></p>
+      <p class="muted" style="font-size:8pt">Work done this period: ${money(thisTotal)}. Please check the quantities against your records; the tax invoice will be issued for the amount you certify.</p>
+      ${a.notes ? `<p style="font-size:8.5pt"><b>Notes:</b><br>${esc(a.notes).replace(/\n/g, '<br>')}</p>` : ''}` };
   };
 
   const appFields = b => ({ date: b.date, period_to: b.period_to || null, materials: num(b.materials), notes: b.notes || '' });
@@ -204,7 +211,7 @@ module.exports = ctx => {
           const seq = db.prepare('SELECT COUNT(*) n FROM pay_apps WHERE project_id=?').get(p.id).n + 1;
           const f = appFields({ date: today(), ...x }); if (!/^\d{4}-\d\d-\d\d$/.test(f.date)) bad('Invalid date');
           const r = db.prepare('INSERT INTO pay_apps(project_id,seq,number,date,period_to,lines,materials,notes,status,created,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-            .run(p.id, seq, nextNumber('pay_apps', 'PA'), f.date, f.period_to, JSON.stringify(lines), f.materials, f.notes, 'draft', today(), me.username);
+            .run(p.id, seq, nextNumber('pay_apps', 'PF'), f.date, f.period_to, JSON.stringify(lines), f.materials, f.notes, 'draft', today(), me.username);
           audit(req, 'create', 'pay_apps', Number(r.lastInsertRowid), `${p.name} No. ${seq}`);
           return send(res, 200, appView(db.prepare('SELECT * FROM pay_apps WHERE id=?').get(r.lastInsertRowid), p)), true;
         }
