@@ -9,6 +9,7 @@ node tools/guide-shots/seed.js                           # demo company, project
 node tools/guide-shots/run.js "" ar,en                    # all screens (or e.g. run.js 13,26 ar)
 python3 tools/guide-shots/docs.py                        # (re)insert images + numbered explanations
 node tools/build-guide.js                                # rebuild the searchable in-app guide (public/guide/index.html)
+node tools/build-guide-pdf.js                            # PDFs: docs/Trigon-ERP-User-Guide-{AR,EN}.pdf
 ```
 `setup-shot.js` captures the first-time setup screen and needs a second, empty server (`BASE=http://localhost:3998`).
 Needs Playwright with Chromium.
