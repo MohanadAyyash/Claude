@@ -5,6 +5,8 @@
 > This guide follows the screens of the system step by step, in the order a contracting company normally works:
 > set up the company → clients → tender → quotation → project → invoicing and collection → purchasing → HR and payroll → accounting and tax.
 > Button and menu names are written **in bold**, exactly as they appear in the English interface.
+>
+> **Reading the screenshots:** every image is taken from the system itself with demo data. A red box marks the button or field, its number matches the numbered explanation under the image, and the arrow links each callout to its place on the screen.
 
 ---
 
@@ -56,6 +58,19 @@
 2. Enter your **Username** and **Password**, then press **Sign in**.
 3. After 8 wrong passwords the account is locked for a while. Ask the administrator to reset your password if you forgot it.
 
+<!--img-->
+
+**📷 Sign-in screen**
+
+![Sign-in screen](img/en/02-login.jpg)
+
+1. The username the administrator gave you.
+2. Your password. After 8 wrong attempts the account is locked for a while.
+3. Press Sign in.
+4. Switch between Arabic and English.
+
+<!--/img-->
+
 ### 1.2 Language
 - On the sign-in screen, click **English / عربي** under the button.
 - After signing in, use the **English / عربي** button at the bottom of the side menu. The whole interface switches direction (RTL/LTR).
@@ -68,6 +83,18 @@
 - Every page has a **🖨 Print on letterhead** button, and most lists have an **Excel** button.
 - **Logout** is at the bottom of the side menu.
 
+<!--img-->
+
+**📷 The dashboard after signing in**
+
+![The dashboard after signing in](img/en/03-dashboard.jpg)
+
+1. The side menu: every section of the system grouped by area; you only see what your role allows. Language and Logout buttons are at its bottom.
+2. Company KPIs: active projects, contract value, invoiced, expenses, profit, cash, receivables and retention. Below: cash flow, compliance alerts, overdue invoices and profit per project.
+3. Prints the current page on the company letterhead with stamp and signature. It is on every page.
+
+<!--/img-->
+
 ---
 
 ## 2. First-time setup (administrator)
@@ -77,6 +104,20 @@
 2. Enter **Username**, **Password** (at least 6 characters) and **Company name**.
 3. On an online server you may be asked for a **Setup token** — it is the `SETUP_TOKEN` value in the server's `.env` file.
 4. Press **Create account**. You are now signed in as administrator.
+
+<!--img-->
+
+**📷 First-time setup screen**
+
+![First-time setup screen](img/en/01-setup.jpg)
+
+1. Type an administrator username, e.g. admin. You will use it every time you sign in.
+2. A strong password of at least 6 characters. Do not share it.
+3. The company name as it will show in the system (you can change it later in Settings).
+4. Press Create account; you are signed in as administrator right away.
+5. Switches the interface language before you start.
+
+<!--/img-->
 
 ### 2.2 Company details
 Menu: **Settings** → first card.
@@ -95,12 +136,40 @@ Menu: **Settings** → first card.
 4. **Default quotation terms** — pre-filled into every new quotation.
 5. Press **Save**.
 
+<!--img-->
+
+**📷 Settings — company details**
+
+![Settings — company details](img/en/04-settings-company.jpg)
+
+1. Company name in English and Arabic as on the licence; printed on every document.
+2. VAT TRN (15 digits). Without it tax invoices are not valid.
+3. Numbering prefix, e.g. TC, so quotations and letters are numbered TC26/01-CLIENT.
+4. MOHRE establishment ID, company bank, routing code and IBAN: all required for the WPS salary file.
+5. If the company is not VAT-registered yet choose No: VAT becomes 0% and documents are titled Invoice.
+6. Bank details printed at the bottom of every invoice so clients can pay you.
+7. Remember to press Save after any change.
+
+<!--/img-->
+
 ### 2.3 Logo, stamp and signature
 Menu: **Settings** → **Company identity: logo, stamp & signature**.
 1. Quick way: press **Install the Trigon brand pack (logos, stamp, legal details)** and confirm. This installs the Trigon logos and the legal details (name, licence, address, P.O. Box).
 2. Or upload each image yourself (PNG with transparent background, up to 2 MB): **Primary logo**, **Arabic logo (official letterhead)**, **Reversed logo**, **Logo line (e-mail signature)**, **Mark only**, **Official stamp**, **Authorised signature**.
 3. The official stamp is not shipped with the code — upload it here. It prints only on documents issued by the system, so give printing rights only to authorised people.
 4. To replace an image, upload a new one; to remove it, press **Remove**.
+
+<!--img-->
+
+**📷 Settings — company identity**
+
+![Settings — company identity](img/en/05-settings-brand.jpg)
+
+1. Installs the Trigon logos and legal details in one click.
+2. Choose the stamp image (transparent PNG, up to 2 MB); it uploads at once and shows in the preview.
+3. Upload the authorised signature the same way. Stamp and signature print on invoices, letters and reports.
+
+<!--/img-->
 
 ### 2.4 Email sending (server edition)
 Menu: **Settings** → **Email sending**.
@@ -109,6 +178,20 @@ Menu: **Settings** → **Email sending**.
    - **SMTP**: enter **SMTP server**, **Port (587 or 465)**, **SMTP username**, **SMTP password** and **Encryption**.
 2. Enter **From address** (e.g. `accounts@trigon.ae`).
 3. Press **Save**, then type your email in the test box and press **Send test**.
+
+<!--img-->
+
+**📷 Settings — email sending**
+
+![Settings — email sending](img/en/06-settings-email.jpg)
+
+1. Sending method: SMTP (username & password) or Microsoft 365 (best for Outlook mail). The fields change with your choice.
+2. The address clients and suppliers receive mail from, e.g. accounts@trigon.ae.
+3. Mail-server details from your mail provider (server, port, user, password, encryption).
+4. Save the settings.
+5. Type your email in the box and press Send test to check sending works.
+
+<!--/img-->
 
 ### 2.5 My profile (email signature)
 Menu: **Settings** → **My profile**. Enter **Full name**, **Job title**, **Mobile** → **Save**. These appear in the signature of every email you send from the system.
@@ -141,6 +224,33 @@ Menu: **Settings** → **Change password** → type the new password → **Chang
 3. If the user is also an employee, choose **Linked employee** (needed for leave approvals and the portal).
 4. Press **Create**.
 
+<!--img-->
+
+**📷 Settings — users & roles**
+
+![Settings — users & roles](img/en/07-settings-users.jpg)
+
+1. Opens the new-user form.
+2. Sets a new password for a user who forgot theirs.
+3. Changes the user's role, which changes the pages they see.
+4. Site engineers and foremen only: choose the projects they see.
+5. Your profile: name, title and mobile appear in the signature of emails you send.
+
+<!--/img-->
+<!--img-->
+
+**📷 New user form**
+
+![New user form](img/en/08-user-new.jpg)
+
+1. The username they will sign in with (no spaces).
+2. A temporary password (6+ characters). Ask them to change it in Settings.
+3. The role decides the permissions (see the table above).
+4. If they are staff, link their employee record so the portal and line-manager approvals work.
+5. Press Create.
+
+<!--/img-->
+
 ### 3.3 Manage a user
 In the users table:
 - **Reset password** — type the new password.
@@ -162,11 +272,37 @@ Menu: **Clients & suppliers**. Do this before quotations, invoices and purchases
 7. Press **Save**.
 8. Open the record again to attach documents (trade licence, VAT certificate…) in the **Attached documents** panel.
 
+<!--img-->
+
+**📷 Adding a client**
+
+![Adding a client](img/en/09-party-new.jpg)
+
+1. Type: client, supplier or subcontractor. Decides where it appears (quotes & invoices, or purchasing).
+2. The legal name as on the licence (required).
+3. 15-digit TRN: shown on tax invoices and needed to recover input VAT.
+4. The address is required on tax invoices. Also fill phone, email and bank.
+5. Save. Then open the record to attach the licence and VAT certificate.
+
+<!--/img-->
+
 ---
 
 ## 5. Tenders and opportunities
 
 Menu: **Tenders & opportunities**. The board shows each stage with its value, plus **Open pipeline**, **Weighted (value × probability)**, **Won this year** and **Win rate**.
+
+<!--img-->
+
+**📷 Tender board**
+
+![Tender board](img/en/10-tenders.jpg)
+
+1. Summary: open count, pipeline value, weighted value (value × probability), won this year, win rate.
+2. Each column is a stage (lead, invited, preparing, submitted, negotiation); each card is a tender. Click a card to open it.
+3. Add a new tender or opportunity.
+
+<!--/img-->
 
 ### 5.1 Add a tender
 1. Press **+ Tender / opportunity**.
@@ -180,6 +316,22 @@ Menu: **Tenders & opportunities**. The board shows each stage with its value, pl
 2. **Create quotation** — makes a quotation linked to the tender (then **Open quotation** to work on it).
 3. When you win: **Won — convert to project** — converts the quotation to a project and marks the tender as won.
 4. When you lose: set the stage to **Lost** and fill **Lost reason**.
+
+<!--img-->
+
+**📷 Tender window**
+
+![Tender window](img/en/11-tender-modal.jpg)
+
+1. The tender or opportunity title.
+2. The current stage. Change it as it moves; the card moves to the right column.
+3. Estimated project value.
+4. Win probability %: used for the weighted value.
+5. Create quotation makes a quotation linked to the tender; afterwards it becomes Open quotation.
+6. 🏆 Won — convert to project: turns the linked quotation into a project and marks the tender as won.
+7. Save the changes.
+
+<!--/img-->
 
 ---
 
@@ -195,12 +347,65 @@ Menu: **Quotations**.
 5. **Notes** and **Terms** (pre-filled from Settings).
 6. Press **Save**.
 
+<!--img-->
+
+**📷 Quotation list**
+
+![Quotation list](img/en/12-quotes.jpg)
+
+1. New quotation.
+2. Click any quotation to open, edit, print or send it.
+3. Status: draft, sent, accepted, rejected.
+
+<!--/img-->
+<!--img-->
+
+**📷 New quotation form**
+
+![New quotation form](img/en/13-quote-new.jpg)
+
+1. Leave the number empty to get an automatic number from the prefix.
+2. Choose the client (it must exist in Clients & suppliers).
+3. Validity in days; printed on the cover.
+4. Lines: type description, unit, qty, rate and pick the VAT type per line. The amount is calculated; × deletes a line.
+5. + Line adds a row.
+6. Subtotal, VAT and total update instantly.
+7. Terms come from Settings and can be edited for this quotation.
+8. Save stores the quotation in the list.
+
+<!--/img-->
+
 ### 6.2 Send it to the client
 Open the quotation, then:
 - **Print** or **PDF** — prints with the cover page and letterhead. (Add `?cover=0` to the print link to print without the cover.)
 - **Email** — type the client's email; the PDF is attached.
 - **🔗 Client acceptance link** — gives a link the client opens without signing in. They review the quotation and either **accept** with their name and signature or **decline** with a comment. You are notified at once and the result shows on the quotation. Use **Copy**, **Email with the quotation** or **Preview**.
 - Change **Status** to **Sent**, then **Accepted** or **Rejected** if you follow up by hand.
+
+<!--img-->
+
+**📷 Quotation buttons after saving**
+
+![Quotation buttons after saving](img/en/14-quote-actions.jpg)
+
+1. Print and PDF: the quotation with cover, letterhead and stamp.
+2. Email: sends it to the client with a PDF.
+3. After approval: Convert to project creates the project and copies the lines into the BOQ.
+4. Client acceptance link: the client accepts with a signature or declines.
+5. If you follow up by hand, set the status to sent, accepted or rejected and save.
+
+<!--/img-->
+<!--img-->
+
+**📷 Online acceptance link**
+
+![Online acceptance link](img/en/15-quote-link.jpg)
+
+1. The link the client opens without an account.
+2. Copy it, e.g. to send by WhatsApp.
+3. Or email it with the quotation directly.
+
+<!--/img-->
 
 ### 6.3 Convert to a project
 When the client accepts, open the quotation and press **Convert to project**. The project is created and the quotation lines are copied into the project's **BOQ**.
@@ -224,10 +429,51 @@ Either convert a quotation (6.3) or a tender (5.2), or:
 9. Phone attendance: **Site latitude**, **Site longitude**, **Site radius (m)** (default 300). The easiest way: open the project on your phone while on site and press **📍 Use my current location (while on site)**.
 10. **Notes** → **Save**.
 
+<!--img-->
+
+**📷 Project list**
+
+![Project list](img/en/16-projects.jpg)
+
+1. Add a new project.
+2. Click a project to open its full page.
+3. Export the list to Excel.
+
+<!--/img-->
+<!--img-->
+
+**📷 New project form**
+
+![New project form](img/en/17-project-new.jpg)
+
+1. Project code and name. The name is required; the code helps searching and reports.
+2. The client who owns the project.
+3. Emirate: used in box 1 of the VAT return.
+4. Contract value ex VAT and the retention % deducted from each invoice.
+5. Advance payment % and the recovery % per progress invoice.
+6. Handover date, the retention % released then, and the defects period for the rest.
+7. Site coordinates and radius for phone attendance.
+8. Save.
+
+<!--/img-->
+
 ### 7.2 The project page
 Click the project to open it. You see:
 - Figures: **Contract value**, **Approved variations**, **Revised value**, **Invoiced**, **Billed %**, **Collected**, **Receivable**, **Cost**, **Profit**, **Margin**.
 - Buttons: **Edit**, **Progress invoice from BOQ**, **+ Invoice**, **+ Expense**.
+
+<!--img-->
+
+**📷 Project page**
+
+![Project page](img/en/18-project-page.jpg)
+
+1. Live figures: contract, variations, invoiced and %, collected, receivable, cost, profit, margin.
+2. Edit the project or change its status.
+3. Issue a progress invoice from the BOQ completion.
+4. Record an expense on the project (next to it, + Invoice for a manual invoice).
+
+<!--/img-->
 
 ### 7.3 Bill of quantities (BOQ) and progress
 1. Press **+ Item**.
@@ -235,10 +481,49 @@ Click the project to open it. You see:
 3. **Save**. Click an item later to update **Completion %** as work progresses (site engineers can update completion straight from their project page).
 4. Below the table: **Budget vs actual** (budget cost against actual cost).
 
+<!--img-->
+
+**📷 BOQ and variation orders**
+
+![BOQ and variation orders](img/en/19-project-boq.jpg)
+
+1. Add a new BOQ item.
+2. Click any item to edit it or update its completion %.
+3. Totals: BOQ value, budget cost and overall progress.
+4. Add a variation order.
+
+<!--/img-->
+<!--img-->
+
+**📷 BOQ item window**
+
+![BOQ item window](img/en/20-boq-item.jpg)
+
+1. Item description (and the section above it to group items).
+2. Quantity and sell rate: they give the item value.
+3. Budget cost per unit: used in the budget and forecast.
+4. Completion %: update it as work progresses; the progress invoice bills the change since the last one.
+5. Save.
+
+<!--/img-->
+
 ### 7.4 Variation orders
 1. Press **+ Variation**.
 2. **Number**, **Date**, **Description**, **Amount (ex VAT, negative for omission)**, **Status** (Pending / Approved / Rejected).
 3. **Save**. Only **Approved** variations are added to the revised contract value.
+
+<!--img-->
+
+**📷 Variation order window**
+
+![Variation order window](img/en/21-variation.jpg)
+
+1. Variation number and date.
+2. Amount ex VAT. For an omission use a negative amount.
+3. Status: only Approved is added to the revised contract value.
+4. Save.
+
+<!--/img-->
 
 ### 7.5 Budget and forecast
 In the **Budget & forecast** card on the project page:
@@ -246,15 +531,51 @@ In the **Budget & forecast** card on the project page:
 2. Press **Save budget**.
 3. The card shows **Actual**, **Committed (POs & subcontracts)**, **Remaining**, **Forecast cost at completion** and **Forecast margin**. Forecast cost = actual so far + budget of the work not yet done. A warning appears when the forecast is over budget.
 
+<!--img-->
+
+**📷 Budget & forecast card**
+
+![Budget & forecast card](img/en/22-budget.jpg)
+
+1. After entering the figures press Save budget.
+2. Enter the budget per category (materials, labour, subcontract…). Next to it: actual, committed and remaining.
+3. Forecast cost at completion and forecast margin; a red warning shows when over budget.
+
+<!--/img-->
+
 ### 7.6 Weekly updates
 1. In **Weekly updates** press **+ Update**.
 2. Choose the status, **Progress %**, **Date**, and write **How is it going? (done, issues, next steps)**.
 3. **Save** — the budget, actual and forecast figures of that date are saved with the update.
 
+<!--img-->
+
+**📷 Weekly updates, notes and documents**
+
+![Weekly updates, notes and documents](img/en/24-weekly-notes.jpg)
+
+1. New weekly update: status, progress % and a summary.
+2. Notes: write a note; mention a colleague with @username to notify them.
+3. Attached documents: contract, drawings, permits, with expiry date.
+
+<!--/img-->
+
 ### 7.7 Advance payment and retention
 The **Advance payment & retention** card shows the advance invoiced, recovered and still to recover, and retention held, released, due at handover and after the defects period.
 - **Issue the advance payment invoice** — creates the tax invoice for the advance (VAT applies). It is recovered automatically from each progress invoice.
 - To release retention, record a receipt on the invoice and tick **This is a retention release** (section 9).
+
+<!--img-->
+
+**📷 Advance, retention and productivity**
+
+![Advance, retention and productivity](img/en/23-advance-retention.jpg)
+
+1. Advance: invoiced, recovered from progress invoices, remaining. Retention: held, released, due at handover and after the defects period.
+2. Revenue per worker-day per month against the target.
+3. Edit the target (AED per worker-day).
+
+<!--/img-->
 
 ### 7.8 Revenue per worker-day
 The card shows, per month: **Certified work** ÷ **Worker-days (attendance)** = **Per worker-day**, against the **Target**. Press **Edit target** to change it.
@@ -272,6 +593,18 @@ The card shows, per month: **Certified work** ÷ **Worker-days (attendance)** = 
 ## 8. Sales invoices
 
 Menu: **Sales invoices**.
+
+<!--img-->
+
+**📷 Sales invoice list**
+
+![Sales invoice list](img/en/25-invoices.jpg)
+
+1. New manual invoice (progress invoices are created from the project page).
+2. Balance owed by the client, including uncollected retention.
+3. Status: paid, partial, overdue, void…
+
+<!--/img-->
 
 ### 8.1 Progress invoice from the BOQ (recommended)
 1. Update the **Completion %** of the BOQ items (7.3).
@@ -294,6 +627,22 @@ Open the invoice:
 - **Issue credit note** — enter the reason; a credit note is created against the invoice (use it to reduce or cancel an invoice).
 - **Void** (administrator only) — enter the mandatory reason. Tax invoices are never deleted; they are voided or credited.
 
+<!--img-->
+
+**📷 An open progress invoice**
+
+![An open progress invoice](img/en/26-invoice.jpg)
+
+1. The project the invoice belongs to.
+2. Retention % deducted on this invoice.
+3. Totals, VAT and retention.
+4. Payment certificate and PDF: the IPC with previous, current and cumulative.
+5. Record payment when the client pays.
+6. Issue credit note to reduce or reverse the invoice.
+7. Void: administrator only, with a mandatory reason. Tax invoices are never deleted.
+
+<!--/img-->
+
 ---
 
 ## 9. Payments and receipts
@@ -310,6 +659,22 @@ Menu: **Payments** (or **Record payment** inside an invoice or expense).
 8. For a retention payment from the client tick **This is a retention release**.
 9. **Save**. To update a cheque later (e.g. it cleared), open it in the payments list.
 
+<!--img-->
+
+**📷 Record payment window**
+
+![Record payment window](img/en/27-payment.jpg)
+
+1. Type: receipt from a client, or payment to a supplier.
+2. The linked invoice or bill (only open ones, with their balance).
+3. Amount (the remaining balance is suggested).
+4. Method: transfer, cheque, cash, card; and the bank account if you have several.
+5. For cheques: date and status. A pending cheque is not counted in cash until it clears.
+6. Tick this if the payment is a retention release.
+7. Save.
+
+<!--/img-->
+
 ---
 
 ## 10. Ageing and statements of account
@@ -319,6 +684,29 @@ Menu: **Ageing & statements**.
 2. Balances are split by days past due. Retention not yet due is shown apart.
 3. Click a customer or supplier to open the **Statement of account**, choose **From** / **To**, then **Print** or **Email** (sent with a PDF).
 
+<!--img-->
+
+**📷 Ageing report**
+
+![Ageing report](img/en/28-ageing.jpg)
+
+1. The date ageing is calculated at.
+2. Balances split by days overdue: current, 1–30, 31–60, 61–90, 90+, and retention.
+3. Click a customer or supplier to open its statement.
+
+<!--/img-->
+<!--img-->
+
+**📷 Customer statement**
+
+![Customer statement](img/en/29-statement.jpg)
+
+1. Choose the period.
+2. Print the statement on the letterhead.
+3. Email it to the client with a PDF.
+
+<!--/img-->
+
 ---
 
 ## 11. Site diary
@@ -327,6 +715,20 @@ Menu: **Site diary**.
 1. **+ Add**.
 2. **Project**, **Date**, **Weather**, **Manpower**, **Work done**, **Issues / delays**, **Other notes**.
 3. **Save**. It prints on the letterhead with **🖨 Print on letterhead**.
+
+<!--img-->
+
+**📷 Site diary form**
+
+![Site diary form](img/en/30-sitediary.jpg)
+
+1. Project and date.
+2. Weather and manpower on site.
+3. Work done today in detail.
+4. Issues and delays (useful for claims later).
+5. Save.
+
+<!--/img-->
 
 ---
 
@@ -342,11 +744,38 @@ Menu: **RFQs**.
 6. **Save**.
 7. Press **Award + PO** under the chosen supplier — a purchase order is created automatically.
 
+<!--img-->
+
+**📷 RFQ and supplier comparison**
+
+![RFQ and supplier comparison](img/en/31-rfq.jpg)
+
+1. Required items: description, unit, quantity.
+2. One column per supplier: pick the supplier and type their rate per item. Totals are automatic.
+3. Add another supplier to compare.
+4. The lowest total is highlighted. Award + PO under the chosen supplier creates the purchase order at once.
+
+<!--/img-->
+
 ### 12.2 Purchase order
 Menu: **Purchase orders** (or created from the RFQ).
 1. **+ New PO**: **Supplier**, **Project**, **Date**, **Delivery date**, **VAT %**, items, **Terms**, **Notes**, **Status**.
 2. **Print** or **Email supplier**.
 3. When the goods arrive press **Receive → create bill** — this creates the supplier bill for the order value.
+
+<!--img-->
+
+**📷 Purchase order**
+
+![Purchase order](img/en/32-po.jpg)
+
+1. Supplier and project.
+2. Items, quantities and rates.
+3. Print the PO on the letterhead.
+4. Email it to the supplier.
+5. On delivery: creates the supplier bill for the order value.
+
+<!--/img-->
 
 ---
 
@@ -362,6 +791,22 @@ Menu: **Expenses & purchases** (or **+ Expense** on the project page).
 
 > Do not enter salaries here as "Labour" — payroll is booked by the Payroll module.
 
+<!--img-->
+
+**📷 Expense split across two projects**
+
+![Expense split across two projects](img/en/33-bill.jpg)
+
+1. Supplier.
+2. Category: sets the cost type in project reports (use Fixed asset purchase for assets).
+3. Amount ex VAT and the VAT as on the supplier invoice.
+4. Supplier invoice number for reference.
+5. Tick to split the expense across projects.
+6. Choose the projects and each %; the total must be 100% (shown in green).
+7. Save, then Record payment when you pay.
+
+<!--/img-->
+
 ---
 
 ## 14. Subcontracts and payment certificates
@@ -371,12 +816,36 @@ Menu: **Subcontracts & certificates**.
 ### 14.1 Subcontract
 1. **+ Add**: **Subcontractor**, **Project**, **Scope of work**, **Contract value (ex VAT)**, **Retention %**, **Advance payment**, **Status** → **Save**.
 
+<!--img-->
+
+**📷 Subcontract and its certificates**
+
+![Subcontract and its certificates](img/en/34-subcontract.jpg)
+
+1. New payment certificate for this subcontract.
+2. Previous certificates: cumulative, this period, retention, payable and status.
+
+<!--/img-->
+
 ### 14.2 Payment certificate
 1. Open the subcontract → **+ New certificate**.
 2. Enter **Work completed to date (cumulative, ex VAT)**, **Advance recovery**, **Deductions / back-charges**.
 3. The system shows **Previously certified**, **This period**, retention, VAT and **Payable now**.
 4. Press **Approve & book cost** — after approval it cannot be edited and the cost is booked to the project.
 5. Pay it from **Payments**.
+
+<!--img-->
+
+**📷 Subcontractor payment certificate**
+
+![Subcontractor payment certificate](img/en/35-subcert.jpg)
+
+1. Work done to date, cumulative (not only this period). The system works out This period = cumulative − previously certified.
+2. Advance recovery on this certificate (if any).
+3. Deductions and back-charges (materials supplied, penalties…). Below, the summary: previously certified, this period, retention, VAT and payable now.
+4. Approve & book cost: locks the certificate and books the cost to the project as payable to the subcontractor.
+
+<!--/img-->
 
 ---
 
@@ -389,6 +858,18 @@ Menu: **Stock**.
 
 > Stock tracks quantities and average cost only; material cost is booked through bills and purchase orders.
 
+<!--img-->
+
+**📷 Stock**
+
+![Stock](img/en/36-stock.jpg)
+
+1. Add a new item.
+2. Stock movement: receive, issue to project, or adjust.
+3. Quantities, average cost, value, and a flag under the reorder level.
+
+<!--/img-->
+
 ---
 
 ## 16. Assets and equipment
@@ -398,6 +879,17 @@ Menu: **Assets & equipment**.
 2. Depreciation is straight-line monthly from the purchase month; the list shows **Accum. dep.** and **Net book value**.
 3. Record the purchase bill with category **Fixed asset purchase** so it is not expensed in full.
 
+<!--img-->
+
+**📷 Assets & equipment**
+
+![Assets & equipment](img/en/38-assets.jpg)
+
+1. Add an asset (vehicle, plant, equipment).
+2. Accumulated depreciation and book value are calculated monthly.
+
+<!--/img-->
+
 ---
 
 ## 17. Petty cash
@@ -406,6 +898,18 @@ Menu: **Petty cash**.
 1. **+ Top up**: **Date**, **Amount**, **Note** → **Save**.
 2. **+ Cash expense**: **Date**, **Project**, **Category**, **Description**, **Amount (ex VAT)**, VAT → **Save**. It is booked as a project expense and paid from the float.
 3. The page shows the **Petty cash balance**. Keep a receipt or tax invoice for each expense.
+
+<!--img-->
+
+**📷 Petty cash**
+
+![Petty cash](img/en/37-petty.jpg)
+
+1. Top up the cash float.
+2. Cash expense on a project (booked as an expense with VAT).
+3. Remaining float balance.
+
+<!--/img-->
 
 ---
 
@@ -423,17 +927,84 @@ Menu: **Employees**.
 7. **Phone**, **Email**, **Emergency contact**, **Opening leave balance (days)**, **Notes**.
 8. **Save**. The list shows **Monthly total**, **Gratuity (est.)** and flags a missing IBAN.
 
+<!--img-->
+
+**📷 Employee list**
+
+![Employee list](img/en/40-employees.jpg)
+
+1. Add a new employee.
+2. Click an employee to open the full record.
+3. Estimated end-of-service gratuity to date.
+4. Shows “missing” in red when the IBAN is not entered.
+
+<!--/img-->
+<!--img-->
+
+**📷 New employee form**
+
+![New employee form](img/en/41-employee-new.jpg)
+
+1. Name as in the passport (required). Next to it the designation.
+2. 14-digit labour card number, Emirates ID, passport, nationality: needed for WPS and documents.
+3. Join date: leave and gratuity are calculated from it.
+4. Cost charged to: the project carrying the salary, or General for head office.
+5. Basic wage and allowances (housing, transport, other).
+6. Bank or exchange house, 9-digit routing code, IBAN: without them the employee is left out of the SIF.
+7. Expiry of Emirates ID, visa, passport and labour card: alerts come before they expire.
+8. Line manager: first to approve their leave.
+9. End of probation (max 6 months).
+10. Save.
+
+<!--/img-->
+
 ### 18.2 After saving — open the employee again
 - **Attached documents**: upload passport, visa, Emirates ID, contract… with expiry dates.
 - **Employee portal account**: type **Username** and **Password (6+ chars)** → **Create account**. (Or **Reset password** if it exists.)
 - **Onboarding & offboarding** → **Start onboarding**: tick the 12 steps as they are done (work permit and MOHRE contract, medical, Emirates ID, health insurance, ILOE, WPS salary account, safety induction…).
 - **Notes & follow-up** with `@mentions`.
 
+<!--img-->
+
+**📷 Bottom of the employee record**
+
+![Bottom of the employee record](img/en/42-employee-extras.jpg)
+
+1. Attached documents: upload passport, visa, contract with expiry.
+2. Employee portal account: username and password for their phone.
+3. Onboarding & offboarding: the onboarding checklist, and the settlement when leaving.
+
+<!--/img-->
+<!--img-->
+
+**📷 Onboarding checklist**
+
+![Onboarding checklist](img/en/43-onboarding.jpg)
+
+1. Tick each step when done; who did it and when is saved.
+2. The leaving & final settlement part (section 25).
+
+<!--/img-->
+
 ---
 
 ## 19. Attendance and overtime
 
 Menu: **Attendance & overtime**.
+
+<!--img-->
+
+**📷 Daily attendance page**
+
+![Daily attendance page](img/en/44-attendance.jpg)
+
+1. Choose the date.
+2. Clock in my crew, for workers without a phone.
+3. Day status per employee: present, absent, leave, sick, holiday, off.
+4. Overtime hours +25% (day) and +50% (night or rest day). They feed payroll.
+5. The project worked on (for salary cost allocation).
+
+<!--/img-->
 
 ### 19.1 Clock-in by phone (employee)
 1. The employee opens **My portal** on the phone and presses **Clock in** (and **Clock out** at the end of the day).
@@ -444,6 +1015,18 @@ Menu: **Attendance & overtime**.
 1. **Clock in my crew**.
 2. Choose **In** or **Out**, tick the names, **Record**. The current time is saved with your phone's location.
 3. HR only can enter a **Past time (HR correction)** (e.g. a forgotten clock-out).
+
+<!--img-->
+
+**📷 Clock in my crew**
+
+![Clock in my crew](img/en/45-crew.jpg)
+
+1. Choose In or Out.
+2. Tick the workers present.
+3. Record: the server time is saved with your phone location.
+
+<!--/img-->
 
 ### 19.3 Daily attendance sheet
 1. Choose the date. For each employee set **Status**, **OT +25%**, **OT +50%**, **Project**, **Note** — each row saves automatically.
@@ -461,11 +1044,49 @@ Menu: **Leave**.
 4. **Leave balances** shows per employee: months, accrued, opening, used, balance and sick days in the last 12 months. (2 days/month after 6 months, 30 days/year after a year.)
 5. Sick-leave pay is calculated automatically in payroll: 15 days full pay, 30 half pay, 45 unpaid per year of service; unpaid during probation.
 
+<!--img-->
+
+**📷 Leave page**
+
+![Leave page](img/en/46-leave.jpg)
+
+1. Record leave for an employee.
+2. Decide: approve or reject pending leave.
+3. Leave balances per employee.
+
+<!--/img-->
+<!--img-->
+
+**📷 Leave form**
+
+![Leave form](img/en/47-leave-new.jpg)
+
+1. Employee.
+2. Leave type: annual, sick, unpaid…
+3. From and to dates; the days are calculated.
+4. Reason.
+5. Save.
+
+<!--/img-->
+
 ---
 
 ## 21. Employee requests and salary advances
 
 Menu: **Employee requests**.
+
+<!--img-->
+
+**📷 Employee requests and advances**
+
+![Employee requests and advances](img/en/48-requests.jpg)
+
+1. File a request on behalf of an employee.
+2. Letter request (salary certificate, NOC…): Issue letter directly.
+3. Other requests (advance, renewal…): Decide.
+4. New advance with instalments deducted from salary automatically.
+
+<!--/img-->
 
 ### 21.1 Requests
 1. Employees request from the portal, or HR presses **Request on behalf**.
@@ -485,6 +1106,17 @@ Menu: **Approvals**. Shows the leave and requests that reached your level of the
 1. Review the request (and the employee's leave balance).
 2. **Approve** or **Reject** (with a note). After you approve it moves to the next level; the employee is told the final decision.
 
+<!--img-->
+
+**📷 Approvals page**
+
+![Approvals page](img/en/49-approvals.jpg)
+
+1. Approve: moves to the next level or is finally approved.
+2. Reject with a reason; the employee is told.
+
+<!--/img-->
+
 ---
 
 ## 23. Official letters
@@ -494,6 +1126,20 @@ Menu: **Official letters**.
 2. **Employee**, **Letter type** (Salary certificate, Employment certificate, No-objection certificate, Salary transfer letter, Experience certificate), **Addressed to (optional)**, **Purpose**.
 3. **Issue & print** — the letter gets a sequential reference number and prints on the bilingual official letterhead with stamp and signature. Review the wording before signing.
 4. Reprint later with **Print** or **PDF** from the list.
+
+<!--img-->
+
+**📷 New letter form**
+
+![New letter form](img/en/50-letter-new.jpg)
+
+1. Employee.
+2. Letter type: salary, employment, NOC, salary transfer, experience.
+3. Addressed to (e.g. the bank or embassy).
+4. Purpose (travel, loan…).
+5. Issue & print: gets a reference number and prints on the official letterhead with stamp.
+
+<!--/img-->
 
 ---
 
@@ -510,6 +1156,30 @@ Menu: **Payroll & WPS**. Monthly steps:
 7. After the transfer press **Mark salaries paid**. Salaries unpaid 15 days after month-end appear as a compliance alert.
 8. Employees see their payslips in the portal; **Excel** exports the sheet.
 
+<!--img-->
+
+**📷 Monthly payroll before finalizing**
+
+![Monthly payroll before finalizing](img/en/51-payroll.jpg)
+
+1. Choose the month.
+2. Generate month: pulls salaries, attendance, overtime, leave and advances. If data is missing (IBAN, routing code…), a red “Missing data / warnings” box appears above the table — fix it in the employee record first.
+3. Editable cells: days, overtime, bonus, deductions; the net recalculates.
+4. Finalize payroll: locks the month and books entries and the gratuity provision.
+
+<!--/img-->
+<!--img-->
+
+**📷 Finalized and paid payroll**
+
+![Finalized and paid payroll](img/en/52-payroll-final.jpg)
+
+1. Download the SIF and upload it to the bank or exchange house portal.
+2. After the transfer press Mark salaries paid; it shows Paid with the date.
+3. Export the sheet to Excel.
+
+<!--/img-->
+
 ---
 
 ## 25. Employee leaving and final settlement
@@ -520,16 +1190,51 @@ Open the employee → **Onboarding & offboarding** → **Leaving & final settlem
 3. Change the inputs and press **Recalculate** if needed; tick the offboarding checklist.
 4. **Complete & disable account** — the employee becomes "Left" and their system account is disabled.
 
+<!--img-->
+
+**📷 Leaving & final settlement**
+
+![Leaving & final settlement](img/en/53-offboarding.jpg)
+
+1. Enter the last day, reason, notice date and any deductions.
+2. Start offboarding & calculate: works out salary to the last day, leave pay, gratuity and advance.
+
+<!--/img-->
+
 ---
 
 ## 26. HR dashboard: approval chains and attendance rules
 
 Menu: **HR dashboard** — active employees, leave and requests waiting, who is on leave today, documents expiring within 60 days, and a monthly **Labour-law compliance** list (overtime limits, 7 days without rest, midday ban work, probation over 6 months, clock-ins outside the site).
 
+<!--img-->
+
+**📷 HR dashboard**
+
+![HR dashboard](img/en/54-hrdash.jpg)
+
+1. Active staff, pending leave and requests, who is on leave today.
+2. Documents expiring within 60 days.
+3. Labour-law compliance issues this month.
+
+<!--/img-->
+
 ### 26.1 Approval chains
 1. Under **Approval chains** set levels for **Leave** and **Employee requests**.
 2. Each level: **Approver** (line manager or a role) and threshold (**From days** for leave, **From amount** for requests).
 3. **Save**. Default: leave → line manager then HR; requests → HR, then admin from 5,000.
+
+<!--img-->
+
+**📷 Approval chains and attendance rules**
+
+![Approval chains and attendance rules](img/en/55-hr-rules.jpg)
+
+1. Approval chains: each level's approver and threshold (days or amount).
+2. Save the chains.
+3. Attendance rules: hours, rest day, outside-site clocking, Ramadan, midday ban.
+
+<!--/img-->
 
 ### 26.2 Attendance rules
 - **Daily working hours (max 8)**, **Break minutes**, **Weekly rest day**.
@@ -552,6 +1257,19 @@ The employee signs in with the account HR created (18.2) and lands on **My porta
 6. **Payslips** → **View / print**.
 7. Install it on the phone (section 32.3) to receive notifications.
 
+<!--img-->
+
+**📷 Employee portal on a phone**
+
+![Employee portal on a phone](img/en/56-portal.jpg)
+
+1. Big button to clock in and out with location.
+2. Request leave.
+3. Other request: salary certificate, NOC, advance…
+4. Leave balance. Further down: my requests, letters and payslips.
+
+<!--/img-->
+
 ---
 
 ## 28. Accounting
@@ -568,6 +1286,52 @@ Most entries are made automatically from invoices, bills, payments, payroll and 
   3. **Auto-match**, then **Match** the rest by hand (or **Unmatch**).
   4. Check that **Difference** is zero.
 
+<!--img-->
+
+**📷 Chart of accounts**
+
+![Chart of accounts](img/en/60-coa.jpg)
+
+1. New account.
+2. Click an account to edit its name.
+
+<!--/img-->
+<!--img-->
+
+**📷 Manual journal entry**
+
+![Manual journal entry](img/en/61-journal.jpg)
+
+1. Date and memo.
+2. Lines: pick the account and type debit or credit.
+3. Add a line.
+4. Saving requires debits to equal credits.
+
+<!--/img-->
+<!--img-->
+
+**📷 Financial statements**
+
+![Financial statements](img/en/62-financials.jpg)
+
+1. Period from / to.
+2. Show.
+3. Revenue, expenses, net profit; then trial balance, P&L and balance sheet.
+
+<!--/img-->
+<!--img-->
+
+**📷 Bank reconciliation**
+
+![Bank reconciliation](img/en/63-bank.jpg)
+
+1. Bank accounts.
+2. Import the bank statement (CSV or paste).
+3. Auto-match the lines.
+4. Statement balance, book balance and the difference (should be zero).
+
+<!--/img-->
+
 ---
 
 ## 29. Zoho Books link
@@ -580,6 +1344,17 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 5. **Send history** → **Retry failed**. The **Daily transactions report** lists what was invoiced, billed, received and paid each day.
 6. Standalone edition: use the **Zoho Books import files** instead.
 
+<!--img-->
+
+**📷 Zoho Books link**
+
+![Zoho Books link](img/en/64-zoho.jpg)
+
+1. Dry run: shows what would be created or updated in Zoho without writing anything. Once connected, Send to Zoho now appears next to it.
+2. Daily transactions report: what was invoiced, billed, received and paid each day.
+
+<!--/img-->
+
 ---
 
 ## 30. Tax and compliance
@@ -591,6 +1366,39 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 > The system is not officially certified by the FTA, MOHRE or the Central Bank. Review returns and the SIF file with your accountant and bank.
 
+<!--img-->
+
+**📷 VAT report**
+
+![VAT report](img/en/65-vat.jpg)
+
+1. Tax period.
+2. Sales, output and input VAT, net VAT.
+3. Sales by emirate for box 1 of the return.
+
+<!--/img-->
+<!--img-->
+
+**📷 Compliance & audit**
+
+![Compliance & audit](img/en/66-compliance.jpg)
+
+1. All alerts in one place: licence, ID and visa expiries, clients without TRN, late salaries, bounced cheques.
+2. Key deadlines: VAT return, corporate tax, salaries and record retention.
+3. E-invoicing readiness: invoices with missing data.
+
+<!--/img-->
+<!--img-->
+
+**📷 Documents**
+
+![Documents](img/en/67-documents.jpg)
+
+1. Company documents with expiry.
+2. Every attachment in the system.
+
+<!--/img-->
+
 ---
 
 ## 31. Tasks, notes and notifications
@@ -598,6 +1406,29 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 - **Tasks**: **+ Task** → **Task**, **Assignee**, **Due date**, **Status**, **Tag**, **Project**, **Details**, **Sub-tasks** → **Save**. Switch between **My tasks** and **All open tasks**.
 - **Notes**: on projects and employees, mention `@username` to notify a colleague.
 - **Notifications**: approvals, decisions, mentions and alerts. **Turn on notifications on this device** to receive them on the phone (on iPhone, add the app to the Home Screen first — iOS 16.4+). **Send a test**, **Mark all read**.
+
+<!--img-->
+
+**📷 New task**
+
+![New task](img/en/68-task-new.jpg)
+
+1. Task title.
+2. The assignee, who is notified.
+3. Due date.
+4. Related project.
+5. Save.
+
+<!--/img-->
+<!--img-->
+
+**📷 Notifications**
+
+![Notifications](img/en/69-notifications.jpg)
+
+1. Turn on notifications on this device (phone) to get approvals and alerts even when the app is closed. Below it is the list, with Mark all read when there are notifications.
+
+<!--/img-->
 
 ---
 
@@ -609,6 +1440,25 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
    - iPhone: Safari → Share → **Add to Home Screen**.
    - Android: browser menu → **Install app / Add to Home screen**.
    - When a new version is available, tap the banner to update.
+
+<!--img-->
+
+**📷 The system on a phone**
+
+![The system on a phone](img/en/70-mobile.jpg)
+
+1. The ☰ button opens the menu.
+
+<!--/img-->
+<!--img-->
+
+**📷 The menu on a phone**
+
+![The menu on a phone](img/en/71-mobile-menu.jpg)
+
+1. Pick a page from the menu.
+
+<!--/img-->
 
 ---
 
