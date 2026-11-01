@@ -6,6 +6,8 @@
 > set up the company → clients → tender → quotation → project → invoicing and collection → purchasing → HR and payroll → accounting and tax.
 > Button and menu names are written **in bold**, exactly as they appear in the English interface.
 >
+> **Searchable guide inside the system:** click **📘 User guide** in the side menu, or **❓ Help** on any page to open the part that explains it. Type any word in the search box (e.g. retention, add employee, SIF) to show only the matching sections, with the word highlighted.
+>
 > **Reading the screenshots:** every image is taken from the system itself with demo data. A red box marks the button or field, its number matches the numbered explanation under the image, and the arrow links each callout to its place on the screen.
 
 ---
@@ -62,7 +64,7 @@
 
 **📷 Sign-in screen**
 
-![Sign-in screen](img/en/02-login.jpg)
+![Sign-in screen](../public/guide/img/en/02-login.jpg)
 
 1. The username the administrator gave you.
 2. Your password. After 8 wrong attempts the account is locked for a while.
@@ -87,7 +89,7 @@
 
 **📷 The dashboard after signing in**
 
-![The dashboard after signing in](img/en/03-dashboard.jpg)
+![The dashboard after signing in](../public/guide/img/en/03-dashboard.jpg)
 
 1. The side menu: every section of the system grouped by area; you only see what your role allows. Language and Logout buttons are at its bottom.
 2. Company KPIs: active projects, contract value, invoiced, expenses, profit, cash, receivables and retention. Below: cash flow, compliance alerts, overdue invoices and profit per project.
@@ -109,7 +111,7 @@
 
 **📷 First-time setup screen**
 
-![First-time setup screen](img/en/01-setup.jpg)
+![First-time setup screen](../public/guide/img/en/01-setup.jpg)
 
 1. Type an administrator username, e.g. admin. You will use it every time you sign in.
 2. A strong password of at least 6 characters. Do not share it.
@@ -140,7 +142,7 @@ Menu: **Settings** → first card.
 
 **📷 Settings — company details**
 
-![Settings — company details](img/en/04-settings-company.jpg)
+![Settings — company details](../public/guide/img/en/04-settings-company.jpg)
 
 1. Company name in English and Arabic as on the licence; printed on every document.
 2. VAT TRN (15 digits). Without it tax invoices are not valid.
@@ -163,7 +165,7 @@ Menu: **Settings** → **Company identity: logo, stamp & signature**.
 
 **📷 Settings — company identity**
 
-![Settings — company identity](img/en/05-settings-brand.jpg)
+![Settings — company identity](../public/guide/img/en/05-settings-brand.jpg)
 
 1. Installs the Trigon logos and legal details in one click.
 2. Choose the stamp image (transparent PNG, up to 2 MB); it uploads at once and shows in the preview.
@@ -183,7 +185,7 @@ Menu: **Settings** → **Email sending**.
 
 **📷 Settings — email sending**
 
-![Settings — email sending](img/en/06-settings-email.jpg)
+![Settings — email sending](../public/guide/img/en/06-settings-email.jpg)
 
 1. Sending method: SMTP (username & password) or Microsoft 365 (best for Outlook mail). The fields change with your choice.
 2. The address clients and suppliers receive mail from, e.g. accounts@trigon.ae.
@@ -228,7 +230,7 @@ Menu: **Settings** → **Change password** → type the new password → **Chang
 
 **📷 Settings — users & roles**
 
-![Settings — users & roles](img/en/07-settings-users.jpg)
+![Settings — users & roles](../public/guide/img/en/07-settings-users.jpg)
 
 1. Opens the new-user form.
 2. Sets a new password for a user who forgot theirs.
@@ -241,7 +243,7 @@ Menu: **Settings** → **Change password** → type the new password → **Chang
 
 **📷 New user form**
 
-![New user form](img/en/08-user-new.jpg)
+![New user form](../public/guide/img/en/08-user-new.jpg)
 
 1. The username they will sign in with (no spaces).
 2. A temporary password (6+ characters). Ask them to change it in Settings.
@@ -276,7 +278,7 @@ Menu: **Clients & suppliers**. Do this before quotations, invoices and purchases
 
 **📷 Adding a client**
 
-![Adding a client](img/en/09-party-new.jpg)
+![Adding a client](../public/guide/img/en/09-party-new.jpg)
 
 1. Type: client, supplier or subcontractor. Decides where it appears (quotes & invoices, or purchasing).
 2. The legal name as on the licence (required).
@@ -296,7 +298,7 @@ Menu: **Tenders & opportunities**. The board shows each stage with its value, pl
 
 **📷 Tender board**
 
-![Tender board](img/en/10-tenders.jpg)
+![Tender board](../public/guide/img/en/10-tenders.jpg)
 
 1. Summary: open count, pipeline value, weighted value (value × probability), won this year, win rate.
 2. Each column is a stage (lead, invited, preparing, submitted, negotiation); each card is a tender. Click a card to open it.
@@ -321,7 +323,7 @@ Menu: **Tenders & opportunities**. The board shows each stage with its value, pl
 
 **📷 Tender window**
 
-![Tender window](img/en/11-tender-modal.jpg)
+![Tender window](../public/guide/img/en/11-tender-modal.jpg)
 
 1. The tender or opportunity title.
 2. The current stage. Change it as it moves; the card moves to the right column.
@@ -351,7 +353,7 @@ Menu: **Quotations**.
 
 **📷 Quotation list**
 
-![Quotation list](img/en/12-quotes.jpg)
+![Quotation list](../public/guide/img/en/12-quotes.jpg)
 
 1. New quotation.
 2. Click any quotation to open, edit, print or send it.
@@ -362,7 +364,7 @@ Menu: **Quotations**.
 
 **📷 New quotation form**
 
-![New quotation form](img/en/13-quote-new.jpg)
+![New quotation form](../public/guide/img/en/13-quote-new.jpg)
 
 1. Leave the number empty to get an automatic number from the prefix.
 2. Choose the client (it must exist in Clients & suppliers).
@@ -386,7 +388,7 @@ Open the quotation, then:
 
 **📷 Quotation buttons after saving**
 
-![Quotation buttons after saving](img/en/14-quote-actions.jpg)
+![Quotation buttons after saving](../public/guide/img/en/14-quote-actions.jpg)
 
 1. Print and PDF: the quotation with cover, letterhead and stamp.
 2. Email: sends it to the client with a PDF.
@@ -399,7 +401,7 @@ Open the quotation, then:
 
 **📷 Online acceptance link**
 
-![Online acceptance link](img/en/15-quote-link.jpg)
+![Online acceptance link](../public/guide/img/en/15-quote-link.jpg)
 
 1. The link the client opens without an account.
 2. Copy it, e.g. to send by WhatsApp.
@@ -433,7 +435,7 @@ Either convert a quotation (6.3) or a tender (5.2), or:
 
 **📷 Project list**
 
-![Project list](img/en/16-projects.jpg)
+![Project list](../public/guide/img/en/16-projects.jpg)
 
 1. Add a new project.
 2. Click a project to open its full page.
@@ -444,7 +446,7 @@ Either convert a quotation (6.3) or a tender (5.2), or:
 
 **📷 New project form**
 
-![New project form](img/en/17-project-new.jpg)
+![New project form](../public/guide/img/en/17-project-new.jpg)
 
 1. Project code and name. The name is required; the code helps searching and reports.
 2. The client who owns the project.
@@ -466,7 +468,7 @@ Click the project to open it. You see:
 
 **📷 Project page**
 
-![Project page](img/en/18-project-page.jpg)
+![Project page](../public/guide/img/en/18-project-page.jpg)
 
 1. Live figures: contract, variations, invoiced and %, collected, receivable, cost, profit, margin.
 2. Edit the project or change its status.
@@ -485,7 +487,7 @@ Click the project to open it. You see:
 
 **📷 BOQ and variation orders**
 
-![BOQ and variation orders](img/en/19-project-boq.jpg)
+![BOQ and variation orders](../public/guide/img/en/19-project-boq.jpg)
 
 1. Add a new BOQ item.
 2. Click any item to edit it or update its completion %.
@@ -497,7 +499,7 @@ Click the project to open it. You see:
 
 **📷 BOQ item window**
 
-![BOQ item window](img/en/20-boq-item.jpg)
+![BOQ item window](../public/guide/img/en/20-boq-item.jpg)
 
 1. Item description (and the section above it to group items).
 2. Quantity and sell rate: they give the item value.
@@ -516,7 +518,7 @@ Click the project to open it. You see:
 
 **📷 Variation order window**
 
-![Variation order window](img/en/21-variation.jpg)
+![Variation order window](../public/guide/img/en/21-variation.jpg)
 
 1. Variation number and date.
 2. Amount ex VAT. For an omission use a negative amount.
@@ -535,7 +537,7 @@ In the **Budget & forecast** card on the project page:
 
 **📷 Budget & forecast card**
 
-![Budget & forecast card](img/en/22-budget.jpg)
+![Budget & forecast card](../public/guide/img/en/22-budget.jpg)
 
 1. After entering the figures press Save budget.
 2. Enter the budget per category (materials, labour, subcontract…). Next to it: actual, committed and remaining.
@@ -552,7 +554,7 @@ In the **Budget & forecast** card on the project page:
 
 **📷 Weekly updates, notes and documents**
 
-![Weekly updates, notes and documents](img/en/24-weekly-notes.jpg)
+![Weekly updates, notes and documents](../public/guide/img/en/24-weekly-notes.jpg)
 
 1. New weekly update: status, progress % and a summary.
 2. Notes: write a note; mention a colleague with @username to notify them.
@@ -569,7 +571,7 @@ The **Advance payment & retention** card shows the advance invoiced, recovered a
 
 **📷 Advance, retention and productivity**
 
-![Advance, retention and productivity](img/en/23-advance-retention.jpg)
+![Advance, retention and productivity](../public/guide/img/en/23-advance-retention.jpg)
 
 1. Advance: invoiced, recovered from progress invoices, remaining. Retention: held, released, due at handover and after the defects period.
 2. Revenue per worker-day per month against the target.
@@ -598,7 +600,7 @@ Menu: **Sales invoices**.
 
 **📷 Sales invoice list**
 
-![Sales invoice list](img/en/25-invoices.jpg)
+![Sales invoice list](../public/guide/img/en/25-invoices.jpg)
 
 1. New manual invoice (progress invoices are created from the project page).
 2. Balance owed by the client, including uncollected retention.
@@ -631,7 +633,7 @@ Open the invoice:
 
 **📷 An open progress invoice**
 
-![An open progress invoice](img/en/26-invoice.jpg)
+![An open progress invoice](../public/guide/img/en/26-invoice.jpg)
 
 1. The project the invoice belongs to.
 2. Retention % deducted on this invoice.
@@ -663,7 +665,7 @@ Menu: **Payments** (or **Record payment** inside an invoice or expense).
 
 **📷 Record payment window**
 
-![Record payment window](img/en/27-payment.jpg)
+![Record payment window](../public/guide/img/en/27-payment.jpg)
 
 1. Type: receipt from a client, or payment to a supplier.
 2. The linked invoice or bill (only open ones, with their balance).
@@ -688,7 +690,7 @@ Menu: **Ageing & statements**.
 
 **📷 Ageing report**
 
-![Ageing report](img/en/28-ageing.jpg)
+![Ageing report](../public/guide/img/en/28-ageing.jpg)
 
 1. The date ageing is calculated at.
 2. Balances split by days overdue: current, 1–30, 31–60, 61–90, 90+, and retention.
@@ -699,7 +701,7 @@ Menu: **Ageing & statements**.
 
 **📷 Customer statement**
 
-![Customer statement](img/en/29-statement.jpg)
+![Customer statement](../public/guide/img/en/29-statement.jpg)
 
 1. Choose the period.
 2. Print the statement on the letterhead.
@@ -720,7 +722,7 @@ Menu: **Site diary**.
 
 **📷 Site diary form**
 
-![Site diary form](img/en/30-sitediary.jpg)
+![Site diary form](../public/guide/img/en/30-sitediary.jpg)
 
 1. Project and date.
 2. Weather and manpower on site.
@@ -748,7 +750,7 @@ Menu: **RFQs**.
 
 **📷 RFQ and supplier comparison**
 
-![RFQ and supplier comparison](img/en/31-rfq.jpg)
+![RFQ and supplier comparison](../public/guide/img/en/31-rfq.jpg)
 
 1. Required items: description, unit, quantity.
 2. One column per supplier: pick the supplier and type their rate per item. Totals are automatic.
@@ -767,7 +769,7 @@ Menu: **Purchase orders** (or created from the RFQ).
 
 **📷 Purchase order**
 
-![Purchase order](img/en/32-po.jpg)
+![Purchase order](../public/guide/img/en/32-po.jpg)
 
 1. Supplier and project.
 2. Items, quantities and rates.
@@ -795,7 +797,7 @@ Menu: **Expenses & purchases** (or **+ Expense** on the project page).
 
 **📷 Expense split across two projects**
 
-![Expense split across two projects](img/en/33-bill.jpg)
+![Expense split across two projects](../public/guide/img/en/33-bill.jpg)
 
 1. Supplier.
 2. Category: sets the cost type in project reports (use Fixed asset purchase for assets).
@@ -820,7 +822,7 @@ Menu: **Subcontracts & certificates**.
 
 **📷 Subcontract and its certificates**
 
-![Subcontract and its certificates](img/en/34-subcontract.jpg)
+![Subcontract and its certificates](../public/guide/img/en/34-subcontract.jpg)
 
 1. New payment certificate for this subcontract.
 2. Previous certificates: cumulative, this period, retention, payable and status.
@@ -838,7 +840,7 @@ Menu: **Subcontracts & certificates**.
 
 **📷 Subcontractor payment certificate**
 
-![Subcontractor payment certificate](img/en/35-subcert.jpg)
+![Subcontractor payment certificate](../public/guide/img/en/35-subcert.jpg)
 
 1. Work done to date, cumulative (not only this period). The system works out This period = cumulative − previously certified.
 2. Advance recovery on this certificate (if any).
@@ -862,7 +864,7 @@ Menu: **Stock**.
 
 **📷 Stock**
 
-![Stock](img/en/36-stock.jpg)
+![Stock](../public/guide/img/en/36-stock.jpg)
 
 1. Add a new item.
 2. Stock movement: receive, issue to project, or adjust.
@@ -883,7 +885,7 @@ Menu: **Assets & equipment**.
 
 **📷 Assets & equipment**
 
-![Assets & equipment](img/en/38-assets.jpg)
+![Assets & equipment](../public/guide/img/en/38-assets.jpg)
 
 1. Add an asset (vehicle, plant, equipment).
 2. Accumulated depreciation and book value are calculated monthly.
@@ -903,7 +905,7 @@ Menu: **Petty cash**.
 
 **📷 Petty cash**
 
-![Petty cash](img/en/37-petty.jpg)
+![Petty cash](../public/guide/img/en/37-petty.jpg)
 
 1. Top up the cash float.
 2. Cash expense on a project (booked as an expense with VAT).
@@ -931,7 +933,7 @@ Menu: **Employees**.
 
 **📷 Employee list**
 
-![Employee list](img/en/40-employees.jpg)
+![Employee list](../public/guide/img/en/40-employees.jpg)
 
 1. Add a new employee.
 2. Click an employee to open the full record.
@@ -943,7 +945,7 @@ Menu: **Employees**.
 
 **📷 New employee form**
 
-![New employee form](img/en/41-employee-new.jpg)
+![New employee form](../public/guide/img/en/41-employee-new.jpg)
 
 1. Name as in the passport (required). Next to it the designation.
 2. 14-digit labour card number, Emirates ID, passport, nationality: needed for WPS and documents.
@@ -968,7 +970,7 @@ Menu: **Employees**.
 
 **📷 Bottom of the employee record**
 
-![Bottom of the employee record](img/en/42-employee-extras.jpg)
+![Bottom of the employee record](../public/guide/img/en/42-employee-extras.jpg)
 
 1. Attached documents: upload passport, visa, contract with expiry.
 2. Employee portal account: username and password for their phone.
@@ -979,7 +981,7 @@ Menu: **Employees**.
 
 **📷 Onboarding checklist**
 
-![Onboarding checklist](img/en/43-onboarding.jpg)
+![Onboarding checklist](../public/guide/img/en/43-onboarding.jpg)
 
 1. Tick each step when done; who did it and when is saved.
 2. The leaving & final settlement part (section 25).
@@ -996,7 +998,7 @@ Menu: **Attendance & overtime**.
 
 **📷 Daily attendance page**
 
-![Daily attendance page](img/en/44-attendance.jpg)
+![Daily attendance page](../public/guide/img/en/44-attendance.jpg)
 
 1. Choose the date.
 2. Clock in my crew, for workers without a phone.
@@ -1020,7 +1022,7 @@ Menu: **Attendance & overtime**.
 
 **📷 Clock in my crew**
 
-![Clock in my crew](img/en/45-crew.jpg)
+![Clock in my crew](../public/guide/img/en/45-crew.jpg)
 
 1. Choose In or Out.
 2. Tick the workers present.
@@ -1048,7 +1050,7 @@ Menu: **Leave**.
 
 **📷 Leave page**
 
-![Leave page](img/en/46-leave.jpg)
+![Leave page](../public/guide/img/en/46-leave.jpg)
 
 1. Record leave for an employee.
 2. Decide: approve or reject pending leave.
@@ -1059,7 +1061,7 @@ Menu: **Leave**.
 
 **📷 Leave form**
 
-![Leave form](img/en/47-leave-new.jpg)
+![Leave form](../public/guide/img/en/47-leave-new.jpg)
 
 1. Employee.
 2. Leave type: annual, sick, unpaid…
@@ -1079,7 +1081,7 @@ Menu: **Employee requests**.
 
 **📷 Employee requests and advances**
 
-![Employee requests and advances](img/en/48-requests.jpg)
+![Employee requests and advances](../public/guide/img/en/48-requests.jpg)
 
 1. File a request on behalf of an employee.
 2. Letter request (salary certificate, NOC…): Issue letter directly.
@@ -1110,7 +1112,7 @@ Menu: **Approvals**. Shows the leave and requests that reached your level of the
 
 **📷 Approvals page**
 
-![Approvals page](img/en/49-approvals.jpg)
+![Approvals page](../public/guide/img/en/49-approvals.jpg)
 
 1. Approve: moves to the next level or is finally approved.
 2. Reject with a reason; the employee is told.
@@ -1131,7 +1133,7 @@ Menu: **Official letters**.
 
 **📷 New letter form**
 
-![New letter form](img/en/50-letter-new.jpg)
+![New letter form](../public/guide/img/en/50-letter-new.jpg)
 
 1. Employee.
 2. Letter type: salary, employment, NOC, salary transfer, experience.
@@ -1160,7 +1162,7 @@ Menu: **Payroll & WPS**. Monthly steps:
 
 **📷 Monthly payroll before finalizing**
 
-![Monthly payroll before finalizing](img/en/51-payroll.jpg)
+![Monthly payroll before finalizing](../public/guide/img/en/51-payroll.jpg)
 
 1. Choose the month.
 2. Generate month: pulls salaries, attendance, overtime, leave and advances. If data is missing (IBAN, routing code…), a red “Missing data / warnings” box appears above the table — fix it in the employee record first.
@@ -1172,7 +1174,7 @@ Menu: **Payroll & WPS**. Monthly steps:
 
 **📷 Finalized and paid payroll**
 
-![Finalized and paid payroll](img/en/52-payroll-final.jpg)
+![Finalized and paid payroll](../public/guide/img/en/52-payroll-final.jpg)
 
 1. Download the SIF and upload it to the bank or exchange house portal.
 2. After the transfer press Mark salaries paid; it shows Paid with the date.
@@ -1194,7 +1196,7 @@ Open the employee → **Onboarding & offboarding** → **Leaving & final settlem
 
 **📷 Leaving & final settlement**
 
-![Leaving & final settlement](img/en/53-offboarding.jpg)
+![Leaving & final settlement](../public/guide/img/en/53-offboarding.jpg)
 
 1. Enter the last day, reason, notice date and any deductions.
 2. Start offboarding & calculate: works out salary to the last day, leave pay, gratuity and advance.
@@ -1211,7 +1213,7 @@ Menu: **HR dashboard** — active employees, leave and requests waiting, who is 
 
 **📷 HR dashboard**
 
-![HR dashboard](img/en/54-hrdash.jpg)
+![HR dashboard](../public/guide/img/en/54-hrdash.jpg)
 
 1. Active staff, pending leave and requests, who is on leave today.
 2. Documents expiring within 60 days.
@@ -1228,7 +1230,7 @@ Menu: **HR dashboard** — active employees, leave and requests waiting, who is 
 
 **📷 Approval chains and attendance rules**
 
-![Approval chains and attendance rules](img/en/55-hr-rules.jpg)
+![Approval chains and attendance rules](../public/guide/img/en/55-hr-rules.jpg)
 
 1. Approval chains: each level's approver and threshold (days or amount).
 2. Save the chains.
@@ -1261,7 +1263,7 @@ The employee signs in with the account HR created (18.2) and lands on **My porta
 
 **📷 Employee portal on a phone**
 
-![Employee portal on a phone](img/en/56-portal.jpg)
+![Employee portal on a phone](../public/guide/img/en/56-portal.jpg)
 
 1. Big button to clock in and out with location.
 2. Request leave.
@@ -1290,7 +1292,7 @@ Most entries are made automatically from invoices, bills, payments, payroll and 
 
 **📷 Chart of accounts**
 
-![Chart of accounts](img/en/60-coa.jpg)
+![Chart of accounts](../public/guide/img/en/60-coa.jpg)
 
 1. New account.
 2. Click an account to edit its name.
@@ -1300,7 +1302,7 @@ Most entries are made automatically from invoices, bills, payments, payroll and 
 
 **📷 Manual journal entry**
 
-![Manual journal entry](img/en/61-journal.jpg)
+![Manual journal entry](../public/guide/img/en/61-journal.jpg)
 
 1. Date and memo.
 2. Lines: pick the account and type debit or credit.
@@ -1312,7 +1314,7 @@ Most entries are made automatically from invoices, bills, payments, payroll and 
 
 **📷 Financial statements**
 
-![Financial statements](img/en/62-financials.jpg)
+![Financial statements](../public/guide/img/en/62-financials.jpg)
 
 1. Period from / to.
 2. Show.
@@ -1323,7 +1325,7 @@ Most entries are made automatically from invoices, bills, payments, payroll and 
 
 **📷 Bank reconciliation**
 
-![Bank reconciliation](img/en/63-bank.jpg)
+![Bank reconciliation](../public/guide/img/en/63-bank.jpg)
 
 1. Bank accounts.
 2. Import the bank statement (CSV or paste).
@@ -1348,7 +1350,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 **📷 Zoho Books link**
 
-![Zoho Books link](img/en/64-zoho.jpg)
+![Zoho Books link](../public/guide/img/en/64-zoho.jpg)
 
 1. Dry run: shows what would be created or updated in Zoho without writing anything. Once connected, Send to Zoho now appears next to it.
 2. Daily transactions report: what was invoiced, billed, received and paid each day.
@@ -1370,7 +1372,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 **📷 VAT report**
 
-![VAT report](img/en/65-vat.jpg)
+![VAT report](../public/guide/img/en/65-vat.jpg)
 
 1. Tax period.
 2. Sales, output and input VAT, net VAT.
@@ -1381,7 +1383,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 **📷 Compliance & audit**
 
-![Compliance & audit](img/en/66-compliance.jpg)
+![Compliance & audit](../public/guide/img/en/66-compliance.jpg)
 
 1. All alerts in one place: licence, ID and visa expiries, clients without TRN, late salaries, bounced cheques.
 2. Key deadlines: VAT return, corporate tax, salaries and record retention.
@@ -1392,7 +1394,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 **📷 Documents**
 
-![Documents](img/en/67-documents.jpg)
+![Documents](../public/guide/img/en/67-documents.jpg)
 
 1. Company documents with expiry.
 2. Every attachment in the system.
@@ -1411,7 +1413,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 **📷 New task**
 
-![New task](img/en/68-task-new.jpg)
+![New task](../public/guide/img/en/68-task-new.jpg)
 
 1. Task title.
 2. The assignee, who is notified.
@@ -1424,7 +1426,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 **📷 Notifications**
 
-![Notifications](img/en/69-notifications.jpg)
+![Notifications](../public/guide/img/en/69-notifications.jpg)
 
 1. Turn on notifications on this device (phone) to get approvals and alerts even when the app is closed. Below it is the list, with Mark all read when there are notifications.
 
@@ -1445,7 +1447,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 **📷 The system on a phone**
 
-![The system on a phone](img/en/70-mobile.jpg)
+![The system on a phone](../public/guide/img/en/70-mobile.jpg)
 
 1. The ☰ button opens the menu.
 
@@ -1454,7 +1456,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 **📷 The menu on a phone**
 
-![The menu on a phone](img/en/71-mobile-menu.jpg)
+![The menu on a phone](../public/guide/img/en/71-mobile-menu.jpg)
 
 1. Pick a page from the menu.
 

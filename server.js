@@ -259,7 +259,7 @@ function sessionUser(req) {
 }
 
 // ---- http -----------------------------------------------------------------
-const MIME = { '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME = { '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
 const gzipOk = res => zlib.gzipSync && /\bgzip\b/.test((res.req && res.req.headers['accept-encoding']) || '');
 const send = (res, code, body, headers = {}) => {
   const isObj = typeof body === 'object' && !Buffer.isBuffer(body);

@@ -24,6 +24,7 @@ self.addEventListener('fetch', e => {
   }
   if (url.pathname.startsWith('/api/')) return;                                          // data: always live
   if (url.pathname.startsWith('/q/') || url.pathname.startsWith('/pub/')) return;           // client-facing quotation pages: always from the server
+  if (url.pathname.includes('/guide/')) return;                                            // the user guide is its own page (and large images): straight from the server
   if (req.mode === 'navigate') { e.respondWith(caches.match('index.html').then(r => r || fetch(req))); return; }   // hash routes → one page
   e.respondWith(caches.match(req, { ignoreSearch: true }).then(r => r || fetch(req).then(res => {
     if (res.ok && url.pathname.startsWith('/fonts/')) caches.open(CACHE).then(c => c.put(req, res.clone()));

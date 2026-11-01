@@ -352,9 +352,9 @@ def build(lang):
         out = []
         for b in bs:
             img = b[2]
-            if not os.path.exists(f'{D}/img/{lang}/{img}.jpg'): print('no image', lang, img); continue
+            if not os.path.exists(f'{D}/../public/guide/img/{lang}/{img}.jpg'): print('no image', lang, img); continue
             cap = b[3] if lang == 'ar' else b[4]
-            out += ['<!--img-->', '', f'**{"📷 " + cap}**', '', f'![{cap}](img/{lang}/{img}.jpg)', '']
+            out += ['<!--img-->', '', f'**{"📷 " + cap}**', '', f'![{cap}](../public/guide/img/{lang}/{img}.jpg)', '']
             n = 0
             for k, (a, e) in enumerate(b[5], 1):
                 if a is None: continue

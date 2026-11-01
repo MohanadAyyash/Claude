@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const path = require('path'), fs = require('fs');
 const BASE = process.env.BASE || 'http://localhost:3999';
-const OUT = path.join(__dirname, '..', '..', 'docs', 'img');
+const OUT = path.join(__dirname, '..', '..', 'public', 'guide', 'img');
 // find an element: {sel} css, or {text} visible text (exact first, then starts-with), optional {in} css scope, {nth}
 async function rectOf(page, s) {
   return page.evaluate(s => {
