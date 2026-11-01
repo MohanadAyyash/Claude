@@ -90,23 +90,41 @@ PAGES.rfq = async () => {
 // ---- purchase orders ---------------------------------------------------------------------------
 window.poModal = guard(async (id, preset = {}) => {
   const [parties, projects] = await Promise.all([api('GET', 'parties'), api('GET', 'projects')]);
-  const row = id ? await api('GET', 'purchase_orders/' + id) : null, e = itemsEditor(row?.items || []);
-  const r = row || { date: today(), vat_pct: S.vat_pct || 5, status: 'draft', terms: 'Delivery to site. Payment 30 days from invoice.', ...preset };
+  const row = id ? await api('GET', 'purchase_orders/' + id) : null;
+  const r = row || { date: today(), vat_pct: S.vat_registered === '0' ? 0 : (S.vat_pct || 5), status: 'draft', payment_terms: '60 days from invoice', terms: '', ...preset };
+  // order lines: item code, description, unit, qty, unit price, discount %, VAT — net amount after the discount
+  const line = (i = {}) => `<tr><td style="width:90px"><input data-k="code" placeholder="${tr('الكود', 'Code')}" value="${esc(i.code || '')}"></td><td><textarea data-k="description" rows="1" placeholder="${tr('الوصف', 'Description')}" style="min-height:34px">${esc(i.description || '')}</textarea></td>
+    <td style="width:62px"><input data-k="unit" value="${esc(i.unit || '')}" placeholder="${tr('الوحدة', 'Unit')}"></td><td style="width:80px"><input data-k="qty" type="number" step="any" value="${i.qty ?? 1}"></td><td style="width:95px"><input data-k="rate" type="number" step="any" value="${i.rate ?? 0}"></td>
+    <td style="width:66px"><input data-k="disc" type="number" step="any" value="${i.disc ?? 0}"></td><td style="width:95px"><select data-k="vat">${Object.entries(VATC).map(([k, v]) => `<option value="${k}" ${(i.vat || 'std') === k ? 'selected' : ''}>${tr(...v)}</option>`).join('')}</select></td><td class="n" style="width:100px" data-amt></td><td style="width:28px"><button type="button" class="x">×</button></td></tr>`;
+  const e = { html: `<div class="tw items docitems"><table><thead><tr><th>${tr('كود الصنف', 'Item code')}</th><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('سعر الوحدة', 'Unit price')}</th><th>${tr('خصم %', 'Disc. %')}</th><th>${tr('الضريبة', 'VAT')}</th><th class="n">${tr('الصافي', 'Net amount')}</th><th></th></tr></thead><tbody id="items">${((row?.items || []).length ? row.items : [{}]).map(line).join('')}</tbody></table></div>
+    <button type="button" class="btn sec sm" id="addrow" style="margin-top:6px">+ ${tr('بند', 'Line')}</button>` };
   const head = [
     { k: 'party_id', ar: 'المورد', en: 'Supplier', type: 'select', options: refOpts(parties.filter(p => p.type !== 'client'), p => p.name, false) },
     { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`) },
     { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' }, { k: 'delivery_date', ar: 'تاريخ التسليم', en: 'Delivery date', type: 'date' },
-    { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' },
+    { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' }, { k: 'payment_terms', ar: 'شروط الدفع', en: 'Terms of payment' },
+    { k: 'deliver_to', ar: 'مكان التسليم', en: 'Deliver to' }, { k: 'site_contact', ar: 'مسؤول الاستلام بالموقع (الاسم / الجوال)', en: 'Site contact (name / mobile)' },
+    { k: 'valid_from', ar: 'مدة الاتفاقية من', en: 'Agreement period from', type: 'date' }, { k: 'valid_to', ar: 'إلى', en: 'to', type: 'date' },
+    { k: 'pr_ref', ar: 'رقم طلب الشراء الداخلي (PR)', en: 'Purchase request ref. (PR)' }, { k: 'quote_ref', ar: 'مرجع عرض سعر المورد', en: 'Supplier quotation ref.' },
     { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['draft', tr('مسودة', 'Draft')], ['sent', tr(...STATUS.sent)], ['received', tr(...STATUS.received)], ['closed', tr(...STATUS.closed)], ['cancelled', tr(...STATUS.cancelled)]] }];
   const m = modal(`<h2>${tr('أمر شراء', 'Purchase order')} ${esc(r.number || '')} ${row ? tag(r.status) : ''}</h2><div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>${e.html}<div class="totals" id="tot"></div>
-    <div class="f2" style="margin-top:10px">${field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms)}${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}</div>
+    <div class="f2" style="margin-top:10px">${field({ k: 'terms', ar: 'شروط خاصة بهذا الأمر', en: 'Special conditions for this order', type: 'textarea' }, r.terms)}${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}</div>
+    <p class="muted">${tr('الملاحظات الثابتة والشروط العامة (صفحة ثانية) تُطبع تلقائياً من الإعدادات.', 'The standard notes and the general conditions (second page) print from Settings.')}</p>
     <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button>${row ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button><button class="btn sec" id="mail">${tr('إرسال للمورد', 'Email supplier')}</button>${row.bill_id ? '' : `<button class="btn sec" id="rcv">${tr('استلام وإنشاء فاتورة مورد', 'Receive → create bill')}</button>`}` : ''}
     <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && !row.bill_id ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`, true);
-  bindDoc(m, e.row, 1, false);
+  const calc = () => {
+    let sub = 0, gross = 0, std = 0; m.querySelectorAll('#items tr').forEach(t => { const q = +$('[data-k=qty]', t).value || 0, rt = +$('[data-k=rate]', t).value || 0, d = +$('[data-k=disc]', t).value || 0, a = q * rt * (1 - d / 100);
+      gross += q * rt; sub += a; if ($('[data-k=vat]', t).value === 'std') std += a; $('[data-amt]', t).textContent = money(a); });
+    const vat = std * (+val(m, 'vat_pct') || 0) / 100;
+    $('#tot', m).innerHTML = `${gross - sub > 0.004 ? `<div><span>${tr('مجموع الخصم', 'Total discount')}</span><span>${money(gross - sub)}</span></div>` : ''}<div><span>${tr('الإجمالي قبل الضريبة', 'Total excl. VAT')}</span><span>${money(sub)}</span></div><div><span>${tr('الضريبة', 'VAT')}</span><span>${money(vat)}</span></div><div class="t"><span>${tr('الإجمالي', 'Total')}</span><span>${money(sub + vat)}</span></div>`;
+  };
+  m.addEventListener('input', calc); m.addEventListener('click', ev => { if (ev.target.classList.contains('x')) { ev.target.closest('tr').remove(); calc(); } });
+  $('#addrow', m).onclick = () => { $('#items', m).insertAdjacentHTML('beforeend', line()); calc(); }; calc();
+  const readLines = () => [...m.querySelectorAll('#items tr')].map(t => ({ code: $('[data-k=code]', t).value, description: $('[data-k=description]', t).value, unit: $('[data-k=unit]', t).value, qty: +$('[data-k=qty]', t).value || 0, rate: +$('[data-k=rate]', t).value || 0, disc: +$('[data-k=disc]', t).value || 0, vat: $('[data-k=vat]', t).value })).filter(i => i.description || i.rate);
   if (row && window.docsPanel) docsPanel(m, 'purchase_order', row.id, canOps('purchase_orders'));
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
-    const b = { items: readItems(m) }; head.forEach(f => b[f.k] = val(m, f.k)); b.terms = val(m, 'terms'); b.notes = val(m, 'notes');
+    const b = { items: readLines() }; head.forEach(f => b[f.k] = val(m, f.k)); b.terms = val(m, 'terms'); b.notes = val(m, 'notes');
     if (!b.party_id) throw new Error(tr('اختر المورد', 'Select a supplier'));
     row ? await api('PUT', 'purchase_orders/' + row.id, b) : await api('POST', 'purchase_orders', b); closeModal(); render();
   });

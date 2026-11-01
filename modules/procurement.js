@@ -13,17 +13,22 @@ module.exports = ctx => {
   const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
   // subcontract terms printed on the payment certificate; VAT basis: 'gross' (on the work value) or 'net' (after retention and contra charges)
   [['agreement_no', 'TEXT'], ['agreement_date', 'TEXT'], ['start_date', 'TEXT'], ['completion_date', 'TEXT'], ['eot_date', 'TEXT'], ['variations', 'REAL DEFAULT 0'], ['vat_basis', "TEXT DEFAULT 'gross'"], ['contra_uplift', 'REAL DEFAULT 0']].forEach(([c, d]) => addCol('subcontracts', c, d));
+  [['deliver_to', 'TEXT'], ['site_contact', 'TEXT'], ['payment_terms', 'TEXT'], ['valid_from', 'TEXT'], ['valid_to', 'TEXT'], ['pr_ref', 'TEXT'], ['quote_ref', 'TEXT']].forEach(([c, d]) => addCol('purchase_orders', c, d));
   [['period_to', 'TEXT'], ['materials', 'REAL DEFAULT 0'], ['release', 'REAL DEFAULT 0'], ['app_ref', 'TEXT'], ['cost_codes', 'TEXT'], ['vat_basis', 'TEXT']].forEach(([c, d]) => addCol('sub_certs', c, d));   // vat_basis: fixed when the certificate is created
   Object.assign(TABLES, {
     rfqs: { cols: ['number', 'date', 'project_id', 'description', 'items', 'quotes', 'status', 'awarded_party_id'], json: ['items', 'quotes'], prefix: 'RFQ' },
-    purchase_orders: { cols: ['number', 'date', 'party_id', 'project_id', 'rfq_id', 'delivery_date', 'status', 'items', 'vat_pct', 'terms', 'notes'], num: ['vat_pct'], json: ['items'], prefix: 'PO' },
+    purchase_orders: { cols: ['number', 'date', 'party_id', 'project_id', 'rfq_id', 'delivery_date', 'status', 'items', 'vat_pct', 'terms', 'notes', 'deliver_to', 'site_contact', 'payment_terms', 'valid_from', 'valid_to', 'pr_ref', 'quote_ref'], num: ['vat_pct'], json: ['items'], prefix: 'PO' },
     subcontracts: { cols: ['project_id', 'party_id', 'description', 'contract_value', 'retention_pct', 'advance', 'status', 'agreement_no', 'agreement_date', 'start_date', 'completion_date', 'eot_date', 'variations', 'vat_basis', 'contra_uplift'], num: ['contract_value', 'retention_pct', 'advance', 'variations', 'contra_uplift'] },
   });
   const name = (t, id) => (id ? db.prepare(`SELECT name FROM ${t} WHERE id=?`).get(id)?.name : null);
   const json = (s, d = []) => { try { return JSON.parse(s || ''); } catch { return d; } };
   const notFound = () => { const e = new Error('not found'); e.status = 404; throw e; };
 
-  const poView = r => { const items = parseItems(r), t = C.docTotals(items, r.vat_pct); return { ...r, items, ...t, supplier_name: name('parties', r.party_id), supplier_trn: db.prepare('SELECT trn FROM parties WHERE id=?').get(r.party_id)?.trn, project_name: name('projects', r.project_id) }; };
+  // line discount %: the totals use the net unit price (rate less discount)
+  const netItems = items => items.map(i => ({ ...i, rate: round((+i.rate || 0) * (1 - (+i.disc || 0) / 100) * 10000) / 10000 }));
+  ctx.poNet = netItems;
+  const poView = r => { const items = parseItems(r), t = C.docTotals(netItems(items), r.vat_pct), gross = round(items.reduce((x, i) => x + (+i.qty || 0) * (+i.rate || 0), 0));
+    return { ...r, items, ...t, gross, discount: round(gross - t.subtotal), supplier_name: name('parties', r.party_id), supplier_trn: db.prepare('SELECT trn FROM parties WHERE id=?').get(r.party_id)?.trn, project_name: name('projects', r.project_id) }; };
   const rfqView = r => {
     const items = json(r.items), quotes = json(r.quotes).map(q => ({ ...q, supplier_name: name('parties', q.party_id), total: round(items.reduce((s, it, i) => s + (+it.qty || 0) * (+(q.rates || [])[i] || 0), 0)), complete: items.every((_, i) => +(q.rates || [])[i] > 0) }));
     const priced = quotes.filter(q => q.complete); const low = priced.length ? Math.min(...priced.map(q => q.total)) : null;
@@ -62,16 +67,63 @@ module.exports = ctx => {
   }
 
   // ---- printable ----
+  const PO_NOTES = 'Purchase order number to be shown on all delivery notes and invoices.\nInvoices must show the TRN of the supplier and of the purchaser.\nMaterials are subject to inspection and approval on delivery.\nDeliveries as per call-off by the site team.';
+const PO_CONDITIONS = `1. Order. This purchase order, its attachments and these conditions form the whole agreement. Any quotation terms of the supplier apply only where written into this order.
+
+2. Prices. Prices are fixed for the agreement period and include packing, transport and delivery to the place stated, unless the order says otherwise. No price increase is accepted without the purchaser's written approval.
+
+3. Quantities. Quantities may be increased or reduced by the purchaser at the same unit prices.
+
+4. Delivery. Goods are delivered on the dates or call-offs given by the purchaser, with a delivery note showing the order number. The purchaser may cancel undelivered quantities if delivery is late.
+
+5. Quality and inspection. Goods must match the order, the approved samples and submittals, and the project specifications, and are subject to inspection and approval by the purchaser, the consultant and the client. Rejected goods are replaced or removed at the supplier's cost.
+
+6. Documents. Test certificates, certificates of origin, warranties, manuals and safety data sheets required by the project are supplied with the goods at no extra cost.
+
+7. Warranty. The supplier warrants the goods against defects in materials and workmanship for twelve months from use, or longer where the main contract requires, and replaces defective goods promptly.
+
+8. Invoicing and payment. Invoices quote the order number and both TRNs and are paid as per the terms of payment stated in this order after the goods are received and approved. Amounts owed by the supplier to the purchaser may be set off against payments.
+
+9. Ownership and risk. Ownership passes on delivery or payment, whichever is earlier; risk passes on acceptance at the delivery point.
+
+10. Health, safety and environment. The supplier follows the site HSE rules and applicable UAE regulations when delivering to site.
+
+11. Confidentiality. Information received from the purchaser in connection with this order is kept confidential.
+
+12. Assignment. The supplier may not assign or sub-contract this order without the purchaser's written consent.
+
+13. Termination. The purchaser may terminate the order in writing if the supplier fails to perform, becomes insolvent, or if the related works are cancelled; delivered and accepted goods are paid for.
+
+14. Law. This order is governed by the laws of the Emirate of Dubai and the federal laws of the UAE.`;
   ctx.renderers.purchase_orders = id => {
     const r = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(id); if (!r) notFound();
-    const po = poView(r), S = getSettings(), td = '';
-    const rows = po.items.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.description)}</td><td>${esc(i.unit)}</td><td class="n">${money(i.qty)}</td><td class="n">${money(i.rate)}</td><td>${i.vat === 'zero' ? '0%' : i.vat === 'exempt' ? 'Exempt' : po.vat_pct + '%'}</td><td class="n">${money(i.qty * i.rate)}</td></tr>`).join('');
-    return { title: `Purchase Order ${po.number}`, filename: po.number, label: 'Authorised signatory / المفوّض بالتوقيع', receiver: 'Supplier acknowledgement / تأكيد المورد', body: `<h2 class="t">Purchase Order / أمر شراء — ${esc(po.number)}</h2>
-      <div class="box"><b>Supplier / المورد:</b> ${esc(po.supplier_name || '')} ${po.supplier_trn ? `(TRN ${esc(po.supplier_trn)})` : ''}<br><b>Project / المشروع:</b> ${esc(po.project_name || '—')}<br><b>Date:</b> ${esc(po.date)} &nbsp; <b>Delivery:</b> ${esc(po.delivery_date || '—')}</div>
-      <table><thead><tr><th>#</th><th>Description</th><th>Unit</th><th class="n">Qty</th><th class="n">Unit price</th><th>VAT</th><th class="n">Amount (${esc(S.currency || 'AED')})</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="tot"><div><span>Total excl. VAT</span><span>${money(po.subtotal)}</span></div><div><span>VAT ${po.vat_pct}%</span><span>${money(po.vat)}</span></div><div class="t"><span>Total</span><span>${money(po.total)}</span></div></div>
-      ${po.terms ? `<p><b>Terms:</b><br>${esc(po.terms).replace(/\n/g, '<br>')}</p>` : ''}${po.notes ? `<p><b>Notes:</b><br>${esc(po.notes).replace(/\n/g, '<br>')}</p>` : ''}` };
+    const po = poView(r), S = getSettings(), cur = S.currency || 'AED', sup = db.prepare('SELECT * FROM parties WHERE id=?').get(r.party_id) || {}, p = db.prepare('SELECT * FROM projects WHERE id=?').get(r.project_id) || {};
+    const row = (k, v) => v ? `<tr><td>${k}</td><td>${v}</td></tr>` : '';
+    const vt = i => (i.vat === 'zero' ? '0' : i.vat === 'exempt' ? 'Ex.' : String(+r.vat_pct || 0));
+    const lines = po.items.map((i, n) => { const net = (+i.rate || 0) * (1 - (+i.disc || 0) / 100);
+      return `<tr><td>${n + 1}</td><td class="mono">${esc(i.code || '')}</td><td>${esc(i.description || '').replace(/\n/g, '<br>')}</td><td>${esc(i.unit || '')}</td><td class="n">${money(i.qty)}</td><td class="n">${money(i.rate)}</td><td class="n">${+i.disc ? (+i.disc).toFixed(2) : '0.00'}</td><td class="n">${money(net)}</td><td class="n">${money((+i.qty || 0) * net)}</td><td class="n">${vt(i)}</td></tr>`; }).join('');
+    const notes = String(S.po_notes || PO_NOTES).split('\n').map(x => x.trim()).filter(Boolean);
+    const cond = String(S.po_conditions === undefined ? PO_CONDITIONS : S.po_conditions).trim();   // Settings: empty = no conditions page
+    const period = r.valid_from || r.valid_to ? `${esc(r.valid_from || '…')} to ${esc(r.valid_to || '…')}` : '';
+    return { title: `Purchase Order ${po.number}`, filename: po.number, ref: po.number, date: r.date, legal: true, label: 'Signed and sealed for the purchaser', receiver: 'Signed and sealed for the supplier',
+      body: `<style>.pol{width:100%;table-layout:fixed;font-size:8pt}.pol th{font-size:6.3pt;letter-spacing:0;white-space:normal;padding:1.2mm .8mm}.pol td{padding:1.4mm .8mm;word-wrap:break-word}
+        .pot{display:flex;justify-content:space-between;gap:8mm;margin-top:3mm;page-break-inside:avoid}.pot .tot{flex:none}.pot .terms{flex:1;font-size:8.5pt}.pot .terms table td{border:0;padding:.6mm 0}.pot .terms td:first-child{color:#8A8578;width:38%}
+        .pon{font-size:8pt;margin:3mm 0 0;padding-inline-start:4mm}.pon li{margin:.6mm 0}.cond{column-count:2;column-gap:8mm;font-size:7.5pt;line-height:1.45;text-align:justify}.cond h3{column-span:all;text-align:center;font-size:10pt;margin:0 0 3mm}</style>
+      <h2 class="t">PURCHASE ORDER</h2>
+      <div class="info"><div><h4>Supplier</h4><div class="nm">${esc(sup.name || '')}</div>${sup.address ? `<div class="muted">${esc(sup.address)}</div>` : ''}
+          <table style="margin-top:1mm"><tbody>${row('Phone', esc(sup.phone || ''))}${row('Email', esc(sup.email || ''))}${row('TRN', esc(sup.trn || ''))}</tbody></table></div>
+        <div><h4>Order details</h4><table><tbody>${row('PO no.', `<b class="mono">${esc(po.number)}</b>`)}${row('Date', esc(r.date))}${row('Purchaser', esc(S.legal_name || S.company_name || ''))}${row('Purchaser TRN', esc(S.trn || ''))}
+          ${row('Project', esc(`${p.code ? p.code + ' — ' : ''}${p.name || ''}`))}${row('PR ref.', esc(r.pr_ref || ''))}${row('Your quotation', esc(r.quote_ref || ''))}</tbody></table></div></div>
+      <table class="pol"><colgroup>${[4, 10, 31, 6, 8, 9, 6, 9, 11, 6].map(w => `<col style="width:${w}%">`).join('')}</colgroup>
+        <thead><tr><th>SR</th><th>Item code</th><th>Description</th><th>Unit</th><th class="n">Qty</th><th class="n">Unit price</th><th class="n">Disc.<br>%</th><th class="n">Net unit<br>price</th><th class="n">Net amount<br>${esc(cur)}</th><th class="n">VAT<br>%</th></tr></thead><tbody>${lines}</tbody></table>
+      <div class="pot"><div class="terms"><table><tbody>${row('Terms of payment', esc(r.payment_terms || ''))}${row('Delivery date', esc(r.delivery_date || ''))}${row('Deliver to', esc([r.deliver_to, r.site_contact].filter(Boolean).join(' — ')))}${row('Agreement period', period)}</tbody></table></div>
+        <div class="tot">${po.discount ? `<div><span>Total order discount</span><span>${money(po.discount)}</span></div>` : ''}<div><span>Total excluding VAT</span><span>${money(po.subtotal)}</span></div><div><span>Total VAT amount</span><span>${money(po.vat)}</span></div><div class="t"><span>TOTAL ${esc(cur)}</span><span>${money(po.total)}</span></div></div></div>
+      <p style="font-size:8.5pt;margin:2mm 0 0"><b>${esc(amountInWords(po.total, cur))}</b></p>
+      ${r.terms ? `<p style="font-size:8.5pt;margin:3mm 0 0"><b>Special conditions:</b><br>${esc(r.terms).replace(/\n/g, '<br>')}</p>` : ''}${r.notes ? `<p style="font-size:8.5pt;margin:2mm 0 0"><b>Notes:</b><br>${esc(r.notes).replace(/\n/g, '<br>')}</p>` : ''}
+      <ul class="pon">${notes.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`,
+      after: `${cond ? `<div class="cond"><h3>GENERAL CONDITIONS OF PURCHASE</h3>${esc(cond).replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>').replace(/^/, '<p>')}</p></div>` : ''}` };
   };
+
   ctx.renderers.sub_certs = id => {
     const r = db.prepare('SELECT * FROM sub_certs WHERE id=?').get(id); if (!r) notFound();
     const c = certView(r), S = getSettings(), sub = c.sub, cur = S.currency || 'AED', p = db.prepare('SELECT * FROM projects WHERE id=?').get(sub.project_id) || {};
@@ -107,6 +159,7 @@ module.exports = ctx => {
   return {
     async handle(req, res, url, [a, b, c], me) {
       const m = req.method;
+      if (a === 'po-defaults' && m === 'GET') return send(res, 200, { notes: PO_NOTES, conditions: PO_CONDITIONS }), true;   // Settings shows the standard texts until they are changed
       if (a === 'rfqs' && m === 'GET') { const rows = db.prepare('SELECT * FROM rfqs ORDER BY id DESC').all().map(rfqView); return send(res, 200, b ? rows.find(r => r.id === +b) || null : rows), true; }
       if (a === 'purchase_orders' && m === 'GET') { const rows = db.prepare('SELECT * FROM purchase_orders ORDER BY id DESC').all().map(poView); return send(res, 200, b ? rows.find(r => r.id === +b) || null : rows), true; }
       if (a === 'subcontracts' && m === 'GET') { const rows = db.prepare('SELECT * FROM subcontracts ORDER BY id DESC').all().map(subView); return send(res, 200, b ? rows.find(r => r.id === +b) || null : rows), true; }
