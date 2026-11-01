@@ -1,6 +1,8 @@
 // Procurement (RFQ -> comparison -> purchase order -> bill) and subcontractor payment certificates.
 const { esc, money } = require('../lib/render');
 
+const { amountInWords } = require('../lib/words');
+
 module.exports = ctx => {
   const { db, send, bad, audit, readBody, getSettings, today, round, C, nextNumber, TABLES, parseItems } = ctx;
   db.exec(`
@@ -8,10 +10,14 @@ module.exports = ctx => {
   CREATE TABLE IF NOT EXISTS purchase_orders(id INTEGER PRIMARY KEY, number TEXT, date TEXT, party_id INTEGER, project_id INTEGER, rfq_id INTEGER, delivery_date TEXT, status TEXT DEFAULT 'draft', items TEXT DEFAULT '[]', vat_pct REAL DEFAULT 5, terms TEXT, notes TEXT, bill_id INTEGER);
   CREATE TABLE IF NOT EXISTS subcontracts(id INTEGER PRIMARY KEY, project_id INTEGER, party_id INTEGER, description TEXT, contract_value REAL DEFAULT 0, retention_pct REAL DEFAULT 0, advance REAL DEFAULT 0, status TEXT DEFAULT 'active');
   CREATE TABLE IF NOT EXISTS sub_certs(id INTEGER PRIMARY KEY, number TEXT, subcontract_id INTEGER, date TEXT, cumulative REAL DEFAULT 0, retention_pct REAL DEFAULT 0, advance_recovery REAL DEFAULT 0, deductions REAL DEFAULT 0, vat_pct REAL DEFAULT 5, status TEXT DEFAULT 'draft', notes TEXT, bill_id INTEGER);`);
+  const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
+  // subcontract terms printed on the payment certificate; VAT basis: 'gross' (on the work value) or 'net' (after retention and contra charges)
+  [['agreement_no', 'TEXT'], ['agreement_date', 'TEXT'], ['start_date', 'TEXT'], ['completion_date', 'TEXT'], ['eot_date', 'TEXT'], ['variations', 'REAL DEFAULT 0'], ['vat_basis', "TEXT DEFAULT 'gross'"], ['contra_uplift', 'REAL DEFAULT 0']].forEach(([c, d]) => addCol('subcontracts', c, d));
+  [['period_to', 'TEXT'], ['materials', 'REAL DEFAULT 0'], ['release', 'REAL DEFAULT 0'], ['app_ref', 'TEXT'], ['cost_codes', 'TEXT'], ['vat_basis', 'TEXT']].forEach(([c, d]) => addCol('sub_certs', c, d));   // vat_basis: fixed when the certificate is created
   Object.assign(TABLES, {
     rfqs: { cols: ['number', 'date', 'project_id', 'description', 'items', 'quotes', 'status', 'awarded_party_id'], json: ['items', 'quotes'], prefix: 'RFQ' },
     purchase_orders: { cols: ['number', 'date', 'party_id', 'project_id', 'rfq_id', 'delivery_date', 'status', 'items', 'vat_pct', 'terms', 'notes'], num: ['vat_pct'], json: ['items'], prefix: 'PO' },
-    subcontracts: { cols: ['project_id', 'party_id', 'description', 'contract_value', 'retention_pct', 'advance', 'status'], num: ['contract_value', 'retention_pct', 'advance'] },
+    subcontracts: { cols: ['project_id', 'party_id', 'description', 'contract_value', 'retention_pct', 'advance', 'status', 'agreement_no', 'agreement_date', 'start_date', 'completion_date', 'eot_date', 'variations', 'vat_basis', 'contra_uplift'], num: ['contract_value', 'retention_pct', 'advance', 'variations', 'contra_uplift'] },
   });
   const name = (t, id) => (id ? db.prepare(`SELECT name FROM ${t} WHERE id=?`).get(id)?.name : null);
   const json = (s, d = []) => { try { return JSON.parse(s || ''); } catch { return d; } };
@@ -29,12 +35,30 @@ module.exports = ctx => {
     return { ...s, party_name: name('parties', s.party_id), project_name: name('projects', s.project_id), certified: round(Math.max(0, ...approved.map(c => c.cumulative))),
       retention_held: round(approved.reduce((x, c) => x + c.retention, 0)), advance_recovered: round(approved.reduce((x, c) => x + c.advance_recovery, 0)), certs: certs.length };
   };
+  // Cumulative, as on a main contractor's PC: (A) work done + materials − advance recovered to date; (B) retention + contra charges
+  // − retention released + previous payments; net this certificate = A − B. VAT 'gross': on the work value of the period less contra
+  // charges (retention still taxed now); 'net': on the net amount (retention taxed when released).
   function certView(c) {
-    const sub = db.prepare('SELECT * FROM subcontracts WHERE id=?').get(c.subcontract_id) || {};
-    const prev = db.prepare('SELECT cumulative FROM sub_certs WHERE subcontract_id=? AND id<? ORDER BY id DESC LIMIT 1').get(c.subcontract_id, c.id)?.cumulative || 0;
-    const gross = round(c.cumulative - prev), retention = round(gross * c.retention_pct / 100), taxable = round(gross - c.deductions), vat = round(taxable * c.vat_pct / 100);
-    return { ...c, previous: prev, gross_this: gross, retention, taxable, vat, payable_now: round(taxable - retention - c.advance_recovery + vat),
-      contract_value: sub.contract_value, party_id: sub.party_id, project_id: sub.project_id, supplier_name: name('parties', sub.party_id), project_name: name('projects', sub.project_id), description: sub.description };
+    const sub = db.prepare('SELECT * FROM subcontracts WHERE id=?').get(c.subcontract_id) || {}, basis = (c.vat_basis || 'gross') === 'net' ? 'net' : 'gross';
+    const all = db.prepare('SELECT * FROM sub_certs WHERE subcontract_id=? ORDER BY id').all(c.subcontract_id), upto = all.filter(x => x.id <= c.id);
+    let prevCum = 0, prevMat = 0; const runs = [];
+    for (const x of upto) {
+      const g = round((+x.cumulative || 0) - prevCum), mt = round((+x.materials || 0) - prevMat), ret = round((g + mt) * (+x.retention_pct || 0) / 100);
+      const rel = round(+x.release || 0), con = round(+x.deductions || 0), adv = round(+x.advance_recovery || 0);
+      const net = round(g + mt - adv - ret - con + rel), pct = +x.vat_pct || 0;
+      const vat = round(((x.vat_basis || 'gross') === 'net' ? net : g + mt - con) * pct / 100);   // older certificates: gross
+      runs.push({ id: x.id, g, mt, ret, rel, con, adv, net, vat }); prevCum = +x.cumulative || 0; prevMat = +x.materials || 0;
+    }
+    const me = runs[runs.length - 1] || { g: 0, mt: 0, ret: 0, rel: 0, con: 0, adv: 0, net: 0, vat: 0 }, before = runs.slice(0, -1), sum = (a, k) => round(a.reduce((t, r) => t + r[k], 0));
+    const retention_cum = sum(runs, 'ret'), contra_cum = sum(runs, 'con'), release_cum = sum(runs, 'rel'), adv_rec_cum = sum(runs, 'adv');
+    const prev_payments = sum(before, 'net'), prev_vat = sum(before, 'vat'), materials = round(+c.materials || 0), cumulative = round(+c.cumulative || 0);
+    const A = round(cumulative + materials - adv_rec_cum), B = round(retention_cum + contra_cum - release_cum + prev_payments);
+    const prev = before.length ? (+all.find(x => x.id === before[before.length - 1].id).cumulative || 0) : 0;
+    const vatPctSub = +c.vat_pct || 0, contractVat = round(((+sub.contract_value || 0) + (+sub.variations || 0)) * vatPctSub / 100);
+    return { ...c, previous: prev, gross_this: me.g, materials_this: me.mt, retention: me.ret, release: me.rel, contra_this: me.con, taxable: round(me.g + me.mt - me.con), vat: me.vat, payable_now: round(me.net + me.vat),
+      net_this: me.net, A, B, retention_cum, contra_cum, release_cum, adv_rec_cum, advance: +sub.advance || 0, adv_balance: round((+sub.advance || 0) - adv_rec_cum), prev_payments, prev_vat, vat_cum: round(prev_vat + me.vat), basis,
+      contract_value: +sub.contract_value || 0, variations: +sub.variations || 0, contract_vat: contractVat, adjusted: round((+sub.contract_value || 0) + (+sub.variations || 0) + contractVat), sub,
+      party_id: sub.party_id, project_id: sub.project_id, supplier_name: name('parties', sub.party_id), project_name: name('projects', sub.project_id), description: sub.description };
   }
 
   // ---- printable ----
@@ -50,11 +74,34 @@ module.exports = ctx => {
   };
   ctx.renderers.sub_certs = id => {
     const r = db.prepare('SELECT * FROM sub_certs WHERE id=?').get(id); if (!r) notFound();
-    const c = certView(r), S = getSettings(), row = (a, v, b) => `<tr${b ? ' style="font-weight:700"' : ''}><td>${a}</td><td class="n">${money(v)}</td></tr>`;
-    return { title: `Payment Certificate ${c.number}`, filename: c.number, label: 'Approved by / اعتمد', receiver: 'Subcontractor / مقاول الباطن', body: `<h2 class="t">Subcontractor Payment Certificate / شهادة دفع مقاول باطن — ${esc(c.number)}</h2>
-      <div class="box"><b>Subcontractor:</b> ${esc(c.supplier_name || '')}<br><b>Project:</b> ${esc(c.project_name || '')}<br><b>Scope:</b> ${esc(c.description || '')}<br><b>Date:</b> ${esc(c.date)} · <b>Contract value:</b> ${money(c.contract_value)}</div>
-      <table><tbody>${row('Work completed to date (cumulative)', c.cumulative)}${row('Less: previously certified', -c.previous)}${row('Certified this period', c.gross_this, 1)}${row('Less: other deductions / back-charges', -c.deductions)}${row(`Less: retention ${c.retention_pct}%`, -c.retention)}${row('Less: advance recovery', -c.advance_recovery)}${row(`Add: VAT ${c.vat_pct}%`, c.vat)}${row(`Net payable now (${esc(S.currency || 'AED')})`, c.payable_now, 1)}</tbody></table>
-      ${c.notes ? `<p>${esc(c.notes)}</p>` : ''}` };
+    const c = certView(r), S = getSettings(), sub = c.sub, cur = S.currency || 'AED', p = db.prepare('SELECT * FROM projects WHERE id=?').get(sub.project_id) || {};
+    const seq = db.prepare('SELECT COUNT(*) n FROM sub_certs WHERE subcontract_id=? AND id<=?').get(r.subcontract_id, r.id).n;
+    const m = v => money(v), neg = v => (v ? '(' + money(v) + ')' : '-'), dash = v => (v ? money(v) : '-');
+    const L = (k, v, cls = '') => `<tr class="${cls}"><td>${k}</td><td class="n">${v}</td></tr>`, D = (k, v) => `<tr><td>${k}</td><td>${v || '<span class="muted">—</span>'}</td></tr>`;
+    const signers = String(S.sub_cert_signatories || 'Quantity Surveyor, Site Engineer, Project Manager, General Manager').split(',').map(x => x.trim()).filter(Boolean);
+    const codes = String(r.cost_codes || '').split(/\n|·|;/).map(x => x.trim()).filter(Boolean);
+    const vatTxt = c.basis === 'net' ? 'on the net amount (this certificate)' : 'on the value of work done (this certificate)';
+    const words = amountInWords(c.payable_now, cur);
+    return { title: `Payment Certificate ${c.number}`, filename: c.number, ref: c.number, date: r.date, stamp: false, signature: false, legal: true,
+      body: `<style>.pcb{width:100%;border-collapse:collapse;font-size:8.5pt;margin-bottom:2.5mm}.pcb>tbody>tr>td{border:.6pt solid #1F3A5F;vertical-align:top;padding:1.2mm 2.2mm;width:50%}
+        .pcb table{font-size:8.5pt}.pcb table td{border:0;padding:.45mm 0}.pcb table td:first-child{color:#55606e}.pcb tr.b td{font-weight:700;color:#1F3A5F!important;border-top:.6pt solid #1F3A5F}.pcb tr.hl td{font-weight:800;font-size:9.5pt;color:#1F3A5F!important;background:#F2F1EE}
+        .pch{text-align:center;margin:-2mm 0 2mm}.pch h2{margin:0;font-size:13pt;letter-spacing:.4px}.pch div{font-size:8.5pt;color:#8A8578}
+        .vs{width:100%;border-collapse:collapse;font-size:8pt;margin-top:1.5mm}.vs td,.vs th{border:.6pt solid #1F3A5F!important;padding:1mm 1.5mm;text-align:center;color:#1F3A5F;text-transform:none;letter-spacing:0;font-size:8pt}
+        .sg{display:grid;grid-template-columns:repeat(${Math.min(4, signers.length) || 1},1fr);border:.6pt solid #1F3A5F;margin-top:3mm;page-break-inside:avoid}.sg div{border-inline-end:.6pt solid #1F3A5F;height:19mm;font-size:7.5pt;font-weight:700;text-align:center;padding-top:1.5mm}.sg div:last-child{border-inline-end:0}
+        .wd{font-size:8.5pt;font-weight:700;background:#F2F1EE;border:.6pt solid #1F3A5F;padding:1.5mm 2.2mm}</style>
+      <div class="pch"><h2>PAYMENT CERTIFICATE FOR SUBCONTRACTOR</h2><div>Date of issue: <b>${esc(r.date)}</b></div></div>
+      <table class="pcb"><tbody><tr><td><table><tbody>${D('Certificate no.', `<b>${seq}</b> <span class="mono muted">${esc(c.number)}</span>`)}${D('Project / main contract', esc(p.main_contract || `${p.code ? p.code + ' — ' : ''}${p.name || ''}`))}${D('Sub-contractor', `<b>${esc(c.supplier_name || '')}</b>`)}${D('Sub-contract works', esc(sub.description || ''))}</tbody></table></td>
+        <td><table><tbody>${D('For works up to', `<b>${esc(r.period_to || '')}</b>`)}${D('Contract no.', esc(p.code || p.client_contract_ref || ''))}${D('Sub-contract agreement no.', esc([sub.agreement_no, sub.agreement_date && 'dated ' + sub.agreement_date].filter(Boolean).join(', ')))}</tbody></table></td></tr>
+      <tr><td><table><tbody>${L('Net contract value', m(c.contract_value))}${L('Total of variations', dash(c.variations))}${L(`Value added tax (VAT) ${+r.vat_pct || 0}%`, m(c.contract_vat))}${L('Adjusted contract value', m(c.adjusted), 'b')}</tbody></table></td>
+        <td><table><tbody>${D('Commencement date', esc(sub.start_date || ''))}${D('Completion date', esc(sub.completion_date || ''))}${D('Extension of time', esc(sub.eot_date ? 'yes' : ''))}${D('Extended completion date', esc(sub.eot_date || ''))}</tbody></table></td></tr>
+      <tr><td><table><tbody>${L('Value of work done', m(c.cumulative))}${L('Materials on site', dash(c.materials))}${L('Advance payment', dash(c.advance))}${L('Adv. payment — recovery', c.adv_rec_cum ? neg(c.adv_rec_cum) : '-')}${L('Adv. payment — balance to recover', dash(c.adv_balance))}${L('Certified amount (A)', m(c.A), 'b')}</tbody></table></td>
+        <td>${codes.length ? `<table><tbody><tr><td colspan="2"><b>Cost codes</b></td></tr>${codes.map(x => { const k = x.match(/^(\S+)\s+(.*)$/); return k ? L(esc(k[1]), esc(k[2])) : `<tr><td colspan="2">${esc(x)}</td></tr>`; }).join('')}<tr class="b"><td>Total</td><td class="n">${m(c.cumulative)}</td></tr></tbody></table>` : ''}</td></tr>
+      <tr><td><table><tbody><tr><td colspan="2"><b>Deductions</b></td></tr>${L(`Retention (${+r.retention_pct || 0}%)`, m(c.retention_cum))}${L('Contra charges', dash(c.contra_cum))}${L('Release of retention', c.release_cum ? neg(c.release_cum) : '-')}${L('Previous payments (without VAT)', m(c.prev_payments))}${L('Total deductions (B)', m(c.B), 'b')}
+          ${L('NET AMOUNT (A − B)', m(c.net_this), 'b')}${L(`Add VAT (${+r.vat_pct || 0}%) ${vatTxt}`, m(c.vat))}${L(`NET AMOUNT CERTIFIED INCLUDING VAT (${esc(cur)})`, m(c.payable_now), 'hl')}</tbody></table>
+          <table class="vs"><tbody><tr><td rowspan="2" style="text-align:start"><b>Summary of ${+r.vat_pct || 0}% VAT</b></td><td>Previous</td><td>This certificate</td><td>Cumulative</td></tr><tr><td class="mono">${m(c.prev_vat)}</td><td class="mono">${m(c.vat)}</td><td class="mono">${m(c.vat_cum)}</td></tr></tbody></table></td>
+        <td><b>Notes:</b><ol style="margin:1mm 0;padding-inline-start:5mm">${r.app_ref ? `<li>This PC is for ${esc(r.app_ref)}${r.period_to ? `, period ending ${esc(r.period_to)}` : ''}.</li>` : ''}${c.contra_this ? `<li>Contra charges this certificate: ${m(c.contra_this)}${sub.contra_uplift ? ` (cost plus ${+sub.contra_uplift}% uplift)` : ''}.</li>` : ''}${r.notes ? `<li>${esc(r.notes).replace(/\n/g, '<br>')}</li>` : ''}</ol></td></tr></tbody></table>
+      <div class="wd">(${esc(words)})</div>
+      <div class="sg">${signers.map(x => `<div>${esc(x)}</div>`).join('')}</div>` };
   };
 
   return {
@@ -108,9 +155,12 @@ module.exports = ctx => {
         const f = { cumulative: +body.cumulative, retention_pct: body.retention_pct === undefined || body.retention_pct === '' ? sub.retention_pct : +body.retention_pct, advance_recovery: +body.advance_recovery || 0, deductions: +body.deductions || 0, vat_pct: body.vat_pct === undefined || body.vat_pct === '' ? (+getSettings().vat_pct || 5) : +body.vat_pct };
         if (!(f.cumulative >= prev)) bad(`Cumulative work must be at least the previous certificate (${money(prev)})`);
         if (f.retention_pct < 0 || f.retention_pct > 100) bad('Retention % must be between 0 and 100');
-        if (id) { db.prepare('UPDATE sub_certs SET date=?,cumulative=?,retention_pct=?,advance_recovery=?,deductions=?,vat_pct=?,notes=? WHERE id=?').run(body.date || cur.date, f.cumulative, f.retention_pct, f.advance_recovery, f.deductions, f.vat_pct, body.notes ?? cur.notes, id); return send(res, 200, { ok: 1 }), true; }
-        const r = db.prepare('INSERT INTO sub_certs(number,subcontract_id,date,cumulative,retention_pct,advance_recovery,deductions,vat_pct,notes) VALUES(?,?,?,?,?,?,?,?,?)')
-          .run(nextNumber('sub_certs', 'SC'), subId, body.date || today(), f.cumulative, f.retention_pct, f.advance_recovery, f.deductions, f.vat_pct, body.notes || '');
+        const ex = k => (body[k] !== undefined ? body[k] : cur ? cur[k] : null);
+        Object.assign(f, { period_to: ex('period_to') || null, materials: +ex('materials') || 0, release: +ex('release') || 0, app_ref: ex('app_ref') || '', cost_codes: ex('cost_codes') || '' });
+        if (f.materials < 0 || f.release < 0 || f.deductions < 0 || f.advance_recovery < 0) bad('Amounts cannot be negative');
+        if (id) { db.prepare('UPDATE sub_certs SET date=?,cumulative=?,retention_pct=?,advance_recovery=?,deductions=?,vat_pct=?,notes=?,period_to=?,materials=?,release=?,app_ref=?,cost_codes=?,vat_basis=? WHERE id=?').run(body.date || cur.date, f.cumulative, f.retention_pct, f.advance_recovery, f.deductions, f.vat_pct, body.notes ?? cur.notes, f.period_to, f.materials, f.release, f.app_ref, f.cost_codes, sub.vat_basis === 'net' ? 'net' : 'gross', id); return send(res, 200, { ok: 1 }), true; }
+        const r = db.prepare('INSERT INTO sub_certs(number,subcontract_id,date,cumulative,retention_pct,advance_recovery,deductions,vat_pct,notes,period_to,materials,release,app_ref,cost_codes,vat_basis) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+          .run(nextNumber('sub_certs', 'SC'), subId, body.date || today(), f.cumulative, f.retention_pct, f.advance_recovery, f.deductions, f.vat_pct, body.notes || '', f.period_to, f.materials, f.release, f.app_ref, f.cost_codes, sub.vat_basis === 'net' ? 'net' : 'gross');
         audit(req, 'create', 'sub_certs', Number(r.lastInsertRowid), `subcontract ${subId}`);
         return send(res, 200, { id: Number(r.lastInsertRowid) }), true;
       }
@@ -119,9 +169,10 @@ module.exports = ctx => {
         if (raw.status === 'approved') bad('Already approved');
         if (db.prepare("SELECT 1 FROM sub_certs WHERE subcontract_id=? AND id<? AND status='draft'").get(raw.subcontract_id, raw.id)) bad('Approve the earlier certificate first');
         const v = certView(raw);
-        if (v.gross_this <= 0) bad('Nothing certified in this period');
+        if (v.gross_this <= 0 && v.materials_this <= 0 && v.release <= 0 && v.contra_this <= 0) bad('Nothing certified in this period');
+        // the cost of the period (work + materials − contra charges) with the VAT as certified; a retention release is no new cost (VAT on it when the basis is 'net')
         const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)')
-          .run(raw.date, v.party_id, v.project_id, 'subcontract', `Payment certificate ${raw.number} — ${v.description || ''}`, v.taxable, v.vat, raw.number);
+          .run(raw.date, v.party_id, v.project_id, 'subcontract', `Payment certificate ${raw.number} — ${v.description || ''}${v.release > 0 ? ` (retention released ${money(v.release)})` : ''}`, v.taxable, v.vat, raw.number);
         if (v.advance_recovery > 0) db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,notes) VALUES('out',?,?,'offset',?,?,?)").run(raw.date, v.advance_recovery, 'advance recovery', Number(bill.lastInsertRowid), `Advance recovered — ${raw.number}`);
         db.prepare("UPDATE sub_certs SET status='approved', bill_id=? WHERE id=?").run(Number(bill.lastInsertRowid), raw.id);
         audit(req, 'approve', 'sub_certs', raw.id, `${raw.number} → bill ${bill.lastInsertRowid}`);

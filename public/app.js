@@ -681,11 +681,11 @@ PAGES.compliance = async () => {
 // ---- settings ---------------------------------------------------------------
 PAGES.settings = async () => {
   const s = await api('GET', 'settings'), admin = ME.role === 'admin';
-  const F = [['company_name', 'اسم الشركة (إنجليزي)', 'Company name (English)'], ['company_name_ar', 'اسم الشركة (عربي)', 'Company name (Arabic)'], ['trn', 'الرقم الضريبي للقيمة المضافة (TRN) — ١٥ رقم', 'VAT TRN (15 digits)'], ['ct_trn', 'رقم تسجيل ضريبة الشركات', 'Corporate tax TRN'],
+  const F = [['company_name', 'اسم الشركة (إنجليزي)', 'Company name (English)'], ['company_name_ar', 'اسم الشركة (عربي)', 'Company name (Arabic)'], ['legal_name', 'الاسم القانوني كما في الرخصة وشهادة الضريبة (يُطبع أعلى الفواتير الضريبية)', 'Legal name as on the trade licence / TRN certificate (top of tax invoices)'], ['trn', 'الرقم الضريبي للقيمة المضافة (TRN) — ١٥ رقم', 'VAT TRN (15 digits)'], ['ct_trn', 'رقم تسجيل ضريبة الشركات', 'Corporate tax TRN'],
     ['phone', 'الهاتف', 'Phone'], ['email', 'البريد', 'Email'], ['website', 'الموقع الإلكتروني', 'Website'], ['po_box', 'ص.ب', 'P.O. Box'], ['address', 'العنوان (إنجليزي)', 'Address (English)'], ['address_ar', 'العنوان (عربي)', 'Address (Arabic)'],
     ['doc_prefix', 'بادئة أرقام المستندات (مثل TC)', 'Document reference prefix (e.g. TC)'], ['license_authority', 'جهة إصدار الرخصة', 'Licence authority'], ['vat_pct', 'نسبة الضريبة الافتراضية %', 'Default VAT %'], ['currency', 'العملة', 'Currency'], ['license_no', 'رقم الرخصة التجارية', 'Trade licence no.'], ['license_expiry', 'انتهاء الرخصة', 'Licence expiry', 'date'],
     ['mohre_id', 'رقم المنشأة — وزارة الموارد البشرية (١٣ رقم)', 'MOHRE establishment ID (13 digits)'], ['employer_bank', 'بنك الشركة', 'Company bank'], ['employer_routing', 'رمز توجيه بنك الشركة (٩ أرقام)', 'Company bank routing code (9 digits)'], ['employer_iban', 'آيبان الشركة', 'Company IBAN'],
-    ['footer_text', 'نص تذييل المستندات', 'Document footer text']];
+    ['footer_text', 'نص تذييل المستندات', 'Document footer text'], ['sub_cert_signatories', 'خانات التوقيع في شهادات دفع مقاولي الباطن (مفصولة بفاصلة)', 'Signature boxes on subcontractor payment certificates (comma-separated)']];
   const E = [['smtp_host', 'خادم البريد (SMTP)', 'SMTP server'], ['smtp_port', 'المنفذ (587 أو 465)', 'Port (587 or 465)'], ['smtp_user', 'اسم مستخدم البريد', 'SMTP username'], ['smtp_pass', 'كلمة مرور البريد', 'SMTP password', 'password'], ['smtp_from', 'عنوان المرسِل (مثل accounts@شركتك.com)', 'From address (e.g. accounts@yourco.com)']];
   const users = admin ? await api('GET', 'users') : [], prof = ME.role !== 'employee' ? await api('GET', 'profile') : {};
   const brands = admin ? await api('GET', 'brand') : [], has = n => brands.some(b => b.name === n);
