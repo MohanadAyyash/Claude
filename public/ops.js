@@ -167,13 +167,50 @@ async function subDetail(sub, edit) {
   const m = modal(`<h2>${esc(sub.party_name || '')} — ${esc(sub.description || '')}</h2><p class="muted">${esc(sub.project_name || '')} · ${tr('قيمة العقد', 'Contract')} ${money(sub.contract_value)} · ${tr('محتجزات', 'Retention')} ${sub.retention_pct}%</p>
     <div class="tw"><table><thead><tr><th>${tr('الشهادة', 'Cert')}</th><th>${tr('التاريخ', 'Date')}</th><th class="n">${tr('التراكمي', 'Cumulative')}</th><th class="n">${tr('هذه الفترة', 'This period')}</th><th class="n">${tr('المستحق الآن', 'Payable now')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
     ${certs.map(x => `<tr class="click" data-c="${x.id}"><td>${esc(x.number)}</td><td>${esc(x.date)}</td><td class="n">${money(x.cumulative)}</td><td class="n">${money(x.gross_this)}</td><td class="n">${money(x.payable_now)}</td><td>${tag(x.status === 'approved' ? 'approved' : 'draft')}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد شهادات', 'No certificates yet')}</td></tr>`}</tbody></table></div>
-    <div class="acts">${canOps('subcontracts') ? `<button class="btn" id="nc">+ ${tr('شهادة دفع', 'New certificate')}</button><button class="btn sec" id="es">${tr('تعديل العقد', 'Edit contract')}</button>` : ''}<button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
+    <div class="acts">${canOps('subcontracts') ? `<button class="btn" id="nc">+ ${tr('شهادة دفع', 'New certificate')}</button><button class="btn sec" id="es">${tr('تعديل العقد', 'Edit contract')}</button><button class="btn sec" id="agr">📄 ${tr('اتفاقية عقد الباطن', 'Sub-contract agreement')}</button>` : ''}<button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
   $('#cancel', m).onclick = closeModal;
   const asc = [...certs].sort((a, b) => a.id - b.id), before = id => asc.filter(x => x.id < id).pop();
   if ($('#nc', m)) $('#nc', m).onclick = () => certModal(sub, null, asc[asc.length - 1]);
   if ($('#es', m)) $('#es', m).onclick = () => { closeModal(); edit(sub); };
+  if ($('#agr', m)) $('#agr', m).onclick = guard(async () => { closeModal(); scAgreementModal(sub); });
   m.querySelectorAll('[data-c]').forEach(t => t.onclick = () => certModal(sub, certs.find(x => x.id === +t.dataset.c), before(+t.dataset.c)));
 }
+// ---- sub-contract agreement: standard clauses with fields filled in, per-subcontract wording, three appendices --------------------
+const SC_BY = [['', '—'], ['contractor', tr('المقاول (تريجون)', 'Contractor')], ['sub', tr('مقاول الباطن', 'Sub-contractor')], ['both', tr('الاثنين', 'Both')], ['na', 'N/A']];
+async function scAgreementModal(sub) {
+  const a = await api('GET', 'sc-agreement/' + sub.id), f = a.fields;
+  const boqRow = (r = {}) => `<tr><td style="width:60px"><input data-b="item" value="${esc(r.item || '')}"></td><td><input data-b="description" value="${esc(r.description || '')}"></td><td style="width:60px"><input data-b="unit" value="${esc(r.unit || '')}"></td><td style="width:90px"><input data-b="qty" type="number" step="any" value="${r.qty ?? ''}"></td><td style="width:90px"><input data-b="rate" type="number" step="any" value="${r.rate ?? ''}"></td><td class="n" style="width:100px" data-ba></td><td style="width:28px"><button type="button" class="x">×</button></td></tr>`;
+  const mxRow = r => r.group ? `<tr data-g="${esc(r.group)}"><td colspan="3"><b>${esc(r.group)}</b></td></tr>` : `<tr data-i><td><input data-m="item" value="${esc(r.item || '')}"></td><td style="width:150px"><select data-m="by">${SC_BY.map(([k, l]) => `<option value="${k}" ${r.by === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td><input data-m="note" value="${esc(r.note || '')}"></td></tr>`;
+  const m = modal(`<h2>${tr('اتفاقية عقد الباطن', 'Sub-contract agreement')} — ${esc(f.subcontractor)}</h2>
+    <p class="muted">${tr('نص الاتفاقية القياسي من الإعدادات، والخانات تُعبّأ تلقائياً من بيانات العقد (الاسم، النطاق، القيمة بالأرقام والحروف، المحتجزات، أيام الدفع، نسبة الخصومات، التواريخ). يمكنك تعديل النص لهذا العقد فقط.', 'The standard wording comes from Settings; the fields fill in from the subcontract (names, scope, value in figures and words, retention, payment days, contra uplift, dates). You can change the wording for this subcontract only.')}
+      ${!f.agreement_no ? `<br><span class="neg">${tr('أدخل رقم الاتفاقية والتواريخ من «تعديل العقد».', 'Enter the agreement no. and dates under Edit contract.')}</span>` : ''}</p>
+    <div class="f2">${field({ k: 'payment_days', ar: 'الدفع خلال (يوم من الفاتورة)', en: 'Payment within (days of invoice)', type: 'number' }, a.payment_days)}${field({ k: 'dlp_months', ar: 'فترة الصيانة (أشهر)', en: 'Defects liability period (months)', type: 'number' }, a.dlp_months)}
+      ${field({ k: 'sub_licence', ar: 'رقم الرخصة التجارية لمقاول الباطن', en: 'Sub-contractor trade licence no.' }, a.sub_licence)}${field({ k: 'signatory', ar: 'الموقّع عن تريجون (الاسم، المنصب) — فارغ = من الإعدادات', en: 'Signing for Trigon (name, position) — empty = from Settings' }, a.signatory)}</div>
+    <h3>${tr('ملحق 1 — جدول الكميات', 'Appendix 1 — Bill of quantities')}</h3>
+    <div class="tw items"><table><thead><tr><th>${tr('البند', 'Item')}</th><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('السعر', 'Rate')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th></th></tr></thead><tbody id="scb">${(a.boq.length ? a.boq : [{}]).map(boqRow).join('')}</tbody></table></div>
+    <div class="bar" style="margin-top:6px"><button type="button" class="btn sec sm" id="scadd">+ ${tr('بند', 'Line')}</button><span class="sp"></span><b id="sctot"></b> <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="usev" style="width:auto"> ${tr('اجعل المجموع قيمة العقد', 'Use the total as the contract value')} (${tr('الحالية', 'now')} ${money(sub.contract_value)})</label></div>
+    <h3>${tr('ملحق 2 — الشروط الخاصة ونطاق العمل', 'Appendix 2 — Particular conditions & scope')}</h3>${field({ k: 'particular', ar: '', en: '', type: 'textarea', full: 1 }, a.particular)}
+    <h3>${tr('ملحق 3 — مصفوفة المسؤوليات', 'Appendix 3 — Responsibility matrix')}</h3><div class="tw"><table><tbody id="scm">${a.matrix.map(mxRow).join('')}</tbody></table></div>
+    <details style="margin-top:10px"><summary style="cursor:pointer"><b>${tr('نص الاتفاقية لهذا العقد', 'Agreement wording for this subcontract')}</b> <span class="muted">${a.text ? tr('— معدّل لهذا العقد', '— changed for this subcontract') : tr('— النص القياسي', '— standard wording')}</span></summary>
+      <p class="muted">${tr('الخانات بين {{ }} تُعبّأ تلقائياً. السطر الذي يبدأ برقم ونقطة (مثل «6. Payment») هو عنوان بند.', 'Fields between {{ }} fill in automatically. A line starting with a number and a dot (e.g. “6. Payment”) is a clause heading.')}</p>
+      <textarea id="sctext" style="min-height:300px;font-family:var(--mono,monospace);font-size:12px">${esc(a.text || a.template)}</textarea><button type="button" class="btn sec sm" id="screset">${tr('إرجاع النص القياسي', 'Back to the standard wording')}</button></details>
+    <div class="acts">${canOps('subcontracts') ? `<button class="btn" id="scsave">${tr('حفظ', 'Save')}</button>` : ''}<button class="btn sec" id="scpr">${tr('طباعة', 'Print')}</button><button class="btn sec" id="scpdf">PDF</button><button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
+  const tot = () => { let t = 0; m.querySelectorAll('#scb tr').forEach(r => { const v = (+$('[data-b=qty]', r).value || 0) * (+$('[data-b=rate]', r).value || 0); t += v; $('[data-ba]', r).textContent = money(v); }); $('#sctot', m).textContent = `${tr('المجموع', 'Total')} ${money(t)}`; };
+  m.addEventListener('input', tot); tot();
+  $('#scadd', m).onclick = () => { $('#scb', m).insertAdjacentHTML('beforeend', boqRow()); tot(); };
+  m.addEventListener('click', e => { if (e.target.classList.contains('x') && e.target.closest('#scb')) { e.target.closest('tr').remove(); tot(); } });
+  $('#screset', m).onclick = () => { $('#sctext', m).value = a.template; $('#sctext', m).dataset.reset = '1'; };
+  const body = () => ({ payment_days: val(m, 'payment_days'), dlp_months: val(m, 'dlp_months'), sub_licence: val(m, 'sub_licence'), signatory: val(m, 'signatory'), particular: val(m, 'particular'),
+    text: $('#sctext', m).value.trim() === String(a.template).trim() ? '' : $('#sctext', m).value, use_boq_value: $('#usev', m).checked ? 1 : 0,
+    boq: [...m.querySelectorAll('#scb tr')].map(r => ({ item: $('[data-b=item]', r).value, description: $('[data-b=description]', r).value, unit: $('[data-b=unit]', r).value, qty: $('[data-b=qty]', r).value, rate: $('[data-b=rate]', r).value })).filter(r => r.description || +r.rate),
+    matrix: [...m.querySelectorAll('#scm tr')].map(r => r.dataset.g !== undefined ? { group: r.dataset.g } : { item: $('[data-m=item]', r).value, by: $('[data-m=by]', r).value, note: $('[data-m=note]', r).value }) });
+  const save = () => api('PUT', 'sc-agreement/' + sub.id, body());
+  $('#cancel', m).onclick = () => { closeModal(); render(); };
+  if ($('#scsave', m)) $('#scsave', m).onclick = guard(async () => { await save(); toast(tr('تم الحفظ', 'Saved')); });
+  $('#scpr', m).onclick = guard(async () => { if ($('#scsave', m)) await save(); window.open(`/api/doc/sc_agreement/${sub.id}?print=1`, '_blank'); });
+  $('#scpdf', m).onclick = guard(async () => { if ($('#scsave', m)) await save(); window.open(`/api/doc/sc_agreement/${sub.id}/pdf`, '_blank'); });
+}
+
 function certModal(sub, row, prevCert) {
   const pc = prevCert || { cumulative: 0, materials: 0 }, locked = row?.status === 'approved', net = sub.vat_basis === 'net';
   const F = (k, ar, en, type = 'number', v) => field({ k, ar, en, type }, v !== undefined ? v : row?.[k] ?? '');
