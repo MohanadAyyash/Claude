@@ -257,6 +257,10 @@ const projectFields = async () => [
   { k: 'advance_pct', ar: 'الدفعة المقدمة % من العقد', en: 'Advance payment % of contract', type: 'number', def: 0 }, { k: 'advance_recovery_pct', ar: 'استرداد المقدمة % من كل مستخلص (فارغ = نفس النسبة)', en: 'Advance recovery % per progress invoice (empty = same %)', type: 'number', def: 0 },
   { k: 'handover_date', ar: 'تاريخ التسليم (يُستحق جزء المحتجزات)', en: 'Handover date (first retention release)', type: 'date' }, { k: 'retention_handover_pct', ar: 'نسبة المحتجزات المفرج عنها عند التسليم %', en: 'Retention released at handover %', type: 'number', def: 50 },
   { k: 'dlp_months', ar: 'فترة الصيانة (أشهر) — الباقي بعدها', en: 'Defects liability period (months) — rest after it', type: 'number', def: 12 },
+  { k: 'main_contract', ar: 'العقد الرئيسي (عند العمل كمقاول باطن)', en: 'Main contract (when working as a subcontractor)', full: 1 },
+  { k: 'client_contract_ref', ar: 'رقم العقد / عقد الباطن / أمر الشراء من العميل (يُطبع على الفواتير)', en: 'Contract / sub-contract / PO no. from the client (printed on invoices)', full: 1 },
+  { k: 'payment_terms_days', ar: 'مدة الدفع (أيام) — تاريخ استحقاق الفواتير', en: 'Payment terms (days) — invoice due date', type: 'number' },
+  { k: 'vat_basis', ar: 'أساس الضريبة في شهادات الدفع (PC)', en: 'VAT basis on payment certificates (PC)', type: 'select', options: [['gross', tr('على قيمة الأعمال قبل المحتجزات (الافتراضي)', 'On the work value before retention (default)')], ['net', tr('على الصافي بعد المحتجزات والخصومات (مثل كثير من المقاولين الرئيسيين)', 'On the net after retention and contra charges (as many main contractors)')]] },
   { k: 'site_lat', ar: 'خط العرض للموقع (لحضور الجوال)', en: 'Site latitude (phone attendance)', type: 'number' }, { k: 'site_lng', ar: 'خط الطول للموقع', en: 'Site longitude', type: 'number' },
   { k: 'site_radius', ar: 'نطاق الموقع بالمتر', en: 'Site radius (m)', type: 'number', def: 300 },
   { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }];
@@ -382,7 +386,8 @@ async function docModal(kind, row, preset = {}) {
   ] : [
     { k: 'number', ar: 'رقم الفاتورة', en: 'Invoice no.' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' },
     { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`, false) },
-    { k: 'due_date', ar: 'تاريخ الاستحقاق', en: 'Due date', type: 'date' }, { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' }, { k: 'retention_pct', ar: 'نسبة المحتجزات %', en: 'Retention %', type: 'number' }];
+    { k: 'due_date', ar: 'تاريخ الاستحقاق', en: 'Due date', type: 'date' }, { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' }, { k: 'retention_pct', ar: 'نسبة المحتجزات %', en: 'Retention %', type: 'number' },
+    { k: 'client_ref', ar: 'مرجع العميل (أمر شراء / PC)', en: 'Client reference (PO / PC no.)' }];
   const isCN = r.kind === 'credit_note', dead = !!r.voided, W = {
     customer_trn_missing: tr('العميل بدون رقم ضريبي (TRN) — مطلوب في الفاتورة الضريبية للشركات', 'Client has no TRN — required on tax invoices to VAT-registered businesses'),
     customer_address_missing: tr('عنوان العميل غير مسجّل — مطلوب في الفاتورة الضريبية', 'Client address missing — required on tax invoices') };
@@ -400,9 +405,17 @@ async function docModal(kind, row, preset = {}) {
     <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && isQ ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}${row && !isQ && !dead && ME.role === 'admin' ? `<button class="btn bad" id="void">${tr('إلغاء الفاتورة', 'Void')}</button>` : ''}</div>`, true);
   if (dead) m.querySelectorAll('input,select,textarea').forEach(x => x.disabled = true);
   bindDoc(m, e.row, 1, !isQ);
+  if (row && row.pc_id) {                                                 // issued from a main contractor's PC: the PC is the source — totals as certified
+    m.querySelectorAll('#items input,#items select,[name=vat_pct],[name=retention_pct],[name=project_id]').forEach(x => x.disabled = true); m.querySelectorAll('#items .x,#addrow').forEach(x => x.remove());
+    const drawTot = () => $('#tot', m).innerHTML = `<div><span>${tr('الإجمالي قبل الضريبة', 'Subtotal')}</span><span>${money(row.subtotal)}</span></div><div><span>${tr('ضريبة القيمة المضافة', 'VAT')}${row.vat_basis === 'net' ? ` <span class="muted">(${tr('على', 'on')} ${money(row.std_total)})</span>` : ''}</span><span>${money(row.vat)}</span></div>
+      <div class="t"><span>${tr('الإجمالي', 'Total')}</span><span>${money(row.total)}</span></div><div class="muted"><span>${tr('محتجزات', 'Retention')}</span><span>${money(row.retention)}</span></div><div class="t"><span>${tr('المستحق الآن', 'Due now')}</span><span>${money(row.due_now)}</span></div>`;
+    drawTot(); m.addEventListener('input', drawTot);                    // after bindDoc's own listener: keep the certified totals
+    $('#tot', m).insertAdjacentHTML('afterend', `<p class="muted">${tr('صدرت من شهادة دفع المقاول الرئيسي — البنود والمبالغ تُعدَّل من الـ PC (ألغِ الفاتورة لتعديله).', 'Issued from the main contractor\'s payment certificate — lines and amounts come from the PC (void the invoice to change it).')}</p>`);
+  }
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
     const body = { items: readItems(m) }; head.forEach(f => body[f.k] = val(m, f.k)); body.notes = val(m, 'notes'); if (isQ) body.terms = val(m, 'terms');
+    if (row && row.pc_id) { body.items = row.items; body.vat_pct = row.vat_pct; body.retention_pct = row.retention_pct; body.project_id = row.project_id; }
     if (!isQ && !body.project_id) throw new Error(tr('اختر المشروع', 'Select a project'));
     if (!row) body.number = body.number || undefined;
     row ? await api('PUT', `${kind}/${row.id}`, body) : await api('POST', kind, body);
