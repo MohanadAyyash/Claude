@@ -89,14 +89,14 @@ function enrich() {
   const pays = all('payments').filter(countable);
   const raw = all('invoices'), ipcs = ctx.ipcIds ? ctx.ipcIds() : new Set();
   const invoices = raw.map(r => {
-    const items = parseItems(r), tt = docTotals(items, r.vat_pct, r.retention_pct);
+    const items = parseItems(r), tt = docTotals(items, r.vat_pct, r.retention_pct, { retention: r.retention_amount, vatBasis: r.vat_basis });
     const sign = r.kind === 'credit_note' ? -1 : 1, dead = !!r.voided;
     const k = dead ? 0 : sign;                                       // voided documents keep their number but carry no value
     for (const f of Object.keys(tt)) tt[f] = round(tt[f] * k);
     const mine = pays.filter(p => p.kind === 'in' && p.invoice_id === r.id);
     const paid = round(mine.filter(p => !p.is_retention).reduce((s, p) => s + p.amount, 0));
     const released = round(mine.filter(p => p.is_retention).reduce((s, p) => s + p.amount, 0));
-    const credited = r.kind === 'credit_note' ? 0 : round(raw.filter(c => c.kind === 'credit_note' && !c.voided && c.original_id === r.id).reduce((s, c) => s + docTotals(parseItems(c), c.vat_pct).total, 0));
+    const credited = r.kind === 'credit_note' ? 0 : round(raw.filter(c => c.kind === 'credit_note' && !c.voided && c.original_id === r.id).reduce((s, c) => { const t = docTotals(parseItems(c), c.vat_pct, 0, { retention: c.retention_amount, vatBasis: c.vat_basis }); return s + t.total - t.retention; }, 0));
     const dueNow = round(tt.total - tt.retention);
     const balance = r.kind === 'credit_note' ? 0 : round(dueNow - paid - credited);
     const retention_open = round(tt.retention - released);
@@ -105,10 +105,21 @@ function enrich() {
     const warnings = [];
     if (client && !client.trn) warnings.push('customer_trn_missing');
     if (client && !client.address) warnings.push('customer_address_missing');
-    const revenue = r.kind === 'advance' ? 0 : round(tt.subtotal + tt.recovery);   // an advance is a liability until recovered; recovery lines don't reduce the work value
+    const revenue = r.kind === 'advance' ? 0 : round(tt.subtotal + tt.recovery - tt.release);   // an advance is a liability until recovered; recovery lines don't reduce the work value; a retention release is not new revenue
     return { ...r, items, ...tt, revenue, ipc: ipcs.has(r.id), due_now: dueNow, paid, credited, balance, retention_open, status, warnings,
-      project_name: proj?.name, emirate: proj?.emirate, client_id: proj?.client_id, client_name: client?.name, client_trn: client?.trn, client_address: client?.address, client_email: client?.email };
+      project_name: proj?.name, emirate: proj?.emirate, contract_ref: proj?.client_contract_ref || '', main_contract: proj?.main_contract || '', client_id: proj?.client_id, client_name: client?.name, client_trn: client?.trn, client_address: client?.address, client_email: client?.email };
   });
+  // retention released by invoice (main-contractor PCs): settles the oldest open retention of the same project first
+  const relBy = {};
+  for (const i of invoices) if (!i.voided && i.release > 0) relBy[i.project_id] = round((relBy[i.project_id] || 0) + i.release);
+  for (const [pid, amt] of Object.entries(relBy)) {
+    let left = amt;
+    for (const i of invoices.filter(x => x.project_id === +pid && !x.voided && x.retention_open > 0.004).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id))) {
+      const take = round(Math.min(left, i.retention_open)); if (!(take > 0)) break;
+      i.retention_open = round(i.retention_open - take); left = round(left - take);
+      if (i.balance <= 0.005 && i.retention_open <= 0.005 && i.status === 'retention') i.status = 'paid';
+    }
+  }
   const bills = all('bills').map(r => {
     const total = round(r.amount + r.vat_amount);
     const paid = round(pays.filter(p => p.kind === 'out' && p.bill_id === r.id).reduce((s, p) => s + p.amount, 0));
@@ -363,7 +374,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -526,8 +537,8 @@ async function api(req, res, url) {
     const orig = enrich().invoices.find(i => i.id === +b);
     if (!orig || orig.kind === 'credit_note' || orig.voided) return send(res, 400, { error: 'cannot issue a credit note for this document' });
     const body = await readBody(req);
-    const r = db.prepare("INSERT INTO invoices(number,date,project_id,items,vat_pct,notes,kind,original_id) VALUES(?,?,?,?,?,?,?,?)")
-      .run(nextNumber('invoices', 'CN'), today(), orig.project_id, JSON.stringify(Array.isArray(body.items) && body.items.length ? body.items : orig.items), orig.vat_pct, `Credit note against ${orig.number}${body.reason ? ' — ' + body.reason : ''}`, 'credit_note', orig.id);
+    const r = db.prepare("INSERT INTO invoices(number,date,project_id,items,vat_pct,notes,kind,original_id,retention_amount,vat_basis) VALUES(?,?,?,?,?,?,?,?,?,?)")
+      .run(nextNumber('invoices', 'CN'), today(), orig.project_id, JSON.stringify(Array.isArray(body.items) && body.items.length ? body.items : orig.items), orig.vat_pct, `Credit note against ${orig.number}${body.reason ? ' — ' + body.reason : ''}`, 'credit_note', orig.id, Array.isArray(body.items) && body.items.length ? null : orig.retention_amount ?? null, Array.isArray(body.items) && body.items.length ? null : orig.vat_basis || null);
     audit(req, 'create', 'credit_note', Number(r.lastInsertRowid), `against ${orig.number}`);
     return send(res, 200, { id: Number(r.lastInsertRowid) });
   }
@@ -538,6 +549,8 @@ async function api(req, res, url) {
     if (!inv) return send(res, 404, { error: 'not found' });
     if (inv.paid > 0) return send(res, 409, { error: 'invoice has payments — issue a credit note instead' });
     db.prepare('UPDATE invoices SET voided=1, void_reason=? WHERE id=?').run(reason, +b);
+    db.prepare("UPDATE pay_apps SET status='certified' WHERE id IN (SELECT app_id FROM client_pcs WHERE invoice_id=?)").run(+b);   // a PC whose invoice is voided can be invoiced again
+    db.prepare("UPDATE client_pcs SET status='recorded', invoice_id=NULL WHERE invoice_id=?").run(+b);
     audit(req, 'void', 'invoices', +b, `${inv.number}: ${reason}`);
     return send(res, 200, { ok: 1 });
   }

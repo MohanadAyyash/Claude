@@ -39,7 +39,7 @@ module.exports = ctx => {
     const add = (date, ref, memo, source, lines) => { lines = lines.filter(l => l.debit || l.credit); if (lines.length) out.push({ date, ref, memo, source, lines }); };
     // advance invoices credit "advances from customers"; progress invoices recognise the full work value and debit the advance they recover
     for (const i of e.invoices) if (!i.voided) add(i.date, i.number, `${i.kind === 'credit_note' ? 'Credit note' : i.kind === 'advance' ? 'Advance payment invoice' : 'Invoice'} — ${i.client_name || ''}`, 'invoice',
-      [mk('1100', i.due_now), mk('1150', i.retention), mk('2400', i.recovery || 0), mk(i.kind === 'advance' ? '2400' : '4000', 0, i.kind === 'advance' ? i.subtotal : i.revenue), mk('2100', 0, i.vat)]);
+      [mk('1100', i.due_now), mk('1150', i.retention), mk('2400', i.recovery || 0), mk(i.kind === 'advance' ? '2400' : '4000', 0, i.kind === 'advance' ? i.subtotal : i.revenue), mk('2100', 0, i.vat), mk('1150', 0, i.release || 0)]);
     for (const b of e.bills) add(b.date, b.reference || `BILL-${b.id}`, `${b.party_name || 'Expense'} — ${b.description || ''}`, 'bill', [mk(CAT[b.category] || '5700', b.amount), mk('1200', b.vat_amount), mk('2000', 0, b.total)]);
     for (const p of e.payments) {
       if (p.cheque_status === 'bounced') continue;
