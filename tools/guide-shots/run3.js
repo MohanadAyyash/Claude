@@ -117,3 +117,4 @@ add('70-mobile', async (p, lang, ctx, b) => {
   await shot(q, '71-mobile-menu', lang, [S('.side a.on', 1, L('اختر الصفحة', 'Pick a page'))], { crop: 'full' });
   await c2.close();
 });
+try { require('./run4'); } catch (e) { if (!/Cannot find module '.\/run4'/.test(e.message)) throw e; }

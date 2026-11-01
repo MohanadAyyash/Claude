@@ -75,10 +75,6 @@ add('31-rfq', async (p, lang) => {
   await shot(p, '31-rfq', lang, [S('#mx tbody tr', 1, L('البنود والكميات المطلوبة', 'Items and quantities required'), { side: 't', closest: 'tbody' }), S('#mx thead select', 2, L('عمود لكل مورد: اكتب أسعاره', 'One column per supplier: type their rates'), { side: 't' }), T(tx(lang, 'مورد', 'Supplier'), 3, L('إضافة مورد للمقارنة', 'Add a supplier to compare'), { in: '.modal', tags: 'button', side: 'b' }),
     T(tx(lang, 'ترسية + أمر شراء', 'Award + PO'), 4, L('الأقل سعراً مُبرز — ترسية تنشئ أمر الشراء', 'Lowest is highlighted — Award creates the PO'), { in: '.modal', tags: 'button', side: 'b' })]);
 });
-add('32-po', async (p, lang) => {
-  await vp(p, 900); await go(p, 'po'); await p.locator('tr.click').first().click(); await p.waitForTimeout(600);
-  await shot(p, '32-po', lang, [S('.modal [name=party_id]', 1, L('المورد والمشروع', 'Supplier and project'), { closest: '.f', side: 't' }), S('.modal .items', 2, L('البنود والأسعار', 'Items and rates'), { side: sideL(lang), sel2: '.modal table' }), S('.modal #print', 3, L('طباعة', 'Print'), { side: 'b' }), S('.modal #mail', 4, L('إرسال للمورد', 'Email supplier'), { side: 'b', dist: 100 }), S('.modal #rcv', 5, L('عند الاستلام: إنشاء فاتورة المورد', 'On delivery: create the supplier bill'), { side: 'b', dist: 50 })]);
-});
 add('33-bill', async (p, lang) => {
   await vp(p, 960); await go(p, 'bills'); await click(p, '#add');
   await p.selectOption('.modal [name=party_id]', { index: 3 }); await p.selectOption('.modal [name=category]', 'equipment'); await p.fill('.modal [name=description]', 'Crane hire — October'); await p.fill('.modal [name=amount]', '24000'); await p.fill('.modal [name=vat_amount]', '1200');
@@ -89,11 +85,6 @@ add('33-bill', async (p, lang) => {
 add('34-subcontract', async (p, lang) => {
   await vp(p, 860); await go(p, 'subcontracts'); await p.locator('tr.click').first().click(); await p.waitForTimeout(700);
   await shot(p, '34-subcontract', lang, [T(tx(lang, 'شهادة دفع', 'New certificate'), 1, L('شهادة دفع جديدة', 'New payment certificate'), { tags: 'button', side: 'b' }), S('.modal table', 2, L('الشهادات: التراكمي، هذه الفترة، المحتجزات، المستحق', 'Certificates: cumulative, this period, retention, payable'), { side: 'b' })]);
-});
-add('35-subcert', async (p, lang) => {
-  await vp(p, 860); await go(p, 'subcontracts'); await p.locator('tr.click').first().click(); await p.waitForTimeout(600);
-  await p.locator('.modal tbody tr').first().click().catch(() => {}); await p.waitForTimeout(600);
-  await shot(p, '35-subcert', lang, [S('.modal [name=cumulative]', 1, L('الأعمال المنجزة حتى تاريخه (تراكمي)', 'Work done to date (cumulative)'), { closest: '.f', side: 't' }), S('.modal [name=advance_recovery]', 2, L('استرداد الدفعة المقدمة', 'Advance recovery'), { closest: '.f' }), S('.modal [name=deductions]', 3, L('الخصومات والتحميلات', 'Deductions / back-charges'), { closest: '.f' }), S('#ap', 4, L('الاعتماد يقفل الشهادة ويسجل التكلفة', 'Approval locks it and books the cost'))]);
 });
 add('36-stock', async (p, lang) => {
   await vp(p, 800); await go(p, 'stock');

@@ -171,12 +171,6 @@ B = [
  ("عمود لكل مورد: اختر المورد واكتب سعره لكل بند. الإجمالي يُحسب تلقائياً.", "One column per supplier: pick the supplier and type their rate per item. Totals are automatic."),
  ("إضافة مورد آخر للمقارنة.", "Add another supplier to compare."),
  ("الأقل سعراً يظهر مُبرزاً. «ترسية + أمر شراء» تحت المورد المختار ينشئ أمر الشراء فوراً.", "The lowest total is highlighted. Award + PO under the chosen supplier creates the purchase order at once.")]),
-("### 12.2 أمر الشراء", "### 12.2 Purchase order", "32-po", "أمر الشراء", "Purchase order", [
- ("المورد والمشروع.", "Supplier and project."),
- ("البنود والكميات والأسعار.", "Items, quantities and rates."),
- ("طباعة أمر الشراء بالترويسة.", "Print the PO on the letterhead."),
- ("إرساله للمورد بالإيميل.", "Email it to the supplier."),
- ("عند الاستلام: ينشئ فاتورة المورد (مصروف) بقيمة الأمر.", "On delivery: creates the supplier bill for the order value.")]),
 ("## 13. المصروفات والمشتريات", "## 13. Expenses and purchases", "33-bill", "مصروف موزّع على مشروعين", "Expense split across two projects", [
  ("المورد.", "Supplier."),
  ("البند: يحدد نوع التكلفة في تقارير المشروع (واختر «شراء أصل ثابت» للأصول).", "Category: sets the cost type in project reports (use Fixed asset purchase for assets)."),
@@ -188,11 +182,6 @@ B = [
 ("### 14.1 عقد مقاول الباطن", "### 14.1 Subcontract", "34-subcontract", "عقد مقاول باطن وشهاداته", "Subcontract and its certificates", [
  ("شهادة دفع جديدة لهذا العقد.", "New payment certificate for this subcontract."),
  ("الشهادات السابقة: التراكمي، هذه الفترة، المحتجزات، المستحق، والحالة.", "Previous certificates: cumulative, this period, retention, payable and status.")]),
-("### 14.2 شهادة الدفع", "### 14.2 Payment certificate", "35-subcert", "شهادة دفع مقاول باطن", "Subcontractor payment certificate", [
- ("الأعمال المنجزة حتى تاريخه بشكل تراكمي (وليس هذه الفترة فقط). يحسب النظام «هذه الفترة» = التراكمي − المعتمد سابقاً.", "Work done to date, cumulative (not only this period). The system works out This period = cumulative − previously certified."),
- ("استرداد الدفعة المقدمة من هذه الشهادة (إن وُجدت).", "Advance recovery on this certificate (if any)."),
- ("الخصومات والتحميلات على المقاول (مواد صرفت له، غرامات…). أسفل النموذج يظهر الملخص: المعتمد سابقاً، هذه الفترة، المحتجزات، الضريبة، والمستحق الآن.", "Deductions and back-charges (materials supplied, penalties…). Below, the summary: previously certified, this period, retention, VAT and payable now."),
- ("«اعتماد وإنشاء مصروف»: يقفل الشهادة ويسجل التكلفة على المشروع كمستحق للمقاول.", "Approve & book cost: locks the certificate and books the cost to the project as payable to the subcontractor.")]),
 ("## 15. المخزون", "## 15. Stock", "36-stock", "المخزون", "Stock", [
  ("إضافة صنف جديد.", "Add a new item."),
  ("حركة مخزون: استلام، صرف لمشروع، أو تسوية.", "Stock movement: receive, issue to project, or adjust."),
@@ -329,6 +318,92 @@ B = [
  ("زر ☰ يفتح القائمة.", "The ☰ button opens the menu.")]),
 ("## 32. الطباعة وPDF وExcel والجوال", "## 32. Printing, PDF, Excel and mobile", "71-mobile-menu", "القائمة على الجوال", "The menu on a phone", [
  ("اختر الصفحة من القائمة.", "Pick a page from the menu.")]),
+("### 2.7 نصوص المستندات والتواقيع", "### 2.7 Document texts and signatories", "81-settings-legal", "الإعدادات — الاسم القانوني والتواقيع", "Settings — legal name and signatories", [
+ ("الاسم القانوني كما في الرخصة وشهادة الضريبة: يظهر مع الرقم الضريبي أعلى الفواتير الضريبية والإشعارات الدائنة وشهادات مقاولي الباطن.", "Legal name as on the licence and TRN certificate: shown with the TRN at the top of tax invoices, credit notes and subcontractor certificates."),
+ ("خانات التوقيع في شهادات دفع مقاولي الباطن، مفصولة بفاصلة.", "Signature boxes on subcontractor payment certificates, comma-separated."),
+ ("اسم ومنصب من يوقّع اتفاقيات عقد الباطن عن الشركة.", "Name and position of whoever signs sub-contract agreements for the company.")]),
+("### 2.7 نصوص المستندات والتواقيع", "### 2.7 Document texts and signatories", "82-settings-texts", "الإعدادات — نصوص الاتفاقية وأوامر الشراء", "Settings — agreement and purchase-order texts", [
+ ("نص اتفاقية عقد الباطن القياسي: الكلمات بين {{ }} تُعبّأ تلقائياً من بيانات كل عقد.", "Standard sub-contract wording: words between {{ }} fill in from each subcontract."),
+ ("الملاحظات الثابتة التي تُطبع على كل أمر شراء.", "Standard notes printed on every purchase order."),
+ ("الشروط العامة للشراء: صفحة ثانية في كل أمر شراء؛ فارغة = بدون صفحة.", "General conditions of purchase: page 2 of every purchase order; empty = no page.")]),
+("### 7.1 إضافة مشروع", "### 7.1 Add a project", "72-project-contract", "حقول العمل مع مقاول رئيسي في نموذج المشروع", "Fields for work under a main contractor", [
+ ("العقد الرئيسي: اسم عقد المقاول الرئيسي، يُطبع على البروفورما والفاتورة.", "Main contract: the main contractor's contract name, printed on the proforma and invoice."),
+ ("رقم العقد أو عقد الباطن أو أمر الشراء من العميل: يُطبع على كل فاتورة.", "Contract / sub-contract / PO no. from the client: printed on every invoice."),
+ ("مدة الدفع بالأيام: تاريخ استحقاق الفواتير الصادرة من الـ PC.", "Payment terms in days: due date of invoices issued from a PC."),
+ ("أساس الضريبة في الـ PC: على الصافي بعد المحتجزات والخصومات، أو على قيمة الأعمال.", "VAT basis on PCs: on the net after retention and contra charges, or on the work value.")]),
+("### 8.4 العمل مع مقاول رئيسي: البروفورما (طلب الدفعة)", "### 8.4 Working under a main contractor: proforma (payment application)", "73-claims-card", "بطاقة البروفورما وشهادات الدفع في صفحة المشروع", "Proformas & payment certificates card on the project page", [
+ ("بروفورما جديدة تُعبّأ من جدول الكميات.", "New proforma filled from the BOQ."),
+ ("تسجيل PC مستلم بدون بروفورما (مثل أول PC في النظام).", "Record a PC received without a proforma (e.g. the first PC in the system)."),
+ ("صافي المطلوب في كل بروفورما.", "Net claimed on each proforma."),
+ ("صافي المعتمد في الـ PC والفرق عن المطلوب (بالأحمر إذا خُصم).", "Net certified on the PC and the difference from the claim (red when cut)."),
+ ("الفاتورة الضريبية الصادرة من الـ PC؛ اضغطها لفتحها.", "The tax invoice issued from the PC; click it to open.")]),
+("### 8.4 العمل مع مقاول رئيسي: البروفورما (طلب الدفعة)", "### 8.4 Working under a main contractor: proforma (payment application)", "74-proforma", "نافذة البروفورما", "Proforma window", [
+ ("للأعمال حتى تاريخ.", "For works up to."),
+ ("المواد بالموقع (تراكمي) إن وجدت.", "Materials on site (cumulative), if any."),
+ ("الكمية التراكمية لكل بند؛ السابق يأتي من آخر PC.", "Cumulative quantity per item; the previous one comes from the last PC."),
+ ("الملخص التراكمي: الأعمال (A)، المحتجزات والخصومات والدفعات السابقة (B)، والصافي.", "Cumulative summary: work (A), retention, contra and previous payments (B), and the net."),
+ ("طباعة البروفورما بالإنجليزية بدون ضريبة أو رقم ضريبي أو بيانات بنك.", "Print the proforma in English without VAT, TRN or bank details."),
+ ("بعد الإرسال للمقاول الرئيسي: تعليم كمُقدَّم.", "After sending it to the main contractor: mark as submitted."),
+ ("عند وصول الـ PC: تسجيل الـ PC المستلم.", "When the PC arrives: record the PC received.")]),
+("### 8.4 العمل مع مقاول رئيسي: البروفورما (طلب الدفعة)", "### 8.4 Working under a main contractor: proforma (payment application)", "p1-proforma", "البروفورما مطبوعة", "The printed proforma", [
+ ("جدول الكميات: كمية العقد، السابق، هذه الفترة، التراكمي والمبلغ والنسبة.", "BOQ: contract quantity, previous, this period, cumulative, amount and %."),
+ ("الملخص والصافي بالحروف — بدون ضريبة أو رقم ضريبي أو بيانات بنك.", "Summary and the net in words — no VAT, TRN or bank details.")]),
+("### 8.5 تسجيل الـ PC المستلم", "### 8.5 Recording the PC received", "75-pc", "نافذة تسجيل الـ PC", "Recording a PC", [
+ ("رقم الـ PC وتاريخ إصداره.", "PC no. and date of issue."),
+ ("البروفورما التي يعتمدها هذا الـ PC.", "The proforma this PC certifies."),
+ ("الأرقام التراكمية كما هي مطبوعة على الـ PC.", "The cumulative figures exactly as printed on the PC."),
+ ("الدفعات السابقة: تُحسب تلقائياً من الشهادات السابقة؛ قارنها بالـ PC.", "Previous payments: worked out from the earlier certificates; compare with the PC."),
+ ("الكمية المعتمدة لكل بند: عدّل ما خصمه المقاول الرئيسي.", "Certified quantity per item: change what the main contractor cut."),
+ ("استخدم مجموع البنود كقيمة الأعمال.", "Use the item total as the value of work done."),
+ ("الصافي والضريبة والمجموع كما ستكون في الفاتورة، وملخص الضريبة.", "Net, VAT and total as they will be invoiced, and the VAT summary."),
+ ("احفظ؛ ثم يظهر زر «إصدار الفاتورة الضريبية».", "Save; the Issue the tax invoice button then appears.")]),
+("### 8.6 الفاتورة الضريبية من الـ PC", "### 8.6 Tax invoice from the PC", "76-pc-invoice", "فاتورة ضريبية صادرة من PC", "Tax invoice issued from a PC", [
+ ("مرجع العميل: رقم الـ PC.", "Client reference: the PC number."),
+ ("البنود من الـ PC: أعمال الفترة، والخصومات؛ لا تُعدَّل هنا.", "Lines from the PC: work of the period and contra charges; not edited here."),
+ ("الضريبة على الصافي بعد المحتجزات، والمستحق الآن يساوي الـ PC.", "VAT on the net after retention; due now equals the PC.")]),
+("### 8.6 الفاتورة الضريبية من الـ PC", "### 8.6 Tax invoice from the PC", "p2-tax-invoice", "الفاتورة الضريبية مطبوعة", "The printed tax invoice", [
+ ("الاسم القانوني والرقم الضريبي أعلى الصفحة؛ العميل ورقمه الضريبي وتفاصيل العقد والـ PC.", "Legal name and TRN at the top; client with TRN, contract details and the PC."),
+ ("بيانات البنك بجانب الإجماليات، بدون خطوط توقيع.", "Bank details beside the totals, no signature lines.")]),
+("### 12.2 أمر الشراء", "### 12.2 Purchase order", "77-po", "نافذة أمر الشراء", "Purchase order window", [
+ ("المورد والمشروع.", "Supplier and project."),
+ ("شروط الدفع.", "Terms of payment."),
+ ("مكان التسليم ومسؤول الاستلام بالموقع.", "Deliver to and the site contact."),
+ ("مدة الاتفاقية من / إلى.", "Agreement period from / to."),
+ ("رقم طلب الشراء الداخلي ومرجع عرض سعر المورد.", "Purchase request no. and the supplier's quotation."),
+ ("كود الصنف لكل بند.", "Item code per line."),
+ ("الخصم % لكل بند؛ الصافي بعد الخصم.", "Discount % per line; the net after the discount."),
+ ("مجموع الخصم والإجمالي قبل وبعد الضريبة.", "Total discount and the totals before and after VAT.")]),
+("### 12.2 أمر الشراء", "### 12.2 Purchase order", "p4-purchase-order", "أمر الشراء مطبوعاً (الصفحة الأولى)", "The printed purchase order (page 1)", [
+ ("المورد ورقمه الضريبي، وتريجون ورقمها الضريبي، وPR وعرض السعر.", "Supplier with TRN, Trigon with TRN, PR and quotation."),
+ ("البنود بالكود والخصم، والإجمالي بالحروف، والملاحظات الثابتة، وتوقيع الطرفين؛ الشروط العامة في الصفحة الثانية.", "Lines with code and discount, total in words, standard notes and both signatures; the general conditions on page 2.")]),
+("### 14.1 عقد مقاول الباطن", "### 14.1 Subcontract", "78-subcontract-form", "بيانات عقد الباطن", "Subcontract details", [
+ ("رقم الاتفاقية وتاريخها.", "Agreement no. and date."),
+ ("تواريخ البدء والإنجاز والتمديد.", "Start, completion and extended completion dates."),
+ ("مجموع أوامر التغيير المعتمدة.", "Total of approved variations."),
+ ("أساس الضريبة في الشهادات.", "VAT basis on certificates."),
+ ("نسبة الإضافة على الخصومات (مثل 12%).", "Contra charge uplift (e.g. 12%).")]),
+("### 14.2 شهادة الدفع", "### 14.2 Payment certificate", "79-subcert", "نافذة شهادة دفع مقاول الباطن", "Subcontractor payment certificate window", [
+ ("للأعمال حتى تاريخ.", "For works up to."),
+ ("الأعمال والمواد حتى تاريخه بشكل تراكمي.", "Work and materials to date, cumulative."),
+ ("تكلفة الخصم: اكتبها فتُضاف النسبة وتظهر في الخصومات.", "Contra cost: type it and the uplift is added into the contra charges."),
+ ("الإفراج عن محتجزات في هذه الشهادة.", "Release of retention in this certificate."),
+ ("مرجع طلب الدفعة من المقاول؛ يُطبع في الملاحظات.", "The subcontractor's payment application; printed in the notes."),
+ ("توزيع الأكواد: سطر لكل كود ثم المبلغ.", "Cost codes: one per line, code then amount."),
+ ("ملخص الشهادة، وبعد الحفظ الأرقام التراكمية وملخص الضريبة.", "Certificate summary; after saving, the cumulative figures and VAT summary."),
+ ("طباعة بشكل الـ PC.", "Print in the PC layout.")]),
+("### 14.2 شهادة الدفع", "### 14.2 Payment certificate", "p3-sub-pc", "شهادة دفع مقاول الباطن مطبوعة", "The printed subcontractor payment certificate", [
+ ("بيانات العقد والتواريخ، ثم المعتمد (A) والخصومات (B) والصافي والضريبة.", "Contract details and dates, then certified (A), deductions (B), net and VAT."),
+ ("ملخص الضريبة والأكواد والملاحظات والمبلغ بالحروف وخانات التوقيع.", "VAT summary, cost codes, notes, amount in words and signature boxes.")]),
+("### 14.3 اتفاقية عقد الباطن", "### 14.3 Sub-contract agreement", "80-sc-agreement", "نافذة اتفاقية عقد الباطن", "Sub-contract agreement window", [
+ ("أيام الدفع وفترة الصيانة.", "Payment days and defects period."),
+ ("رقم رخصة مقاول الباطن (يُطبع في مقدمة الاتفاقية).", "Sub-contractor licence no. (printed in the opening of the agreement)."),
+ ("ملحق 1: جدول الكميات.", "Appendix 1: bill of quantities."),
+ ("اجعل مجموع الجدول قيمة العقد.", "Use the BOQ total as the contract value."),
+ ("ملحق 2: الشروط الخاصة ونطاق العمل.", "Appendix 2: particular conditions and scope."),
+ ("ملحق 3: مصفوفة المسؤوليات — المقاول / مقاول الباطن / الاثنين / N/A.", "Appendix 3: responsibility matrix — contractor / sub-contractor / both / N/A."),
+ ("طباعة / PDF.", "Print / PDF.")]),
+("### 14.3 اتفاقية عقد الباطن", "### 14.3 Sub-contract agreement", "p5-sc-agreement", "صفحة من الاتفاقية مطبوعة", "A page of the printed agreement", [
+ ("الأطراف والبنود مع الخانات معبّأة من بيانات العقد.", "The parties and the clauses with the fields filled in from the subcontract.")]),
 ]
 import os, re, sys
 D = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'docs')

@@ -125,6 +125,7 @@
 Menu: **Settings** → first card.
 1. Fill in:
    - **Company name (English)** and **Company name (Arabic)**
+   - **Legal name as on the trade licence / TRN certificate** — printed with the TRN at the top of tax invoices, credit notes and subcontractor certificates, and in their footer (the logo and other documents keep the brand name)
    - **VAT TRN (15 digits)** — required to issue tax invoices
    - **Corporate tax TRN**
    - **Phone**, **Email**, **Website**, **P.O. Box**, **Address (English)**, **Address (Arabic)**
@@ -200,6 +201,40 @@ Menu: **Settings** → **My profile**. Enter **Full name**, **Job title**, **Mob
 
 ### 2.6 Change your password
 Menu: **Settings** → **Change password** → type the new password → **Change**.
+
+---
+
+### 2.7 Document texts and signatories
+Menu: **Settings** → company card (administrator). These texts are printed on documents automatically:
+1. **Signature boxes on subcontractor payment certificates** — comma-separated, e.g. `QS / SQS, Site Engineer, Project Manager, General Manager`.
+2. **Signs sub-contract agreements for the company** — `Name, Position`.
+3. **Standard sub-contract agreement wording** — the clauses of every sub-contract agreement. Words between `{{ }}` fill in by themselves (e.g. `{{subcontractor}}`, `{{value}}`, `{{retention_pct}}`, `{{payment_days}}`). A line that starts with a number and a dot (e.g. `6. Payment`) is a clause heading.
+4. **Standard notes on purchase orders** — one per line.
+5. **General conditions of purchase** — printed as the second page of every purchase order; leave it empty for no conditions page.
+6. Press **Save**. Have a lawyer review the agreement and purchase conditions before you rely on them — they are a general starting text.
+
+<!--img-->
+
+**📷 Settings — legal name and signatories**
+
+![Settings — legal name and signatories](../public/guide/img/en/81-settings-legal.jpg)
+
+1. Legal name as on the licence and TRN certificate: shown with the TRN at the top of tax invoices, credit notes and subcontractor certificates.
+2. Signature boxes on subcontractor payment certificates, comma-separated.
+3. Name and position of whoever signs sub-contract agreements for the company.
+
+<!--/img-->
+<!--img-->
+
+**📷 Settings — agreement and purchase-order texts**
+
+![Settings — agreement and purchase-order texts](../public/guide/img/en/82-settings-texts.jpg)
+
+1. Standard sub-contract wording: words between {{ }} fill in from each subcontract.
+2. Standard notes printed on every purchase order.
+3. General conditions of purchase: page 2 of every purchase order; empty = no page.
+
+<!--/img-->
 
 ---
 
@@ -431,6 +466,12 @@ Either convert a quotation (6.3) or a tender (5.2), or:
 9. Phone attendance: **Site latitude**, **Site longitude**, **Site radius (m)** (default 300). The easiest way: open the project on your phone while on site and press **📍 Use my current location (while on site)**.
 10. **Notes** → **Save**.
 
+**Working as a subcontractor under a main contractor** — also fill:
+- **Main contract** — the main contractor's contract name.
+- **Contract / sub-contract / PO no. from the client** — printed on every invoice and proforma (clients reject invoices without it).
+- **Payment terms (days)** — gives the due date of invoices issued from a PC.
+- **VAT basis on payment certificates (PC)** — *On the net after retention and contra charges* if the main contractor certifies VAT that way (the retention is taxed when released), otherwise *On the work value*.
+
 <!--img-->
 
 **📷 Project list**
@@ -456,6 +497,18 @@ Either convert a quotation (6.3) or a tender (5.2), or:
 6. Handover date, the retention % released then, and the defects period for the rest.
 7. Site coordinates and radius for phone attendance.
 8. Save.
+
+<!--/img-->
+<!--img-->
+
+**📷 Fields for work under a main contractor**
+
+![Fields for work under a main contractor](../public/guide/img/en/72-project-contract.jpg)
+
+1. Main contract: the main contractor's contract name, printed on the proforma and invoice.
+2. Contract / sub-contract / PO no. from the client: printed on every invoice.
+3. Payment terms in days: due date of invoices issued from a PC.
+4. VAT basis on PCs: on the net after retention and contra charges, or on the work value.
 
 <!--/img-->
 
@@ -647,6 +700,109 @@ Open the invoice:
 
 ---
 
+### 8.4 Working under a main contractor: proforma (payment application)
+When you work for a main contractor the order is: **proforma → payment certificate (PC) from the main contractor → tax invoice equal to the PC**. Everything is on the project page, card **Proformas & payment certificates (PC)**.
+1. Update the **Completion %** of the BOQ items (7.3).
+2. Press **+ Proforma (payment application)**. It is filled from the BOQ: previous quantity (as last certified) and cumulative quantity to date.
+3. Enter **For works up to**, **Materials on site (cumulative)** if any, and change any **cumulative quantity**. Press **Save & recalculate**.
+4. The summary is cumulative, as on a PC: value of work done (A); retention, contra charges as last certified, previous payments (B); **net amount**.
+5. **Print** / **PDF** — an English **PROFORMA INVOICE**: the BOQ with quantities and amounts, the summary and the net amount in words. It has **no VAT, TRN or bank details** and no accounting effect — it is for the main contractor to check against their records.
+6. Send it, then press **Mark as submitted**.
+
+<!--img-->
+
+**📷 Proformas & payment certificates card on the project page**
+
+![Proformas & payment certificates card on the project page](../public/guide/img/en/73-claims-card.jpg)
+
+1. New proforma filled from the BOQ.
+2. Record a PC received without a proforma (e.g. the first PC in the system).
+3. Net claimed on each proforma.
+4. Net certified on the PC and the difference from the claim (red when cut).
+5. The tax invoice issued from the PC; click it to open.
+
+<!--/img-->
+<!--img-->
+
+**📷 Proforma window**
+
+![Proforma window](../public/guide/img/en/74-proforma.jpg)
+
+1. For works up to.
+2. Materials on site (cumulative), if any.
+3. Cumulative quantity per item; the previous one comes from the last PC.
+4. Cumulative summary: work (A), retention, contra and previous payments (B), and the net.
+5. Print the proforma in English without VAT, TRN or bank details.
+6. After sending it to the main contractor: mark as submitted.
+7. When the PC arrives: record the PC received.
+
+<!--/img-->
+<!--img-->
+
+**📷 The printed proforma**
+
+![The printed proforma](../public/guide/img/en/p1-proforma.jpg)
+
+1. BOQ: contract quantity, previous, this period, cumulative, amount and %.
+2. Summary and the net in words — no VAT, TRN or bank details.
+
+<!--/img-->
+
+### 8.5 Recording the PC received
+1. When the PC arrives, open the proforma and press **Record the PC received** (or **+ Record a PC received** on the card).
+2. Enter the **PC no.**, **date of issue** and **works up to**, and the **cumulative figures exactly as printed on the PC**: value of work done, materials, advance recovery, retention, release of retention, contra charges, previous payments; and the **VAT certified** if shown.
+3. **Previous certificate values** fill in from the last PC. If this is the first PC you record in the system (e.g. PC No. 6), enter the "previous" values once from the PC.
+4. Under **Certified quantity per item** change what the main contractor cut, then **Use the item total as the value of work done**.
+5. The summary works out the net and VAT live. After **Save**, the system checks the arithmetic (previous payments, VAT, item total) and shows the **difference between claimed and certified**. Attach the scanned PC in **Attached documents**.
+
+<!--img-->
+
+**📷 Recording a PC**
+
+![Recording a PC](../public/guide/img/en/75-pc.jpg)
+
+1. PC no. and date of issue.
+2. The proforma this PC certifies.
+3. The cumulative figures exactly as printed on the PC.
+4. Previous payments: worked out from the earlier certificates; compare with the PC.
+5. Certified quantity per item: change what the main contractor cut.
+6. Use the item total as the value of work done.
+7. Net, VAT and total as they will be invoiced, and the VAT summary.
+8. Save; the Issue the tax invoice button then appears.
+
+<!--/img-->
+
+### 8.6 Tax invoice from the PC
+1. In the PC window press **Issue the tax invoice** (accountant / administrator) and enter the invoice date.
+2. The invoice equals the PC **to the fils**: value of work done this period, less contra charges, retention and advance recovery; VAT on the right basis; due date from the project's payment terms; the PC no. in **Your ref.** and the contract no. in the details.
+3. The books stay right: revenue at the work value, retention as receivable (without VAT under the net basis), contra charges reduce revenue; the BOQ **Billed %** follows the certified quantities.
+4. If the PC has differences the system asks before issuing. To change an invoiced PC, **void** the invoice (administrator) — the PC opens again.
+5. Invoices from PCs are not sent to Zoho automatically yet — enter them in Zoho by hand.
+
+<!--img-->
+
+**📷 Tax invoice issued from a PC**
+
+![Tax invoice issued from a PC](../public/guide/img/en/76-pc-invoice.jpg)
+
+1. Client reference: the PC number.
+2. Lines from the PC: work of the period and contra charges; not edited here.
+3. VAT on the net after retention; due now equals the PC.
+
+<!--/img-->
+<!--img-->
+
+**📷 The printed tax invoice**
+
+![The printed tax invoice](../public/guide/img/en/p2-tax-invoice.jpg)
+
+1. Legal name and TRN at the top; client with TRN, contract details and the PC.
+2. Bank details beside the totals, no signature lines.
+
+<!--/img-->
+
+---
+
 ## 9. Payments and receipts
 
 Menu: **Payments** (or **Record payment** inside an invoice or expense).
@@ -761,25 +917,39 @@ Menu: **RFQs**.
 
 ### 12.2 Purchase order
 Menu: **Purchase orders** (or created from the RFQ).
-1. **+ New PO**: **Supplier**, **Project**, **Date**, **Delivery date**, **VAT %**, items, **Terms**, **Notes**, **Status**.
-2. **Print** or **Email supplier**.
-3. When the goods arrive press **Receive → create bill** — this creates the supplier bill for the order value.
+1. **+ New PO**: **Supplier**, **Project**, **Date**, **Delivery date**, **VAT %**.
+2. **Terms of payment**, **Deliver to** and **Site contact (name / mobile)**, **Agreement period from / to**, **Purchase request ref. (PR)**, **Supplier quotation ref.**
+3. Lines: **Item code**, **Description** (several lines allowed), **Unit**, **Qty**, **Unit price**, **Disc. %**, VAT. The net amount after the discount, the total discount and the totals update as you type.
+4. **Special conditions for this order** and **Notes** if needed → **Save**.
+5. **Print** / **PDF**: purchase order with the supplier's and Trigon's TRNs, net unit prices, total in words, the standard notes and signature lines for both parties; the **general conditions of purchase** print as page 2 (Settings, 2.7).
+6. **Email supplier**. When the goods arrive press **Receive → create bill** — the bill uses the net amount after discounts.
 
 <!--img-->
 
-**📷 Purchase order**
+**📷 Purchase order window**
 
-![Purchase order](../public/guide/img/en/32-po.jpg)
+![Purchase order window](../public/guide/img/en/77-po.jpg)
 
 1. Supplier and project.
-2. Items, quantities and rates.
-3. Print the PO on the letterhead.
-4. Email it to the supplier.
-5. On delivery: creates the supplier bill for the order value.
+2. Terms of payment.
+3. Deliver to and the site contact.
+4. Agreement period from / to.
+5. Purchase request no. and the supplier's quotation.
+6. Item code per line.
+7. Discount % per line; the net after the discount.
+8. Total discount and the totals before and after VAT.
 
 <!--/img-->
+<!--img-->
 
----
+**📷 The printed purchase order (page 1)**
+
+![The printed purchase order (page 1)](../public/guide/img/en/p4-purchase-order.jpg)
+
+1. Supplier with TRN, Trigon with TRN, PR and quotation.
+2. Lines with code and discount, total in words, standard notes and both signatures; the general conditions on page 2.
+
+<!--/img-->
 
 ## 13. Expenses and purchases
 
@@ -816,7 +986,8 @@ Menu: **Expenses & purchases** (or **+ Expense** on the project page).
 Menu: **Subcontracts & certificates**.
 
 ### 14.1 Subcontract
-1. **+ Add**: **Subcontractor**, **Project**, **Scope of work**, **Contract value (ex VAT)**, **Retention %**, **Advance payment**, **Status** → **Save**.
+1. **+ Add**: **Subcontractor**, **Project**, **Scope of work**, **Contract value (ex VAT)**, **Retention %**, **Advance payment**, **Status**.
+2. For the certificate and the agreement also fill: **Sub-contract agreement no.** and **date**, **Commencement / completion / extended completion dates**, **Approved variations (total)**, **VAT basis on certificates** (net after retention and contra charges, or on the work value) and **Contra charge uplift %** (e.g. 12) → **Save**.
 
 <!--img-->
 
@@ -828,28 +999,90 @@ Menu: **Subcontracts & certificates**.
 2. Previous certificates: cumulative, this period, retention, payable and status.
 
 <!--/img-->
-
-### 14.2 Payment certificate
-1. Open the subcontract → **+ New certificate**.
-2. Enter **Work completed to date (cumulative, ex VAT)**, **Advance recovery**, **Deductions / back-charges**.
-3. The system shows **Previously certified**, **This period**, retention, VAT and **Payable now**.
-4. Press **Approve & book cost** — after approval it cannot be edited and the cost is booked to the project.
-5. Pay it from **Payments**.
-
 <!--img-->
 
-**📷 Subcontractor payment certificate**
+**📷 Subcontract details**
 
-![Subcontractor payment certificate](../public/guide/img/en/35-subcert.jpg)
+![Subcontract details](../public/guide/img/en/78-subcontract-form.jpg)
 
-1. Work done to date, cumulative (not only this period). The system works out This period = cumulative − previously certified.
-2. Advance recovery on this certificate (if any).
-3. Deductions and back-charges (materials supplied, penalties…). Below, the summary: previously certified, this period, retention, VAT and payable now.
-4. Approve & book cost: locks the certificate and books the cost to the project as payable to the subcontractor.
+1. Agreement no. and date.
+2. Start, completion and extended completion dates.
+3. Total of approved variations.
+4. VAT basis on certificates.
+5. Contra charge uplift (e.g. 12%).
 
 <!--/img-->
 
----
+### 14.2 Payment certificate
+1. Open the subcontract → **+ New certificate**.
+2. **Date of issue**, **For works up to**, **Value of work done to date (cumulative)** and **Materials on site (cumulative)**.
+3. This certificate's **Advance recovery**, **Contra charges** (or type the cost in **Contra charges — cost** and the uplift is added), and **Release of retention**.
+4. **Subcontractor payment application** reference, **Cost codes** (one per line: code then amount) and **Notes**.
+5. The summary shows this certificate; after saving, the cumulative A, B, previous payments and VAT summary.
+6. **Print** / **PDF** — **PAYMENT CERTIFICATE FOR SUBCONTRACTOR** in the usual PC layout: contract value, variations, VAT, adjusted value and dates; work done, materials, advance (A); retention, contra charges, release, previous payments (B); net, VAT, net certified incl. VAT, VAT summary (previous / this / cumulative), cost codes, notes, amount in words and the signature boxes from Settings.
+7. **Approve & book cost** (accountant): the certificate is locked and the cost of the period (work + materials − contra) is booked with the VAT as certified. The VAT basis is fixed on each certificate when created, so issued certificates never change.
+8. Pay it from **Payments**.
+
+<!--img-->
+
+**📷 Subcontractor payment certificate window**
+
+![Subcontractor payment certificate window](../public/guide/img/en/79-subcert.jpg)
+
+1. For works up to.
+2. Work and materials to date, cumulative.
+3. Contra cost: type it and the uplift is added into the contra charges.
+4. Release of retention in this certificate.
+5. The subcontractor's payment application; printed in the notes.
+6. Cost codes: one per line, code then amount.
+7. Certificate summary; after saving, the cumulative figures and VAT summary.
+8. Print in the PC layout.
+
+<!--/img-->
+<!--img-->
+
+**📷 The printed subcontractor payment certificate**
+
+![The printed subcontractor payment certificate](../public/guide/img/en/p3-sub-pc.jpg)
+
+1. Contract details and dates, then certified (A), deductions (B), net and VAT.
+2. VAT summary, cost codes, notes, amount in words and signature boxes.
+
+<!--/img-->
+
+### 14.3 Sub-contract agreement
+1. Open the subcontract → **📄 Sub-contract agreement**.
+2. **Payment within (days)**, **Defects liability period (months)**, **Sub-contractor trade licence no.**, and who signs for Trigon (empty = from Settings).
+3. **Appendix 1 — Bill of quantities**: item, description, unit, quantity, rate. Tick **Use the total as the contract value** if needed.
+4. **Appendix 2 — Particular conditions & scope**.
+5. **Appendix 3 — Responsibility matrix**: for each item choose Contractor, Sub-contractor, Both or N/A, and a comment.
+6. **Agreement wording for this subcontract**: the standard wording from Settings; change it for this subcontract only, or **Back to the standard wording**.
+7. **Save**, then **Print** / **PDF**: cover page, the agreement with the fields filled in (names, licence and TRN, value in figures and words, retention and its release, payment days, contra uplift, dates), signature and witness lines, and each appendix on its own page.
+
+<!--img-->
+
+**📷 Sub-contract agreement window**
+
+![Sub-contract agreement window](../public/guide/img/en/80-sc-agreement.jpg)
+
+1. Payment days and defects period.
+2. Sub-contractor licence no. (printed in the opening of the agreement).
+3. Appendix 1: bill of quantities.
+4. Use the BOQ total as the contract value.
+5. Appendix 2: particular conditions and scope.
+6. Appendix 3: responsibility matrix — contractor / sub-contractor / both / N/A.
+7. Print / PDF.
+
+<!--/img-->
+<!--img-->
+
+**📷 A page of the printed agreement**
+
+![A page of the printed agreement](../public/guide/img/en/p5-sc-agreement.jpg)
+
+1. The parties and the clauses with the fields filled in from the subcontract.
+
+<!--/img-->
 
 ## 15. Stock
 
@@ -1461,6 +1694,10 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 1. Pick a page from the menu.
 
 <!--/img-->
+
+---
+
+**Letterhead on every page:** printed documents repeat the letterhead at the top of every page and keep room for the footer, so text never runs under them. Tax invoices, credit notes and subcontractor certificates show the **legal name** and TRN at the top; proformas show no TRN.
 
 ---
 
