@@ -603,10 +603,19 @@ async function api(req, res, url) {
       applyPayroll(+b, await readBody(req)); audit(req, 'update', 'payroll', +b, row.month);
       return send(res, 200, { ok: 1 });
     }
+    const dropRow = id => { db.prepare('DELETE FROM payroll WHERE id=?').run(id); for (const t of ['loan_repayments', 'payroll_alloc']) db.prepare(`DELETE FROM ${t} WHERE payroll_id=?`).run(id); };
+    if (!b && method === 'DELETE') {                                                  // a whole draft month; a finalized month stays locked
+      if (!monthOk(month)) return send(res, 400, { error: 'month must be YYYY-MM' });
+      const rows = db.prepare('SELECT id, status FROM payroll WHERE month=?').all(month);
+      if (rows.some(r => r.status === 'final')) return send(res, 409, { error: 'payroll is finalized' });
+      rows.forEach(r => dropRow(r.id)); audit(req, 'delete', 'payroll', 0, `${month}: ${rows.length} rows`);
+      return send(res, 200, { deleted: rows.length });
+    }
     if (b && method === 'DELETE') {
       const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(+b);
-      if (row?.status === 'final') return send(res, 409, { error: 'payroll is finalized' });
-      db.prepare('DELETE FROM payroll WHERE id=?').run(+b); db.prepare('DELETE FROM loan_repayments WHERE payroll_id=?').run(+b);
+      if (!row) return send(res, 404, { error: 'not found' });
+      if (row.status === 'final') return send(res, 409, { error: 'payroll is finalized' });
+      dropRow(+b); audit(req, 'delete', 'payroll', +b, row.month);
       return send(res, 200, { ok: 1 });
     }
   }
