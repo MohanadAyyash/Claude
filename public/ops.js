@@ -90,23 +90,41 @@ PAGES.rfq = async () => {
 // ---- purchase orders ---------------------------------------------------------------------------
 window.poModal = guard(async (id, preset = {}) => {
   const [parties, projects] = await Promise.all([api('GET', 'parties'), api('GET', 'projects')]);
-  const row = id ? await api('GET', 'purchase_orders/' + id) : null, e = itemsEditor(row?.items || []);
-  const r = row || { date: today(), vat_pct: S.vat_pct || 5, status: 'draft', terms: 'Delivery to site. Payment 30 days from invoice.', ...preset };
+  const row = id ? await api('GET', 'purchase_orders/' + id) : null;
+  const r = row || { date: today(), vat_pct: S.vat_registered === '0' ? 0 : (S.vat_pct || 5), status: 'draft', payment_terms: '60 days from invoice', terms: '', ...preset };
+  // order lines: item code, description, unit, qty, unit price, discount %, VAT — net amount after the discount
+  const line = (i = {}) => `<tr><td style="width:90px"><input data-k="code" placeholder="${tr('الكود', 'Code')}" value="${esc(i.code || '')}"></td><td><textarea data-k="description" rows="1" placeholder="${tr('الوصف', 'Description')}" style="min-height:34px">${esc(i.description || '')}</textarea></td>
+    <td style="width:62px"><input data-k="unit" value="${esc(i.unit || '')}" placeholder="${tr('الوحدة', 'Unit')}"></td><td style="width:80px"><input data-k="qty" type="number" step="any" value="${i.qty ?? 1}"></td><td style="width:95px"><input data-k="rate" type="number" step="any" value="${i.rate ?? 0}"></td>
+    <td style="width:66px"><input data-k="disc" type="number" step="any" value="${i.disc ?? 0}"></td><td style="width:95px"><select data-k="vat">${Object.entries(VATC).map(([k, v]) => `<option value="${k}" ${(i.vat || 'std') === k ? 'selected' : ''}>${tr(...v)}</option>`).join('')}</select></td><td class="n" style="width:100px" data-amt></td><td style="width:28px"><button type="button" class="x">×</button></td></tr>`;
+  const e = { html: `<div class="tw items docitems"><table><thead><tr><th>${tr('كود الصنف', 'Item code')}</th><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('سعر الوحدة', 'Unit price')}</th><th>${tr('خصم %', 'Disc. %')}</th><th>${tr('الضريبة', 'VAT')}</th><th class="n">${tr('الصافي', 'Net amount')}</th><th></th></tr></thead><tbody id="items">${((row?.items || []).length ? row.items : [{}]).map(line).join('')}</tbody></table></div>
+    <button type="button" class="btn sec sm" id="addrow" style="margin-top:6px">+ ${tr('بند', 'Line')}</button>` };
   const head = [
     { k: 'party_id', ar: 'المورد', en: 'Supplier', type: 'select', options: refOpts(parties.filter(p => p.type !== 'client'), p => p.name, false) },
     { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`) },
     { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' }, { k: 'delivery_date', ar: 'تاريخ التسليم', en: 'Delivery date', type: 'date' },
-    { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' },
+    { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' }, { k: 'payment_terms', ar: 'شروط الدفع', en: 'Terms of payment' },
+    { k: 'deliver_to', ar: 'مكان التسليم', en: 'Deliver to' }, { k: 'site_contact', ar: 'مسؤول الاستلام بالموقع (الاسم / الجوال)', en: 'Site contact (name / mobile)' },
+    { k: 'valid_from', ar: 'مدة الاتفاقية من', en: 'Agreement period from', type: 'date' }, { k: 'valid_to', ar: 'إلى', en: 'to', type: 'date' },
+    { k: 'pr_ref', ar: 'رقم طلب الشراء الداخلي (PR)', en: 'Purchase request ref. (PR)' }, { k: 'quote_ref', ar: 'مرجع عرض سعر المورد', en: 'Supplier quotation ref.' },
     { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['draft', tr('مسودة', 'Draft')], ['sent', tr(...STATUS.sent)], ['received', tr(...STATUS.received)], ['closed', tr(...STATUS.closed)], ['cancelled', tr(...STATUS.cancelled)]] }];
   const m = modal(`<h2>${tr('أمر شراء', 'Purchase order')} ${esc(r.number || '')} ${row ? tag(r.status) : ''}</h2><div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>${e.html}<div class="totals" id="tot"></div>
-    <div class="f2" style="margin-top:10px">${field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms)}${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}</div>
+    <div class="f2" style="margin-top:10px">${field({ k: 'terms', ar: 'شروط خاصة بهذا الأمر', en: 'Special conditions for this order', type: 'textarea' }, r.terms)}${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}</div>
+    <p class="muted">${tr('الملاحظات الثابتة والشروط العامة (صفحة ثانية) تُطبع تلقائياً من الإعدادات.', 'The standard notes and the general conditions (second page) print from Settings.')}</p>
     <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button>${row ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button><button class="btn sec" id="mail">${tr('إرسال للمورد', 'Email supplier')}</button>${row.bill_id ? '' : `<button class="btn sec" id="rcv">${tr('استلام وإنشاء فاتورة مورد', 'Receive → create bill')}</button>`}` : ''}
     <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && !row.bill_id ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`, true);
-  bindDoc(m, e.row, 1, false);
+  const calc = () => {
+    let sub = 0, gross = 0, std = 0; m.querySelectorAll('#items tr').forEach(t => { const q = +$('[data-k=qty]', t).value || 0, rt = +$('[data-k=rate]', t).value || 0, d = +$('[data-k=disc]', t).value || 0, a = q * rt * (1 - d / 100);
+      gross += q * rt; sub += a; if ($('[data-k=vat]', t).value === 'std') std += a; $('[data-amt]', t).textContent = money(a); });
+    const vat = std * (+val(m, 'vat_pct') || 0) / 100;
+    $('#tot', m).innerHTML = `${gross - sub > 0.004 ? `<div><span>${tr('مجموع الخصم', 'Total discount')}</span><span>${money(gross - sub)}</span></div>` : ''}<div><span>${tr('الإجمالي قبل الضريبة', 'Total excl. VAT')}</span><span>${money(sub)}</span></div><div><span>${tr('الضريبة', 'VAT')}</span><span>${money(vat)}</span></div><div class="t"><span>${tr('الإجمالي', 'Total')}</span><span>${money(sub + vat)}</span></div>`;
+  };
+  m.addEventListener('input', calc); m.addEventListener('click', ev => { if (ev.target.classList.contains('x')) { ev.target.closest('tr').remove(); calc(); } });
+  $('#addrow', m).onclick = () => { $('#items', m).insertAdjacentHTML('beforeend', line()); calc(); }; calc();
+  const readLines = () => [...m.querySelectorAll('#items tr')].map(t => ({ code: $('[data-k=code]', t).value, description: $('[data-k=description]', t).value, unit: $('[data-k=unit]', t).value, qty: +$('[data-k=qty]', t).value || 0, rate: +$('[data-k=rate]', t).value || 0, disc: +$('[data-k=disc]', t).value || 0, vat: $('[data-k=vat]', t).value })).filter(i => i.description || i.rate);
   if (row && window.docsPanel) docsPanel(m, 'purchase_order', row.id, canOps('purchase_orders'));
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
-    const b = { items: readItems(m) }; head.forEach(f => b[f.k] = val(m, f.k)); b.terms = val(m, 'terms'); b.notes = val(m, 'notes');
+    const b = { items: readLines() }; head.forEach(f => b[f.k] = val(m, f.k)); b.terms = val(m, 'terms'); b.notes = val(m, 'notes');
     if (!b.party_id) throw new Error(tr('اختر المورد', 'Select a supplier'));
     row ? await api('PUT', 'purchase_orders/' + row.id, b) : await api('POST', 'purchase_orders', b); closeModal(); render();
   });
@@ -133,7 +151,12 @@ PAGES.subcontracts = async () => {
     intro: `<p class="muted">${tr('أنشئ عقد الباطن ثم أصدر شهادات دفع تراكمية؛ يحسب النظام المحتجزات والدفعة المقدمة والضريبة، وعند الاعتماد يُنشئ مصروفاً بتكلفة المشروع.', 'Create the subcontract, then issue cumulative payment certificates; retention, advance recovery and VAT are calculated and approval books the cost to the project.')}</p>`,
     fields: async () => [{ k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`, false) }, { k: 'party_id', ar: 'مقاول الباطن', en: 'Subcontractor', type: 'select', options: refOpts(parties.filter(p => p.type !== 'client'), p => p.name, false) },
       { k: 'description', ar: 'نطاق العمل', en: 'Scope of work', full: 1, req: 1 }, { k: 'contract_value', ar: 'قيمة العقد (بدون ضريبة)', en: 'Contract value (ex VAT)', type: 'number', def: 0 }, { k: 'retention_pct', ar: 'نسبة المحتجزات %', en: 'Retention %', type: 'number', def: 5 },
-      { k: 'advance', ar: 'الدفعة المقدمة', en: 'Advance payment', type: 'number', def: 0 }, { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['active', tr(...STATUS.active)], ['completed', tr(...STATUS.completed)], ['cancelled', tr(...STATUS.cancelled)]] }],
+      { k: 'advance', ar: 'الدفعة المقدمة', en: 'Advance payment', type: 'number', def: 0 }, { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['active', tr(...STATUS.active)], ['completed', tr(...STATUS.completed)], ['cancelled', tr(...STATUS.cancelled)]] },
+      { k: 'agreement_no', ar: 'رقم اتفاقية عقد الباطن', en: 'Sub-contract agreement no.' }, { k: 'agreement_date', ar: 'تاريخ الاتفاقية', en: 'Agreement date', type: 'date' },
+      { k: 'start_date', ar: 'تاريخ البدء', en: 'Commencement date', type: 'date' }, { k: 'completion_date', ar: 'تاريخ الإنجاز', en: 'Completion date', type: 'date' }, { k: 'eot_date', ar: 'تاريخ الإنجاز بعد التمديد', en: 'Extended completion date', type: 'date' },
+      { k: 'variations', ar: 'أوامر التغيير المعتمدة (مجموع)', en: 'Approved variations (total)', type: 'number', def: 0 },
+      { k: 'vat_basis', ar: 'أساس الضريبة في الشهادات', en: 'VAT basis on certificates', type: 'select', def: 'net', options: [['net', tr('على الصافي بعد المحتجزات والخصومات', 'On the net after retention and contra charges')], ['gross', tr('على قيمة الأعمال', 'On the work value')]] },
+      { k: 'contra_uplift', ar: 'نسبة الإضافة على الخصومات Contra % (مثل 12)', en: 'Contra charge uplift % (e.g. 12)', type: 'number', def: 0 }],
     onModal: (m, row) => row && docsPanel(m, 'subcontract', row.id, canOps('subcontracts')),
     cols: [{ ar: 'المقاول', en: 'Subcontractor', k: 'party_name' }, { ar: 'المشروع', en: 'Project', k: 'project_name' }, { ar: 'النطاق', en: 'Scope', k: 'description' }, { ar: 'قيمة العقد', en: 'Contract', n: 1, f: r => money(r.contract_value) },
       { ar: 'المعتمد', en: 'Certified', n: 1, f: r => money(r.certified) }, { ar: 'محتجزات', en: 'Retention held', n: 1, f: r => money(r.retention_held) }, { ar: 'شهادات', en: 'Certs', n: 1, k: 'certs' }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) }] });
@@ -144,28 +167,81 @@ async function subDetail(sub, edit) {
   const m = modal(`<h2>${esc(sub.party_name || '')} — ${esc(sub.description || '')}</h2><p class="muted">${esc(sub.project_name || '')} · ${tr('قيمة العقد', 'Contract')} ${money(sub.contract_value)} · ${tr('محتجزات', 'Retention')} ${sub.retention_pct}%</p>
     <div class="tw"><table><thead><tr><th>${tr('الشهادة', 'Cert')}</th><th>${tr('التاريخ', 'Date')}</th><th class="n">${tr('التراكمي', 'Cumulative')}</th><th class="n">${tr('هذه الفترة', 'This period')}</th><th class="n">${tr('المستحق الآن', 'Payable now')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
     ${certs.map(x => `<tr class="click" data-c="${x.id}"><td>${esc(x.number)}</td><td>${esc(x.date)}</td><td class="n">${money(x.cumulative)}</td><td class="n">${money(x.gross_this)}</td><td class="n">${money(x.payable_now)}</td><td>${tag(x.status === 'approved' ? 'approved' : 'draft')}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد شهادات', 'No certificates yet')}</td></tr>`}</tbody></table></div>
-    <div class="acts">${canOps('subcontracts') ? `<button class="btn" id="nc">+ ${tr('شهادة دفع', 'New certificate')}</button><button class="btn sec" id="es">${tr('تعديل العقد', 'Edit contract')}</button>` : ''}<button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
+    <div class="acts">${canOps('subcontracts') ? `<button class="btn" id="nc">+ ${tr('شهادة دفع', 'New certificate')}</button><button class="btn sec" id="es">${tr('تعديل العقد', 'Edit contract')}</button><button class="btn sec" id="agr">📄 ${tr('اتفاقية عقد الباطن', 'Sub-contract agreement')}</button>` : ''}<button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
   $('#cancel', m).onclick = closeModal;
-  if ($('#nc', m)) $('#nc', m).onclick = () => certModal(sub, null, Math.max(0, ...certs.map(x => x.cumulative)));
+  const asc = [...certs].sort((a, b) => a.id - b.id), before = id => asc.filter(x => x.id < id).pop();
+  if ($('#nc', m)) $('#nc', m).onclick = () => certModal(sub, null, asc[asc.length - 1]);
   if ($('#es', m)) $('#es', m).onclick = () => { closeModal(); edit(sub); };
-  m.querySelectorAll('[data-c]').forEach(t => t.onclick = () => certModal(sub, certs.find(x => x.id === +t.dataset.c), Math.max(0, ...certs.map(x => x.cumulative))));
+  if ($('#agr', m)) $('#agr', m).onclick = guard(async () => { closeModal(); scAgreementModal(sub); });
+  m.querySelectorAll('[data-c]').forEach(t => t.onclick = () => certModal(sub, certs.find(x => x.id === +t.dataset.c), before(+t.dataset.c)));
 }
-function certModal(sub, row, latest = 0) {
+// ---- sub-contract agreement: standard clauses with fields filled in, per-subcontract wording, three appendices --------------------
+const SC_BY = [['', '—'], ['contractor', tr('المقاول (تريجون)', 'Contractor')], ['sub', tr('مقاول الباطن', 'Sub-contractor')], ['both', tr('الاثنين', 'Both')], ['na', 'N/A']];
+async function scAgreementModal(sub) {
+  const a = await api('GET', 'sc-agreement/' + sub.id), f = a.fields;
+  const boqRow = (r = {}) => `<tr><td style="width:60px"><input data-b="item" value="${esc(r.item || '')}"></td><td><input data-b="description" value="${esc(r.description || '')}"></td><td style="width:60px"><input data-b="unit" value="${esc(r.unit || '')}"></td><td style="width:90px"><input data-b="qty" type="number" step="any" value="${r.qty ?? ''}"></td><td style="width:90px"><input data-b="rate" type="number" step="any" value="${r.rate ?? ''}"></td><td class="n" style="width:100px" data-ba></td><td style="width:28px"><button type="button" class="x">×</button></td></tr>`;
+  const mxRow = r => r.group ? `<tr data-g="${esc(r.group)}"><td colspan="3"><b>${esc(r.group)}</b></td></tr>` : `<tr data-i><td><input data-m="item" value="${esc(r.item || '')}"></td><td style="width:150px"><select data-m="by">${SC_BY.map(([k, l]) => `<option value="${k}" ${r.by === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td><input data-m="note" value="${esc(r.note || '')}"></td></tr>`;
+  const m = modal(`<h2>${tr('اتفاقية عقد الباطن', 'Sub-contract agreement')} — ${esc(f.subcontractor)}</h2>
+    <p class="muted">${tr('نص الاتفاقية القياسي من الإعدادات، والخانات تُعبّأ تلقائياً من بيانات العقد (الاسم، النطاق، القيمة بالأرقام والحروف، المحتجزات، أيام الدفع، نسبة الخصومات، التواريخ). يمكنك تعديل النص لهذا العقد فقط.', 'The standard wording comes from Settings; the fields fill in from the subcontract (names, scope, value in figures and words, retention, payment days, contra uplift, dates). You can change the wording for this subcontract only.')}
+      ${!f.agreement_no ? `<br><span class="neg">${tr('أدخل رقم الاتفاقية والتواريخ من «تعديل العقد».', 'Enter the agreement no. and dates under Edit contract.')}</span>` : ''}</p>
+    <div class="f2">${field({ k: 'payment_days', ar: 'الدفع خلال (يوم من الفاتورة)', en: 'Payment within (days of invoice)', type: 'number' }, a.payment_days)}${field({ k: 'dlp_months', ar: 'فترة الصيانة (أشهر)', en: 'Defects liability period (months)', type: 'number' }, a.dlp_months)}
+      ${field({ k: 'sub_licence', ar: 'رقم الرخصة التجارية لمقاول الباطن', en: 'Sub-contractor trade licence no.' }, a.sub_licence)}${field({ k: 'signatory', ar: 'الموقّع عن تريجون (الاسم، المنصب) — فارغ = من الإعدادات', en: 'Signing for Trigon (name, position) — empty = from Settings' }, a.signatory)}</div>
+    <h3>${tr('ملحق 1 — جدول الكميات', 'Appendix 1 — Bill of quantities')}</h3>
+    <div class="tw items"><table><thead><tr><th>${tr('البند', 'Item')}</th><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('السعر', 'Rate')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th></th></tr></thead><tbody id="scb">${(a.boq.length ? a.boq : [{}]).map(boqRow).join('')}</tbody></table></div>
+    <div class="bar" style="margin-top:6px"><button type="button" class="btn sec sm" id="scadd">+ ${tr('بند', 'Line')}</button><span class="sp"></span><b id="sctot"></b> <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="usev" style="width:auto"> ${tr('اجعل المجموع قيمة العقد', 'Use the total as the contract value')} (${tr('الحالية', 'now')} ${money(sub.contract_value)})</label></div>
+    <h3>${tr('ملحق 2 — الشروط الخاصة ونطاق العمل', 'Appendix 2 — Particular conditions & scope')}</h3>${field({ k: 'particular', ar: '', en: '', type: 'textarea', full: 1 }, a.particular)}
+    <h3>${tr('ملحق 3 — مصفوفة المسؤوليات', 'Appendix 3 — Responsibility matrix')}</h3><div class="tw"><table><tbody id="scm">${a.matrix.map(mxRow).join('')}</tbody></table></div>
+    <details style="margin-top:10px"><summary style="cursor:pointer"><b>${tr('نص الاتفاقية لهذا العقد', 'Agreement wording for this subcontract')}</b> <span class="muted">${a.text ? tr('— معدّل لهذا العقد', '— changed for this subcontract') : tr('— النص القياسي', '— standard wording')}</span></summary>
+      <p class="muted">${tr('الخانات بين {{ }} تُعبّأ تلقائياً. السطر الذي يبدأ برقم ونقطة (مثل «6. Payment») هو عنوان بند.', 'Fields between {{ }} fill in automatically. A line starting with a number and a dot (e.g. “6. Payment”) is a clause heading.')}</p>
+      <textarea id="sctext" style="min-height:300px;font-family:var(--mono,monospace);font-size:12px">${esc(a.text || a.template)}</textarea><button type="button" class="btn sec sm" id="screset">${tr('إرجاع النص القياسي', 'Back to the standard wording')}</button></details>
+    <div class="acts">${canOps('subcontracts') ? `<button class="btn" id="scsave">${tr('حفظ', 'Save')}</button>` : ''}<button class="btn sec" id="scpr">${tr('طباعة', 'Print')}</button><button class="btn sec" id="scpdf">PDF</button><button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
+  const tot = () => { let t = 0; m.querySelectorAll('#scb tr').forEach(r => { const v = (+$('[data-b=qty]', r).value || 0) * (+$('[data-b=rate]', r).value || 0); t += v; $('[data-ba]', r).textContent = money(v); }); $('#sctot', m).textContent = `${tr('المجموع', 'Total')} ${money(t)}`; };
+  m.addEventListener('input', tot); tot();
+  $('#scadd', m).onclick = () => { $('#scb', m).insertAdjacentHTML('beforeend', boqRow()); tot(); };
+  m.addEventListener('click', e => { if (e.target.classList.contains('x') && e.target.closest('#scb')) { e.target.closest('tr').remove(); tot(); } });
+  $('#screset', m).onclick = () => { $('#sctext', m).value = a.template; $('#sctext', m).dataset.reset = '1'; };
+  const body = () => ({ payment_days: val(m, 'payment_days'), dlp_months: val(m, 'dlp_months'), sub_licence: val(m, 'sub_licence'), signatory: val(m, 'signatory'), particular: val(m, 'particular'),
+    text: $('#sctext', m).value.trim() === String(a.template).trim() ? '' : $('#sctext', m).value, use_boq_value: $('#usev', m).checked ? 1 : 0,
+    boq: [...m.querySelectorAll('#scb tr')].map(r => ({ item: $('[data-b=item]', r).value, description: $('[data-b=description]', r).value, unit: $('[data-b=unit]', r).value, qty: $('[data-b=qty]', r).value, rate: $('[data-b=rate]', r).value })).filter(r => r.description || +r.rate),
+    matrix: [...m.querySelectorAll('#scm tr')].map(r => r.dataset.g !== undefined ? { group: r.dataset.g } : { item: $('[data-m=item]', r).value, by: $('[data-m=by]', r).value, note: $('[data-m=note]', r).value }) });
+  const save = () => api('PUT', 'sc-agreement/' + sub.id, body());
+  $('#cancel', m).onclick = () => { closeModal(); render(); };
+  if ($('#scsave', m)) $('#scsave', m).onclick = guard(async () => { await save(); toast(tr('تم الحفظ', 'Saved')); });
+  $('#scpr', m).onclick = guard(async () => { if ($('#scsave', m)) await save(); window.open(`/api/doc/sc_agreement/${sub.id}?print=1`, '_blank'); });
+  $('#scpdf', m).onclick = guard(async () => { if ($('#scsave', m)) await save(); window.open(`/api/doc/sc_agreement/${sub.id}/pdf`, '_blank'); });
+}
+
+function certModal(sub, row, prevCert) {
+  const pc = prevCert || { cumulative: 0, materials: 0 }, locked = row?.status === 'approved', net = sub.vat_basis === 'net';
+  const F = (k, ar, en, type = 'number', v) => field({ k, ar, en, type }, v !== undefined ? v : row?.[k] ?? '');
   const m = modal(`<h2>${tr('شهادة دفع مقاول باطن', 'Subcontractor payment certificate')} ${esc(row?.number || '')} ${row ? tag(row.status === 'approved' ? 'approved' : 'draft') : ''}</h2>
-    <div class="f2">${field({ k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' }, row?.date || today())}${field({ k: 'cumulative', ar: 'قيمة الأعمال المنجزة حتى تاريخه (تراكمي، بدون ضريبة)', en: 'Work completed to date (cumulative, ex VAT)', type: 'number' }, row?.cumulative ?? '')}
-    ${field({ k: 'retention_pct', ar: 'المحتجزات %', en: 'Retention %', type: 'number' }, row?.retention_pct ?? sub.retention_pct)}${field({ k: 'advance_recovery', ar: 'استرداد الدفعة المقدمة', en: 'Advance recovery', type: 'number' }, row?.advance_recovery ?? 0)}
-    ${field({ k: 'deductions', ar: 'خصومات / تحميلات', en: 'Deductions / back-charges', type: 'number' }, row?.deductions ?? 0)}${field({ k: 'vat_pct', ar: 'الضريبة %', en: 'VAT %', type: 'number' }, row?.vat_pct ?? (S.vat_pct || 5))}
-    ${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }, row?.notes)}</div><div class="totals" id="pv"></div>
-    <div class="acts">${row?.status === 'approved' ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}${row && row.status !== 'approved' && canFin() ? `<button class="btn sec" id="ap">${tr('اعتماد وإنشاء مصروف', 'Approve & book cost')}</button>` : ''}${row ? `<button class="btn sec" id="pr">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}<button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && row.status !== 'approved' ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`);
-  const prevV = row ? row.previous : latest;
+    <p class="muted">${tr('أرقام تراكمية بنفس ترتيب شهادة الدفع: الأعمال المنجزة والمواد حتى تاريخه، وخصومات هذه الشهادة. أساس الضريبة لهذا العقد', 'Cumulative, as on a payment certificate: work done and materials to date, and this certificate’s deductions. VAT basis for this subcontract')}: <b>${net ? tr('على الصافي بعد المحتجزات والخصومات', 'on the net after retention and contra charges') : tr('على قيمة الأعمال', 'on the work value')}</b> (${tr('يُغيَّر من «تعديل العقد»', 'change it under Edit contract')}).</p>
+    <div class="f2">${F('date', 'تاريخ الإصدار', 'Date of issue', 'date', row?.date || today())}${F('period_to', 'للأعمال حتى تاريخ', 'For works up to', 'date')}
+    ${F('cumulative', 'قيمة الأعمال المنجزة حتى تاريخه (تراكمي، بدون ضريبة)', 'Value of work done to date (cumulative, ex VAT)', 'number', row?.cumulative ?? pc.cumulative)}${F('materials', 'المواد بالموقع (تراكمي)', 'Materials on site (cumulative)', 'number', row?.materials ?? pc.materials ?? 0)}
+    ${F('retention_pct', 'المحتجزات %', 'Retention %', 'number', row?.retention_pct ?? sub.retention_pct)}${F('advance_recovery', 'استرداد الدفعة المقدمة (هذه الشهادة)', 'Advance recovery (this certificate)', 'number', row?.advance_recovery ?? 0)}
+    <div class="f"><label>${tr('تكلفة الخصومات Contra (هذه الشهادة)', 'Contra charges — cost (this certificate)')}${sub.contra_uplift ? ` + ${sub.contra_uplift}%` : ''}</label><input type="number" step="any" id="ccost" placeholder="${tr('اختياري — يحسب الخصم مع نسبة الإضافة', 'optional — adds the uplift')}"></div>
+    ${F('deductions', 'الخصومات Contra Charges (هذه الشهادة)', 'Contra charges (this certificate)', 'number', row?.deductions ?? 0)}${F('release', 'الإفراج عن محتجزات (هذه الشهادة)', 'Release of retention (this certificate)', 'number', row?.release ?? 0)}
+    ${F('vat_pct', 'الضريبة %', 'VAT %', 'number', row?.vat_pct ?? (S.vat_registered === '0' ? 0 : (S.vat_pct || 5)))}${F('app_ref', 'مرجع طلب الدفعة من المقاول (يُطبع بالملاحظات)', 'Subcontractor payment application (printed in the notes)', 'text')}
+    ${field({ k: 'cost_codes', ar: 'توزيع الأكواد (سطر لكل كود: الكود ثم المبلغ)', en: 'Cost codes (one per line: code then amount)', type: 'textarea' }, row?.cost_codes)}${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, row?.notes)}</div>
+    <div id="pv"></div>
+    <div class="acts">${locked ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}${row && !locked && canFin() ? `<button class="btn sec" id="ap">${tr('اعتماد وإنشاء مصروف', 'Approve & book cost')}</button>` : ''}${row ? `<button class="btn sec" id="pr">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}
+      <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && !locked ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`, true);
+  if (locked) m.querySelectorAll('.modal input,.modal select,.modal textarea').forEach(x => x.disabled = true);
+  const n = k => +val(m, k) || 0, r2 = x => Math.round(x * 100) / 100;
   const calc = () => {
-    const cum = +val(m, 'cumulative') || 0, g = cum - prevV, ret = g * (+val(m, 'retention_pct') || 0) / 100, ded = +val(m, 'deductions') || 0, adv = +val(m, 'advance_recovery') || 0, vat = (g - ded) * (+val(m, 'vat_pct') || 0) / 100;
-    $('#pv', m).innerHTML = `<div><span>${tr('المعتمد سابقاً', 'Previously certified')}</span><span>${money(prevV)}</span></div><div><span>${tr('هذه الفترة', 'This period')}</span><span>${money(g)}</span></div><div><span>${tr('المحتجزات', 'Retention')}</span><span>- ${money(ret)}</span></div><div><span>${tr('الضريبة', 'VAT')}</span><span>${money(vat)}</span></div><div class="t"><span>${tr('المستحق الآن', 'Payable now')}</span><span>${money(g - ded - ret - adv + vat)}</span></div>`;
+    const g = r2(n('cumulative') - (+pc.cumulative || 0)), mt = r2(n('materials') - (+pc.materials || 0)), ret = r2((g + mt) * n('retention_pct') / 100), con = n('deductions'), adv = n('advance_recovery'), rel = n('release');
+    const nt = r2(g + mt - adv - ret - con + rel), vat = r2((net ? nt : g + mt - con) * n('vat_pct') / 100);
+    const rows = [[tr('الأعمال حتى تاريخه', 'Work done to date'), n('cumulative')], [tr('السابق', 'Previous'), -(+pc.cumulative || 0)], [tr('هذه الشهادة', 'This certificate'), g, 1], mt ? [tr('المواد بالموقع (حركة)', 'Materials on site (movement)'), mt] : null,
+      [`${tr('المحتجزات', 'Retention')} ${n('retention_pct')}%`, -ret], con ? [tr('الخصومات', 'Contra charges'), -con] : null, adv ? [tr('استرداد المقدمة', 'Advance recovery'), -adv] : null, rel ? [tr('إفراج محتجزات', 'Retention released'), rel] : null,
+      [tr('الصافي (A − B)', 'Net (A − B)'), nt, 1], [`${tr('الضريبة', 'VAT')} ${n('vat_pct')}%`, vat], [tr('الصافي المعتمد شامل الضريبة', 'Net certified incl. VAT'), r2(nt + vat), 1]];
+    $('#pv', m).innerHTML = `<table style="width:100%;max-width:480px;margin-inline-start:auto"><tbody>${rows.filter(Boolean).map(([l, v, b]) => `<tr${b ? ' style="font-weight:700"' : ''}><td>${l}</td><td class="n">${money(v)}</td></tr>`).join('')}</tbody></table>
+      ${row ? `<p class="muted" style="text-align:end">${tr('تراكمي', 'Cumulative')}: A ${money(row.A)} · B ${money(row.B)} · ${tr('الدفعات السابقة', 'previous payments')} ${money(row.prev_payments)} · ${tr('الضريبة: سابق / هذه / تراكمي', 'VAT: previous / this / cumulative')} ${money(row.prev_vat)} / ${money(row.vat)} / ${money(row.vat_cum)}</p>` : ''}`;
   };
   m.addEventListener('input', calc); calc();
+  $('#ccost', m).oninput = () => { const v = +$('#ccost', m).value || 0; m.querySelector('[name=deductions]').value = r2(v * (1 + (+sub.contra_uplift || 0) / 100)); calc(); };
   $('#cancel', m).onclick = () => { closeModal(); render(); };
   if ($('#save', m)) $('#save', m).onclick = guard(async () => {
-    const b = { subcontract_id: sub.id }; ['date', 'cumulative', 'retention_pct', 'advance_recovery', 'deductions', 'vat_pct', 'notes'].forEach(k => b[k] = val(m, k));
+    const b = { subcontract_id: sub.id }; ['date', 'period_to', 'cumulative', 'materials', 'retention_pct', 'advance_recovery', 'deductions', 'release', 'vat_pct', 'app_ref', 'cost_codes', 'notes'].forEach(k => b[k] = val(m, k));
     row ? await api('PUT', 'sub_certs/' + row.id, b) : await api('POST', 'sub_certs', b); closeModal(); render();
   });
   if (row) {

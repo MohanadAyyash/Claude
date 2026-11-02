@@ -307,6 +307,10 @@ module.exports = ctx => {
       const { e, invoices, bills, payments } = data(from || c.start || null, to || today()); run.e = e;
       const each = async (kind, id, label, fn) => { try { await fn(); } catch (err) { run.failed++; run.errors.push(`${label}: ${err.message}`); mark(kind, id, null, null, 'error', err.message.slice(0, 500), null); } };
       for (const i of invoices) await each('invoice', i.id, i.number, async () => {
+        if ((i.vat_basis === 'net' && i.retention > 0.004) || i.release > 0.004 || (i.items || []).some(x => x.contra)) {   // PC invoices: VAT after retention / contra / retention release
+          if ((rec('invoice', i.id) || {}).status !== 'skipped') { mark('invoice', i.id, null, null, 'skipped', 'invoice from a main-contractor PC (VAT after retention, contra charges or retention release) — enter it in Zoho by hand for now', null); run.skipped++; }
+          return;
+        }
         if (!i.client_id) throw new Error('invoice project has no client');
         if (!lk.std && i.vat > 0.004) throw new Error('this invoice has VAT but Zoho Books has no 5% VAT tax — set up UAE VAT in Zoho first');
         const d = invoiceDoc(i, e), cust = await contactId(cl, i.client_id, run), credit = d.type === 'creditnote';

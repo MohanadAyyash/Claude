@@ -21,6 +21,7 @@ module.exports = ctx => {
       retention: { held, released, open, handover: { date: p.handover_date || null, pct: p.retention_handover_pct ?? 50, amount: first, outstanding: round(Math.max(0, first - released)) },
         dlp: { date: dlpDate, months: p.dlp_months ?? 12, amount: round(held - first), outstanding: round(Math.min(open, held - first)) } } };
   }
+  ctx.contractState = state;                                             // payment applications (modules/claims.js)
   // used by the progress invoice (server.js): the recovery line, or nothing when there is no advance left
   ctx.advanceRecoveryLine = (proj, gross) => {
     const s = state(proj.id); if (!s || s.advance.remaining <= 0.004 || !(gross > 0)) return null;

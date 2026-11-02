@@ -87,3 +87,4 @@ body[data-role=viewer] #prt{display:inline-block}
   .docitems td{display:block;width:auto!important;padding:0!important;border:0!important}.docitems td:first-child{grid-column:1/-1}
   .docitems td[data-amt]{grid-column:1/3;align-self:center;font-weight:700;text-align:start}.docitems td:last-child{position:absolute;top:2px;inset-inline-end:6px}
 }
+.side a.guide{margin:10px 12px 0;border:1px solid rgba(255,255,255,.25);border-radius:8px;text-align:center;color:#fff}
