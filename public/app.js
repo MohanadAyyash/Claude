@@ -102,11 +102,11 @@ function shell() {
   }
   $('#app').innerHTML = `<div class="topbar"><button type="button" id="menu" aria-label="menu">☰</button>${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="">` : `<b>${esc(S.company_name || '')}</b>`}</div><div class="scrim" id="scrim"></div><div class="shell"><nav class="side"><div class="brand">${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="${esc(S.company_name || '')}">` : esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
     ${links}
-    <div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
+    <a class="guide" href="${guideUrl()}" target="_blank" rel="noopener">📘 ${tr('دليل الاستخدام', 'User guide')}</a><div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
     <main class="main" id="main"></main></div>`;
   const drawer = open => { $('.side').classList.toggle('open', open); $('#scrim').classList.toggle('on', open); };
   $('#menu').onclick = () => drawer(!$('.side').classList.contains('open')); $('#scrim').onclick = () => drawer(false);
-  document.querySelectorAll('.side a').forEach(a => a.onclick = () => { drawer(false); go(a.dataset.r); });
+  document.querySelectorAll('.side a[data-r]').forEach(a => a.onclick = () => { drawer(false); go(a.dataset.r); });
   $('#lang').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('#out').onclick = async () => { await api('POST', 'logout'); boot(); };
   render();
@@ -114,12 +114,17 @@ function shell() {
 }
 const go = r => { location.hash = r; };
 window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };
+// user guide (public/guide, built from docs/USER-GUIDE-*.md by tools/build-guide.js): the section that explains each page
+const GUIDE = { dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
+  employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31 };
+const guideUrl = p => `guide/index.html?lang=${lang}${GUIDE[p] ? '#s' + GUIDE[p] : ''}`;
 const PAGES = {};
 const render = async () => {
   const [p, id] = route.split('/'); $('#main').innerHTML = '';
   try {
     await (PAGES[p] || PAGES[landing()])(id);
     if (ME.role !== 'employee' && $('#main').children.length) { let bar = $('#main .bar'); if (!bar) { const h = $('#main h1'); bar = document.createElement('div'); bar.className = 'bar'; if (h) { h.replaceWith(bar); bar.append(h); bar.insertAdjacentHTML('beforeend', '<span class="sp"></span>'); } else $('#main').prepend(bar); } bar.insertAdjacentHTML('beforeend', `<button class="btn sec sm noprint" id="prt">🖨 ${tr('طباعة بالترويسة', 'Print on letterhead')}</button>`); $('#prt').onclick = printReport; }
+    if (GUIDE[p] && $('#main .bar') && !$('#hlp')) $('#main .bar').insertAdjacentHTML('beforeend', `<a class="btn sec sm noprint" id="hlp" target="_blank" rel="noopener" href="${guideUrl(p)}" title="${tr('شرح هذه الصفحة في دليل الاستخدام', 'How to use this page (user guide)')}">❓ ${tr('مساعدة', 'Help')}</a>`);
   }
   catch (e) {
     if (e.message === 'unauthorized') return;
@@ -252,6 +257,10 @@ const projectFields = async () => [
   { k: 'advance_pct', ar: 'الدفعة المقدمة % من العقد', en: 'Advance payment % of contract', type: 'number', def: 0 }, { k: 'advance_recovery_pct', ar: 'استرداد المقدمة % من كل مستخلص (فارغ = نفس النسبة)', en: 'Advance recovery % per progress invoice (empty = same %)', type: 'number', def: 0 },
   { k: 'handover_date', ar: 'تاريخ التسليم (يُستحق جزء المحتجزات)', en: 'Handover date (first retention release)', type: 'date' }, { k: 'retention_handover_pct', ar: 'نسبة المحتجزات المفرج عنها عند التسليم %', en: 'Retention released at handover %', type: 'number', def: 50 },
   { k: 'dlp_months', ar: 'فترة الصيانة (أشهر) — الباقي بعدها', en: 'Defects liability period (months) — rest after it', type: 'number', def: 12 },
+  { k: 'main_contract', ar: 'العقد الرئيسي (عند العمل كمقاول باطن)', en: 'Main contract (when working as a subcontractor)', full: 1 },
+  { k: 'client_contract_ref', ar: 'رقم العقد / عقد الباطن / أمر الشراء من العميل (يُطبع على الفواتير)', en: 'Contract / sub-contract / PO no. from the client (printed on invoices)', full: 1 },
+  { k: 'payment_terms_days', ar: 'مدة الدفع (أيام) — تاريخ استحقاق الفواتير', en: 'Payment terms (days) — invoice due date', type: 'number' },
+  { k: 'vat_basis', ar: 'أساس الضريبة في شهادات الدفع (PC)', en: 'VAT basis on payment certificates (PC)', type: 'select', options: [['gross', tr('على قيمة الأعمال قبل المحتجزات (الافتراضي)', 'On the work value before retention (default)')], ['net', tr('على الصافي بعد المحتجزات والخصومات (مثل كثير من المقاولين الرئيسيين)', 'On the net after retention and contra charges (as many main contractors)')]] },
   { k: 'site_lat', ar: 'خط العرض للموقع (لحضور الجوال)', en: 'Site latitude (phone attendance)', type: 'number' }, { k: 'site_lng', ar: 'خط الطول للموقع', en: 'Site longitude', type: 'number' },
   { k: 'site_radius', ar: 'نطاق الموقع بالمتر', en: 'Site radius (m)', type: 'number', def: 300 },
   { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }];
@@ -377,7 +386,8 @@ async function docModal(kind, row, preset = {}) {
   ] : [
     { k: 'number', ar: 'رقم الفاتورة', en: 'Invoice no.' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' },
     { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`, false) },
-    { k: 'due_date', ar: 'تاريخ الاستحقاق', en: 'Due date', type: 'date' }, { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' }, { k: 'retention_pct', ar: 'نسبة المحتجزات %', en: 'Retention %', type: 'number' }];
+    { k: 'due_date', ar: 'تاريخ الاستحقاق', en: 'Due date', type: 'date' }, { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' }, { k: 'retention_pct', ar: 'نسبة المحتجزات %', en: 'Retention %', type: 'number' },
+    { k: 'client_ref', ar: 'مرجع العميل (أمر شراء / PC)', en: 'Client reference (PO / PC no.)' }];
   const isCN = r.kind === 'credit_note', dead = !!r.voided, W = {
     customer_trn_missing: tr('العميل بدون رقم ضريبي (TRN) — مطلوب في الفاتورة الضريبية للشركات', 'Client has no TRN — required on tax invoices to VAT-registered businesses'),
     customer_address_missing: tr('عنوان العميل غير مسجّل — مطلوب في الفاتورة الضريبية', 'Client address missing — required on tax invoices') };
@@ -395,9 +405,17 @@ async function docModal(kind, row, preset = {}) {
     <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && isQ ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}${row && !isQ && !dead && ME.role === 'admin' ? `<button class="btn bad" id="void">${tr('إلغاء الفاتورة', 'Void')}</button>` : ''}</div>`, true);
   if (dead) m.querySelectorAll('input,select,textarea').forEach(x => x.disabled = true);
   bindDoc(m, e.row, 1, !isQ);
+  if (row && row.pc_id) {                                                 // issued from a main contractor's PC: the PC is the source — totals as certified
+    m.querySelectorAll('#items input,#items select,[name=vat_pct],[name=retention_pct],[name=project_id]').forEach(x => x.disabled = true); m.querySelectorAll('#items .x,#addrow').forEach(x => x.remove());
+    const drawTot = () => $('#tot', m).innerHTML = `<div><span>${tr('الإجمالي قبل الضريبة', 'Subtotal')}</span><span>${money(row.subtotal)}</span></div><div><span>${tr('ضريبة القيمة المضافة', 'VAT')}${row.vat_basis === 'net' ? ` <span class="muted">(${tr('على', 'on')} ${money(row.std_total)})</span>` : ''}</span><span>${money(row.vat)}</span></div>
+      <div class="t"><span>${tr('الإجمالي', 'Total')}</span><span>${money(row.total)}</span></div><div class="muted"><span>${tr('محتجزات', 'Retention')}</span><span>${money(row.retention)}</span></div><div class="t"><span>${tr('المستحق الآن', 'Due now')}</span><span>${money(row.due_now)}</span></div>`;
+    drawTot(); m.addEventListener('input', drawTot);                    // after bindDoc's own listener: keep the certified totals
+    $('#tot', m).insertAdjacentHTML('afterend', `<p class="muted">${tr('صدرت من شهادة دفع المقاول الرئيسي — البنود والمبالغ تُعدَّل من الـ PC (ألغِ الفاتورة لتعديله).', 'Issued from the main contractor\'s payment certificate — lines and amounts come from the PC (void the invoice to change it).')}</p>`);
+  }
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
     const body = { items: readItems(m) }; head.forEach(f => body[f.k] = val(m, f.k)); body.notes = val(m, 'notes'); if (isQ) body.terms = val(m, 'terms');
+    if (row && row.pc_id) { body.items = row.items; body.vat_pct = row.vat_pct; body.retention_pct = row.retention_pct; body.project_id = row.project_id; }
     if (!isQ && !body.project_id) throw new Error(tr('اختر المشروع', 'Select a project'));
     if (!row) body.number = body.number || undefined;
     row ? await api('PUT', `${kind}/${row.id}`, body) : await api('POST', kind, body);
@@ -540,13 +558,13 @@ PAGES.payments = async () => {
 PAGES.vat = async () => {
   const now = new Date(), q = Math.floor(now.getMonth() / 3);
   const from = new Date(Date.UTC(now.getFullYear(), q * 3, 1)).toISOString().slice(0, 10), to = new Date(Date.UTC(now.getFullYear(), q * 3 + 3, 0)).toISOString().slice(0, 10);
-  main(`<h1>${tr('تقرير ضريبة القيمة المضافة (نموذج إقرار VAT 201)', 'VAT report (VAT 201 working)')}</h1><div class="bar"><div><label>${tr('من', 'From')}</label><input type="date" id="f" value="${from}"></div><div><label>${tr('إلى', 'To')}</label><input type="date" id="t" value="${to}"></div><button class="btn" id="go" style="margin-top:16px">${tr('عرض', 'Show')}</button><a class="btn sec sm noprint" id="vx" target="_blank" style="margin-top:16px">Excel</a></div><div id="out"></div>
+  main(`<h1>${tr('تقرير ضريبة القيمة المضافة (نموذج إقرار VAT 201)', 'VAT report (VAT 201 working)')}</h1><div class="bar"><div><label>${tr('من', 'From')}</label><input type="date" id="f" value="${from}"></div><div><label>${tr('إلى', 'To')}</label><input type="date" id="t" value="${to}"></div><button class="btn" id="go" style="margin-top:16px">${tr('عرض', 'Show')}</button><a class="btn sec sm noprint" id="vx" target="_blank" style="margin-top:16px">Excel</a></div><div id="vatout"></div>
   <p class="muted">${tr('هذا التقرير أرقام عمل تساعدك في تعبئة الإقرار في بوابة الهيئة الاتحادية للضرائب (EmaraTax) وهو ليس إقراراً رسمياً. يجب مراجعته مع محاسب قانوني. الإقرار يُقدَّم خلال ٢٨ يوماً من نهاية الفترة الضريبية. المحتجزات: تأكد من توقيت توريد الضريبة عليها مع مستشارك الضريبي.', 'Working figures to help you complete the return in the FTA EmaraTax portal — not an official return; review with a qualified accountant. Returns are due within 28 days after the tax period ends. Retention: confirm the time-of-supply treatment with your tax adviser.')}</p>`);
   const run = guard(async () => {
     $('#vx').href = `/api/export/vat?from=${$('#f').value}&to=${$('#t').value}`;
     const r = await api('GET', `vat?from=${$('#f').value}&to=${$('#t').value}`);
     const k = (l, v, c = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${c}">${money(v)}</div></div>`;
-    $('#out').innerHTML = `<div class="grid">${k(tr('مبيعات خاضعة للنسبة الأساسية', 'Standard-rated sales'), r.standard_sales)}${k(tr('مبيعات صفرية', 'Zero-rated sales'), r.zero_rated_sales)}${k(tr('مبيعات معفاة', 'Exempt sales'), r.exempt_sales)}${k(tr('ضريبة المخرجات', 'Output VAT'), r.output_vat)}
+    $("#vatout").innerHTML = `<div class="grid">${k(tr('مبيعات خاضعة للنسبة الأساسية', 'Standard-rated sales'), r.standard_sales)}${k(tr('مبيعات صفرية', 'Zero-rated sales'), r.zero_rated_sales)}${k(tr('مبيعات معفاة', 'Exempt sales'), r.exempt_sales)}${k(tr('ضريبة المخرجات', 'Output VAT'), r.output_vat)}
       ${k(tr('المشتريات (بدون ضريبة)', 'Purchases (ex VAT)'), r.purchases_total)}${k(tr('ضريبة المدخلات القابلة للاسترداد', 'Recoverable input VAT'), r.input_vat)}
       ${k(r.net_vat >= 0 ? tr('صافي الضريبة المستحقة للهيئة', 'Net VAT payable to FTA') : tr('صافي الضريبة المستردة', 'Net VAT refundable'), Math.abs(r.net_vat), r.net_vat >= 0 ? 'bad' : 'ok')}</div>
       <h2>${tr('المبيعات الخاضعة للضريبة حسب الإمارة (البند ١)', 'Standard-rated sales by emirate (Box 1)')}</h2><div class="tw"><table><thead><tr><th>${tr('الإمارة', 'Emirate')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th class="n">${tr('الضريبة', 'VAT')}</th></tr></thead><tbody>${Object.entries(r.by_emirate).map(([e, v]) => `<tr><td>${tr(...EMIRATES[e])}</td><td class="n">${money(v.amount)}</td><td class="n">${money(v.vat)}</td></tr>`).join('')}</tbody></table></div>
@@ -663,19 +681,21 @@ PAGES.compliance = async () => {
 // ---- settings ---------------------------------------------------------------
 PAGES.settings = async () => {
   const s = await api('GET', 'settings'), admin = ME.role === 'admin';
-  const F = [['company_name', 'اسم الشركة (إنجليزي)', 'Company name (English)'], ['company_name_ar', 'اسم الشركة (عربي)', 'Company name (Arabic)'], ['trn', 'الرقم الضريبي للقيمة المضافة (TRN) — ١٥ رقم', 'VAT TRN (15 digits)'], ['ct_trn', 'رقم تسجيل ضريبة الشركات', 'Corporate tax TRN'],
+  const F = [['company_name', 'اسم الشركة (إنجليزي)', 'Company name (English)'], ['company_name_ar', 'اسم الشركة (عربي)', 'Company name (Arabic)'], ['legal_name', 'الاسم القانوني كما في الرخصة وشهادة الضريبة (يُطبع أعلى الفواتير الضريبية)', 'Legal name as on the trade licence / TRN certificate (top of tax invoices)'], ['trn', 'الرقم الضريبي للقيمة المضافة (TRN) — ١٥ رقم', 'VAT TRN (15 digits)'], ['ct_trn', 'رقم تسجيل ضريبة الشركات', 'Corporate tax TRN'],
     ['phone', 'الهاتف', 'Phone'], ['email', 'البريد', 'Email'], ['website', 'الموقع الإلكتروني', 'Website'], ['po_box', 'ص.ب', 'P.O. Box'], ['address', 'العنوان (إنجليزي)', 'Address (English)'], ['address_ar', 'العنوان (عربي)', 'Address (Arabic)'],
     ['doc_prefix', 'بادئة أرقام المستندات (مثل TC)', 'Document reference prefix (e.g. TC)'], ['license_authority', 'جهة إصدار الرخصة', 'Licence authority'], ['vat_pct', 'نسبة الضريبة الافتراضية %', 'Default VAT %'], ['currency', 'العملة', 'Currency'], ['license_no', 'رقم الرخصة التجارية', 'Trade licence no.'], ['license_expiry', 'انتهاء الرخصة', 'Licence expiry', 'date'],
     ['mohre_id', 'رقم المنشأة — وزارة الموارد البشرية (١٣ رقم)', 'MOHRE establishment ID (13 digits)'], ['employer_bank', 'بنك الشركة', 'Company bank'], ['employer_routing', 'رمز توجيه بنك الشركة (٩ أرقام)', 'Company bank routing code (9 digits)'], ['employer_iban', 'آيبان الشركة', 'Company IBAN'],
-    ['footer_text', 'نص تذييل المستندات', 'Document footer text']];
+    ['footer_text', 'نص تذييل المستندات', 'Document footer text'], ['sub_cert_signatories', 'خانات التوقيع في شهادات دفع مقاولي الباطن (مفصولة بفاصلة)', 'Signature boxes on subcontractor payment certificates (comma-separated)'], ['sc_signatory', 'الموقّع على عقود الباطن عن الشركة (الاسم، المنصب)', 'Signs sub-contract agreements for the company (name, position)']];
   const E = [['smtp_host', 'خادم البريد (SMTP)', 'SMTP server'], ['smtp_port', 'المنفذ (587 أو 465)', 'Port (587 or 465)'], ['smtp_user', 'اسم مستخدم البريد', 'SMTP username'], ['smtp_pass', 'كلمة مرور البريد', 'SMTP password', 'password'], ['smtp_from', 'عنوان المرسِل (مثل accounts@شركتك.com)', 'From address (e.g. accounts@yourco.com)']];
+  const poDef = admin ? await api('GET', 'po-defaults').catch(() => ({})) : {}, scDef = admin ? await api('GET', 'sc-template').catch(() => ({})) : {};
   const users = admin ? await api('GET', 'users') : [], prof = ME.role !== 'employee' ? await api('GET', 'profile') : {};
   const brands = admin ? await api('GET', 'brand') : [], has = n => brands.some(b => b.name === n);
   const BRX = [['logo', 'الشعار الأساسي', 'Primary logo'], ['logo_ar', 'الشعار العربي (الترويسة الرسمية)', 'Arabic logo (official letterhead)'], ['logo_white', 'الشعار المعكوس (للخلفيات الزرقاء)', 'Reversed logo (for blue backgrounds)'], ['logo_line', 'سطر الشعار (توقيع الإيميل)', 'Logo line (e-mail signature)'], ['mark', 'العلامة فقط', 'Mark only'], ['stamp', 'الختم الرسمي', 'Official stamp'], ['signature', 'التوقيع المعتمد', 'Authorised signature']];
   main(`<h1>${tr('الإعدادات', 'Settings')}</h1>
   ${admin ? `<div class="card" id="sf"><div class="f2">${F.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, s[k])).join('')}
     ${field({ k: 'vat_registered', ar: 'مسجّل في ضريبة القيمة المضافة؟', en: 'VAT registered?', type: 'select', options: [['1', tr('نعم', 'Yes')], ['0', tr('لا', 'No')]] }, s.vat_registered ?? '1')}
-    ${field({ k: 'bank_details', ar: 'بيانات البنك (تظهر في الفاتورة)', en: 'Bank details (shown on invoices)', type: 'textarea', full: 1 }, s.bank_details)}${field({ k: 'terms', ar: 'الشروط الافتراضية لعروض الأسعار', en: 'Default quotation terms', type: 'textarea', full: 1 }, s.terms)}</div>
+    ${field({ k: 'bank_details', ar: 'بيانات البنك (تظهر في الفاتورة)', en: 'Bank details (shown on invoices)', type: 'textarea', full: 1 }, s.bank_details)}${field({ k: 'terms', ar: 'الشروط الافتراضية لعروض الأسعار', en: 'Default quotation terms', type: 'textarea', full: 1 }, s.terms)}
+    ${field({ k: 'po_notes', ar: 'ملاحظات ثابتة على أوامر الشراء (سطر لكل ملاحظة)', en: 'Standard notes on purchase orders (one per line)', type: 'textarea', full: 1 }, s.po_notes ?? poDef.notes)}${field({ k: 'sc_template', ar: 'نص اتفاقية عقد الباطن القياسي ({{ }} خانات تُعبّأ تلقائياً)', en: 'Standard sub-contract agreement wording ({{ }} fields fill in)', type: 'textarea', full: 1 }, s.sc_template ?? scDef.text)}${field({ k: 'po_conditions', ar: 'الشروط العامة لأوامر الشراء (صفحة ثانية — اتركها فارغة لعدم طباعتها)', en: 'General conditions of purchase (second page — leave empty for none)', type: 'textarea', full: 1 }, s.po_conditions ?? poDef.conditions)}</div>
     <button class="btn" id="save">${tr('حفظ', 'Save')}</button></div>
   <div class="card"><h2>${tr('هوية الشركة: الشعار والختم والتوقيع', 'Company identity: logo, stamp & signature')}</h2><p class="muted">${tr('تظهر تلقائياً في عروض الأسعار والفواتير وأوامر الشراء والخطابات والتقارير المطبوعة. استخدم صورة PNG بخلفية شفافة للختم والتوقيع (حتى ٢ ميجابايت). الختم والتوقيع يُطبعان فقط على المستندات الصادرة من النظام، فاحرص على صلاحيات المستخدمين.', 'Used automatically on quotations, invoices, purchase orders, letters and printed reports. Use a transparent PNG for the stamp and signature (up to 2 MB). The stamp and signature are applied to documents issued by the system — keep user roles tight.')}</p>
     <div class="bar"><button type="button" class="btn" id="pack">${tr('تركيب هوية تريجون الجاهزة (الشعار والختم والبيانات القانونية)', 'Install the Trigon brand pack (logos, stamp, legal details)')}</button></div><div class="grid">${BRX.map(([k, a, e]) => `<div class="kpi"><div class="l">${tr(a, e)}</div><div style="height:90px;display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#e6e3dc 0 25%,#fff 0 50%) 0 0/16px 16px;margin:8px 0">${has(k) ? `<img src="/api/brand/${k}?t=${Date.now()}" style="max-height:84px;max-width:100%">` : `<span class="muted">${tr('لم يُرفع', 'not uploaded')}</span>`}</div>
@@ -700,7 +720,7 @@ PAGES.settings = async () => {
   if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
   $('#pack').onclick = guard(async () => { if (!confirm(tr('سيُركَّب الشعار والختم وتُحدَّث بيانات الشركة القانونية (الاسم، الرخصة، العنوان، ص.ب). متابعة؟', 'This installs the logos and stamp and sets the legal company details (name, licence, address, P.O. Box). Continue?'))) return; await api('POST', 'brand/pack'); S = { ...S, ...(await api('GET', 'settings')) }; toast(tr('تم تركيب الهوية', 'Brand pack installed')); boot(); });
-  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'bank_details', 'terms'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
+  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
   if ($('#saveE')) $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure', 'mail_method', 'graph_tenant', 'graph_client', 'graph_secret'].forEach(k => b[k] = val($('#ef'), k)); if (!b.graph_secret) delete b.graph_secret; if (!b.smtp_pass) delete b.smtp_pass; await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
   if ($('#ef')) { const mm = $('#ef [name=mail_method]'), sync = () => $('#ef').querySelectorAll('[data-mm]').forEach(d => { d.style.display = d.dataset.mm === mm.value ? '' : 'none'; }); mm.onchange = sync; sync(); }
   if ($('#test')) $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });

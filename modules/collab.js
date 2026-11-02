@@ -45,6 +45,7 @@ module.exports = ctx => {
     const committed = {};
     for (const po of db.prepare("SELECT * FROM purchase_orders WHERE project_id=? AND status NOT IN ('draft','cancelled') AND bill_id IS NULL").all(pid)) {
       let items = []; try { items = JSON.parse(po.items || '[]'); } catch { /* bad json */ }
+      if (ctx.poNet) items = ctx.poNet(items);                                // after line discounts
       committed.materials = round((committed.materials || 0) + items.reduce((s, i) => s + (+i.qty || 0) * (+i.rate || 0), 0));
     }
     for (const sc of db.prepare("SELECT * FROM subcontracts WHERE project_id=? AND status='active'").all(pid)) {
