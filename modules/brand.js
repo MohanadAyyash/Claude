@@ -2,9 +2,9 @@
 const NAMES = ['logo', 'logo_ar', 'logo_white', 'logo_line', 'mark', 'stamp', 'signature'];
 const fs = require('node:fs'), path = require('node:path');
 const PACK_DIR = path.join(__dirname, '..', 'brand');
-// Trigon Civil Contracting L.L.C — legal identity exactly as in the Brand Guidelines v1.1 (Arabic spelling must match the trade licence)
+// Trigon Civil Contracting L.L.C — legal identity exactly as in the Brand Guidelines v1.1 / Nov 2026 stationery (Arabic spelling must match the trade licence)
 const PACK_SETTINGS = { company_name: 'Trigon Civil Contracting L.L.C', company_name_ar: 'تريجون سيفيل للمقاولات ذ.م.م', license_no: '1656279', license_authority: 'Dubai DET', legal_form: 'LLC',
-  address: 'Office 810, Bay View Tower, Business Bay, Dubai, UAE', address_ar: 'مكتب 810، برج باي فيو، الخليج التجاري، دبي، الإمارات', po_box: '334112', website: 'trigon.ae', footer_text: '' };
+  legal_name: 'Trigon Civil L.L.C', address: 'Office 810, Magnum Opus Bay, Business Bay, Dubai', address_ar: 'مكتب 810، ماغنوم أوبس باي، الخليج التجاري، دبي', po_box: '334112', website: 'trigon.ae', footer_text: '' };
 const OK = ['image/png', 'image/jpeg', 'image/webp'];                       // no SVG: it can carry scripts
 const MAX = 2 * 1024 * 1024;
 
