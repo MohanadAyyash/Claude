@@ -42,3 +42,27 @@ window.controlsCards = async el => {
   $('#bksave', el).onclick = guard(async () => { await api('PUT', 'settings', { backup_copy_dir: $('#bkdir', el).value.trim() }); toast(tr('تم الحفظ', 'Saved')); controlsCards(el); });
   $('#bknow', el).onclick = guard(async () => { await api('PUT', 'settings', { backup_copy_dir: $('#bkdir', el).value.trim() }); await api('POST', 'backup/run'); toast(tr('تم أخذ النسخة', 'Backup written')); controlsCards(el); });
 };
+
+// Settings → two-step sign-in (every user, own account).
+window.twoStepCard = async el => {
+  const st = await api('GET', '2fa'), admin = ['admin', 'accountant'].includes(ME.role);
+  const head = `<h2>${tr('التحقق بخطوتين عند الدخول', 'Two-step sign-in')}</h2>`;
+  if (st.enabled) {
+    el.innerHTML = `<div class="card">${head}<p class="ok">✔ ${tr('مفعّل: الدخول يطلب كلمة المرور ثم رمزاً من تطبيق المصادقة على هاتفك.', 'On: signing in asks for the password, then a code from the authenticator app on your phone.')}</p>
+      <div class="f"><input type="password" id="tfapw" autocomplete="current-password" placeholder="${tr('كلمة المرور الحالية', 'Current password')}"></div><button class="btn sec" id="tfaoff">${tr('إيقاف', 'Switch off')}</button></div>`;
+    $('#tfaoff', el).onclick = guard(async () => { await api('POST', '2fa/disable', { password: $('#tfapw', el).value }); toast(tr('تم الإيقاف', 'Switched off')); twoStepCard(el); });
+    return;
+  }
+  el.innerHTML = `<div class="card">${head}<p class="muted">${tr('حماية إضافية للحساب: حتى لو عُرفت كلمة المرور لا يمكن الدخول بدون هاتفك. تحتاج تطبيق مصادقة مجاني مثل Google Authenticator أو Microsoft Authenticator.', 'Extra protection: even with your password, nobody signs in without your phone. You need a free authenticator app such as Google Authenticator or Microsoft Authenticator.')}${admin ? ` <b>${tr('موصى به لحسابك لأنه يملك صلاحيات مالية.', 'Recommended for your account because it has financial permissions.')}</b>` : ''}</p>
+    <button class="btn sec" id="tfaon">${tr('تفعيل', 'Switch on')}</button><div id="tfastep"></div></div>`;
+  $('#tfaon', el).onclick = guard(async () => {
+    const s = await api('POST', '2fa/setup', {}), key = s.secret.replace(/(.{4})/g, '$1 ').trim();
+    $('#tfastep', el).innerHTML = `<ol style="margin:12px 0;padding-inline-start:20px;line-height:1.9">
+      <li>${tr('افتح تطبيق المصادقة على هاتفك واختر «إضافة حساب» ثم «إدخال مفتاح الإعداد» (أو افتح هذه الصفحة من الهاتف واضغط الرابط).', 'Open the authenticator app on your phone, choose “Add account”, then “Enter a setup key” (or open this page on the phone and tap the link).')}</li>
+      <li>${tr('اسم الحساب', 'Account name')}: <b dir="ltr">${esc(ME.username)}</b> — ${tr('المفتاح', 'Key')}: <b dir="ltr" style="font-family:monospace;user-select:all">${esc(key)}</b> — ${tr('النوع: حسب الوقت', 'Type: time-based')}<br><a href="${esc(s.uri)}">${tr('إضافة مباشرة من هذا الهاتف', 'Add directly from this phone')}</a></li>
+      <li>${tr('اكتب الرمز المكوّن من ٦ أرقام الذي يظهر في التطبيق:', 'Type the 6-digit code the app shows:')}</li></ol>
+      <div class="f"><input id="tfacode" inputmode="numeric" maxlength="7" dir="ltr" autocomplete="one-time-code" placeholder="123456"></div><button class="btn" id="tfago">${tr('تأكيد وتفعيل', 'Confirm and switch on')}</button>`;
+    $('#tfaon', el).style.display = 'none';
+    $('#tfago', el).onclick = guard(async () => { await api('POST', '2fa/enable', { code: $('#tfacode', el).value }); toast(tr('تم التفعيل', 'Two-step sign-in is on')); twoStepCard(el); });
+  });
+};

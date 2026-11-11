@@ -15,7 +15,7 @@ async function api(method, url, body) {
   const r = await fetch('/api/' + url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && url !== 'login') { boot(); throw new Error('unauthorized'); }
-  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { data: j });
   return j;
 }
 const toast = m => { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); };
@@ -66,10 +66,11 @@ function authBox(title, extra, btn, onsubmit) {
   $('#lg').onclick = e => { e.preventDefault(); lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('form').onsubmit = async e => {
     e.preventDefault();
-    try { await onsubmit(Object.fromEntries(new FormData(e.target))); boot(); } catch (x) { $('#err').textContent = x.message; }
+    try { await onsubmit(Object.fromEntries(new FormData(e.target))); boot(); }
+    catch (x) { $('#err').textContent = x.message; if (x.data && x.data.need_code && $('#codef')) { $('#codef').style.display = ''; $('[name=code]').value = ''; $('[name=code]').focus(); } }
   };
 }
-const loginScreen = () => authBox(tr('تسجيل الدخول', 'Sign in'), '', tr('دخول', 'Sign in'), d => api('POST', 'login', d));
+const loginScreen = () => authBox(tr('تسجيل الدخول', 'Sign in'), `<div class="f" id="codef" style="display:none"><label>${tr('رمز التحقق من تطبيق المصادقة', 'Code from your authenticator app')}</label><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" dir="ltr"></div>`, tr('دخول', 'Sign in'), d => api('POST', 'login', d));
 const setupScreen = needToken => authBox(tr('إعداد النظام لأول مرة', 'First-time setup'),
   `<div class="f"><label>${tr('اسم الشركة', 'Company name')}</label><input name="company"></div>${needToken ? `<div class="f"><label>${tr('رمز الإعداد السري (من ملف .env على الخادم)', 'Setup token (from the .env file on the server)')}</label><input name="token" required></div>` : ''}`, tr('إنشاء الحساب', 'Create account'), d => api('POST', 'setup', d));
 
@@ -724,13 +725,14 @@ PAGES.settings = async () => {
     ${s.smtp_pass_set ? `<p class="muted">${tr('كلمة المرور محفوظة — اتركها فارغة للإبقاء عليها.', 'Password saved — leave blank to keep it.')}</p>` : ''}</div>
     <button class="btn" id="saveE">${tr('حفظ', 'Save')}</button> <input id="testTo" placeholder="${tr('بريد لإرسال رسالة تجريبية', 'Email for a test message')}" style="width:260px;margin-inline-start:10px"> <button class="btn sec" id="test">${tr('إرسال تجربة', 'Send test')}</button></div>`}
   <div class="card"><div class="bar"><h2 style="margin:0">${tr('المستخدمون والصلاحيات', 'Users & roles')}</h2><span class="sp"></span><button class="btn sm" id="addU">+ ${tr('مستخدم', 'User')}</button></div>
-    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}${u.employee_name ? ` <span class="muted">(${esc(u.employee_name)})</span>` : ''}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${['site_engineer', 'foreman'].includes(u.role) ? `<button class="btn sec sm" data-uproj="${u.id}">${tr('مشاريعه', 'Projects')} (${u.projects.length})</button> ` : ''}${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
+    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}${u.employee_name ? ` <span class="muted">(${esc(u.employee_name)})</span>` : ''}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${u.two_step ? `<button class="btn sec sm" data-u2fa="${u.id}" title="${tr('المستخدم فقد هاتفه: أوقف التحقق بخطوتين عن حسابه', 'The user lost the phone: switch two-step sign-in off for this account')}">🔐 ${tr('إيقاف التحقق بخطوتين', 'Reset two-step')}</button> ` : ''}${['site_engineer', 'foreman'].includes(u.role) ? `<button class="btn sec sm" data-uproj="${u.id}">${tr('مشاريعه', 'Projects')} (${u.projects.length})</button> ` : ''}${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
     <p class="muted">${tr('مدير النظام: كل شيء • محاسب: المالية والمحاسبة دون المستخدمين والإعدادات • مدير مشاريع: المشاريع والمشتريات والحضور دون الرواتب والضرائب • موارد بشرية: الموظفون والإجازات والطلبات والرواتب والخطابات دون الحسابات • عرض فقط: قراءة فقط • موظف: بوابته الخاصة فقط.', 'Admin: everything • Accountant: finance & accounting, no users/settings • Project manager: projects, purchasing, attendance — no payroll or tax • HR: employees, leave, requests, payroll, letters — no finance • Viewer: read-only • Employee: own portal only.')}</p></div>` : ''}
     ${ME.role !== 'employee' ? `<div class="card" id="pf"><h2>${tr('ملفي الشخصي (يظهر في توقيع الإيميل)', 'My profile (shown in my e-mail signature)')}</h2><div class="f2">${field({ k: 'display_name', ar: 'الاسم الكامل', en: 'Full name' }, prof.display_name)}${field({ k: 'job_title', ar: 'المسمى الوظيفي', en: 'Job title' }, prof.job_title)}${field({ k: 'mobile', ar: 'الجوال', en: 'Mobile' }, prof.mobile)}</div><button class="btn sec" id="savepf">${tr('حفظ', 'Save')}</button></div>` : ''}
-    <div class="card"><h2>${tr('تغيير كلمة المرور', 'Change password')}</h2><div class="f"><input type="password" id="op" autocomplete="current-password" placeholder="${tr('كلمة المرور الحالية', 'Current password')}"></div><div class="f"><input type="password" id="np" minlength="6" autocomplete="new-password" placeholder="${tr('كلمة مرور جديدة', 'New password')}"></div><button class="btn sec" id="cp">${tr('تغيير', 'Change')}</button></div>
+    <div class="card"><h2>${tr('تغيير كلمة المرور', 'Change password')}</h2><div class="f"><input type="password" id="op" autocomplete="current-password" placeholder="${tr('كلمة المرور الحالية', 'Current password')}"></div><div class="f"><input type="password" id="np" minlength="6" autocomplete="new-password" placeholder="${tr('كلمة مرور جديدة', 'New password')}"></div><button class="btn sec" id="cp">${tr('تغيير', 'Change')}</button></div><div id="tfacard"></div>
     ${admin ? `<div class="card"><h2>${tr('نسخة احتياطية', 'Backup')}</h2><p class="muted">${tr('حمّل نسخة من قاعدة البيانات (تشمل المستندات المرفقة والشعار) واحتفظ بها بشكل دوري. السجلات المالية يجب حفظها ٥–٧ سنوات، وتحتوي النسخة على كلمة مرور البريد فاحفظها في مكان آمن.', 'Download a copy of the database (it includes attached documents and your logo) and keep it safe regularly. Financial records must be kept 5–7 years; the copy contains the SMTP password — store it securely.')}</p><a class="btn sec" href="/api/backup" style="text-decoration:none;display:inline-block">${tr('تحميل النسخة الاحتياطية', 'Download backup')}</a></div><div id="spendcard"></div><div id="ctlcards"></div>` : ''}`);
   if ($('#ctlcards') && window.controlsCards) controlsCards($('#ctlcards')).catch(() => {});
   if ($('#spendcard') && window.spendCard) spendCard($('#spendcard'));
+  if ($('#tfacard') && window.twoStepCard) twoStepCard($('#tfacard')).catch(() => {});
   $('#cp').onclick = guard(async () => { await api('POST', 'password', { current: $('#op').value, password: $('#np').value }); $('#np').value = ''; $('#op').value = ''; toast(tr('تم التغيير', 'Password changed')); });
   if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
@@ -757,6 +759,7 @@ PAGES.settings = async () => {
     $('#save', m).onclick = guard(async () => { await api('POST', 'users', { username: val(m, 'username'), password: val(m, 'password'), role: val(m, 'role'), employee_id: val(m, 'employee_id') }); closeModal(); render(); });
   });
   document.querySelectorAll('[data-pw]').forEach(b => b.onclick = guard(async () => { const p = prompt(tr('كلمة المرور الجديدة:', 'New password:')); if (p) { await api('PUT', 'users/' + b.dataset.pw, { password: p }); toast(tr('تم', 'Done')); } }));
+  document.querySelectorAll('[data-u2fa]').forEach(b => b.onclick = guard(async () => { if (!confirm(tr('إيقاف التحقق بخطوتين عن هذا الحساب؟', 'Switch two-step sign-in off for this account?'))) return; await api('POST', '2fa/reset', { user_id: +b.dataset.u2fa }); toast(tr('تم', 'Done')); render(); }));
   document.querySelectorAll('[data-urole]').forEach(b => b.onclick = guard(async () => { const r = prompt(tr('الدور:\n', 'Role:\n') + Object.keys(ROLE).join(' / ')); if (r) { await api('PUT', 'users/' + b.dataset.urole, { role: r }); render(); } }));
   document.querySelectorAll('[data-uproj]').forEach(b => b.onclick = guard(async () => {
     const u = users.find(x => x.id === +b.dataset.uproj), projects = await api('GET', 'projects');
