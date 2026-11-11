@@ -224,15 +224,23 @@ module.exports = ctx => {
     const ins = db.prepare('INSERT INTO hr_checklist(employee_id,kind,item,label_ar,label_en,sort) VALUES(?,?,?,?,?,?)');
     (kind === 'onboarding' ? ONBOARD : OFFBOARD).forEach(([item, ar, en], i) => ins.run(eid, kind, item, ar, en, i));
   }
+  ctx.salaryInSettlement = (eid, month) => {                                // was this month's salary paid through the final settlement?
+    const ob = db.prepare('SELECT * FROM hr_offboarding WHERE employee_id=?').get(eid); if (!ob || (ob.last_day || '').slice(0, 7) !== month) return false;
+    try { return +(JSON.parse(ob.settlement || '{}').salary) > 0; } catch { return false; }
+  };
   const daysBetween = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5);
   // UAE final settlement: wages to the last day, unused annual leave on basic wage (Art. 29), gratuity (Art. 51), notice shortfall (Art. 43)
   function settlement(e, { last_day, reason, notice_date, other_deductions }) {
     const wage = (+e.basic || 0) + (+e.housing || 0) + (+e.transport || 0) + (+e.other_allowance || 0), day = +last_day.slice(8, 10);
     const leave = ctx.hrBalance(e, last_day), leaveDays = Math.max(0, leave.balance);
-    const g = C.gratuity(e, last_day, ctx.unpaidDays ? ctx.unpaidDays(e, last_day) : 0), notice = notice_date ? daysBetween(notice_date, last_day) : 0, shortfall = Math.max(0, 30 - notice);
+    const g = C.gratuity(e, last_day, ctx.unpaidDays ? ctx.unpaidDays(e, last_day) : 0), notice = notice_date ? daysBetween(notice_date, last_day) : 0, shortfall = notice_date ? Math.max(0, 30 - notice) : 0;   // no notice date entered → no notice pay either way (a warning asks for it)
     const noticePay = !shortfall || reason === 'end_of_contract' ? 0 : round((reason === 'resignation' ? -1 : 1) * shortfall * wage / 30);   // the side that cut the notice short pays it
-    const lines = { salary: round(wage / 30 * Math.min(30, day)), leave_encashment: round(leaveDays * (+e.basic || 0) / 30), gratuity: g.amount, notice: noticePay, advance: -(ctx.loanBalance ? ctx.loanBalance(e.id) : 0), deductions: -round(+other_deductions || 0) };
+    // the last month's salary is paid once: here, unless that month is already on the payroll sheet
+    const onPayroll = !!db.prepare('SELECT 1 FROM payroll WHERE employee_id=? AND month=?').get(e.id, last_day.slice(0, 7));
+    const lines = { salary: onPayroll ? 0 : round(wage / 30 * Math.min(30, day)), leave_encashment: round(leaveDays * (+e.basic || 0) / 30), gratuity: g.amount, notice: noticePay, advance: -(ctx.loanBalance ? ctx.loanBalance(e.id) : 0), deductions: -round(+other_deductions || 0) };
     const warnings = [];
+    if (onPayroll) warnings.push(`salary for ${last_day.slice(0, 7)} is on the payroll sheet — not repeated in the settlement`);
+    if (!notice_date && reason !== 'end_of_contract') warnings.push('notice date not entered — notice pay was not calculated');
     if (notice_date && notice < 30) warnings.push(`notice period ${notice} days — the law requires at least 30 (Art. 43)`);
     if (notice > 90) warnings.push(`notice period ${notice} days — the law allows at most 90 (Art. 43)`);
     return { ...lines, total: round(Object.values(lines).reduce((s, v) => s + v, 0)), leave_days: leaveDays, service_years: g.years, unpaid_days: g.unpaid_days, notice_days: notice, wage, warnings };
@@ -250,7 +258,13 @@ module.exports = ctx => {
           if (s.status !== 'pending') bad('This step was already decided');
           decide(s.kind, s.ref_id, me, x, req); return send(res, 200, { ok: 1 }), true;
         }
-        if (m === 'GET' && b === 'history') { const kind = url.searchParams.get('kind'), id = +url.searchParams.get('id'); return send(res, 200, steps(kind, id)), true; }
+        if (m === 'GET' && b === 'history') {                                  // HR, an approver of the request, or the employee it belongs to
+          const kind = url.searchParams.get('kind'), id = +url.searchParams.get('id'); if (!TBL[kind]) bad('Not found');
+          const r = db.prepare(`SELECT employee_id FROM ${TBL[kind]} WHERE id=?`).get(id), st = steps(kind, id);
+          const mine = r && me.employee_id && r.employee_id === me.employee_id, approver = st.some(s => canDecide(s, me) || s.decided_by === me.username);
+          if (!r || !(['admin', 'hr'].includes(me.role) || mine || approver)) return send(res, 403, { error: 'not allowed' }), true;
+          return send(res, 200, st), true;
+        }
         return send(res, 404, { error: 'not found' }), true;
       }
       // ---------- my attendance ----------

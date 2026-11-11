@@ -180,7 +180,7 @@ function dashboard() {
   const months = [];
   const d = new Date(); d.setDate(1);
   for (let i = 5; i >= 0; i--) {
-    const m = new Date(d.getFullYear(), d.getMonth() - i, 1).toISOString().slice(0, 7);
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1), m = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`;   // local month (toISOString would give the month before, east of UTC)
     months.push({ month: m,
       in: round(inc.filter(p => (p.date || '').startsWith(m)).reduce((s, p) => s + p.amount, 0)),
       out: round(out.filter(p => (p.date || '').startsWith(m)).reduce((s, p) => s + p.amount, 0)) });
@@ -348,6 +348,12 @@ function payrollRows(month) {
   return db.prepare(`SELECT p.*, e.name, e.person_code, e.routing_code, e.iban, e.designation FROM payroll p JOIN employees e ON e.id=p.employee_id WHERE p.month=? ORDER BY e.name`).all(month)
     .map(r => ({ ...r, deduction_ratio: r.gross ? r.deductions / r.gross : 0 }));
 }
+// days of the month the employee is on the payroll: a full month is 30 days whatever its length (February included)
+function payrollBaseDays(e, m) {
+  const first = `${m}-01`, last = `${m}-${String(C.daysInMonth(m)).padStart(2, '0')}`;
+  const from = e.join_date && e.join_date > first ? e.join_date : first, to = e.end_date && e.end_date < last ? e.end_date : last;
+  return from === first && to === last ? 30 : Math.max(0, Math.min(30, Math.round((new Date(to) - new Date(from)) / 864e5) + 1));
+}
 function applyPayroll(id, inp) {
   const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(id), emp = db.prepare('SELECT * FROM employees WHERE id=?').get(row.employee_id);
   const m = { ...row }; for (const k of ['days_worked','leave_days','ot_normal_hours','ot_special_hours','bonus','deductions','notes']) if (k in inp) m[k] = k === 'notes' ? inp[k] : +inp[k] || 0;
@@ -368,6 +374,7 @@ const mailCfgFor = () => {
   return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
 };
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+ctx.applyPayroll = (...a) => applyPayroll(...a);
 // brand e-mail signature: Arial text block + the one-line logo as an inline image
 ctx.signature = user => {
   const S = getSettings(), prof = db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(user.id) || user, logo = ctx.brandBuf && ctx.brandBuf('logo_line');
@@ -569,21 +576,35 @@ async function api(req, res, url) {
       if (!monthOk(m)) return send(res, 400, { error: 'month must be YYYY-MM' });
       const first = `${m}-01`, last = `${m}-${String(C.daysInMonth(m)).padStart(2, '0')}`;
       let n = 0;
-      for (const e of db.prepare("SELECT * FROM employees WHERE (join_date IS NULL OR join_date<=?) AND (end_date IS NULL OR end_date>=?) AND status='active'").all(last, first)) {
+      for (const e of db.prepare("SELECT * FROM employees WHERE (join_date IS NULL OR join_date<=?) AND (end_date IS NULL OR end_date>=?) AND (status='active' OR (end_date IS NOT NULL AND end_date>=?))").all(last, first, first)) {
+        if (ctx.salaryInSettlement && ctx.salaryInSettlement(e.id, m)) continue;   // the last month was paid in the final settlement
         if (db.prepare('SELECT 1 FROM payroll WHERE month=? AND employee_id=?').get(m, e.id)) continue;
-        const from = e.join_date && e.join_date > first ? e.join_date : first, to = e.end_date && e.end_date < last ? e.end_date : last;
-        const days = Math.min(30, Math.round((new Date(to) - new Date(from)) / 864e5) + 1);
+        const days = payrollBaseDays(e, m);
         const r = db.prepare('INSERT INTO payroll(month,employee_id,project_id,days_worked) VALUES(?,?,?,?)').run(m, e.id, e.project_id, days);
         const inp = ctx.hooks.payrollInputs ? ctx.hooks.payrollInputs(e, m, days) : {};
-        const loan = ctx.hooks.loanDeduction ? ctx.hooks.loanDeduction(e, m) : { amount: 0 };   // advance instalment due this month
-        if (loan.amount) { inp.deductions = round((+inp.deductions || 0) + loan.amount); inp.notes = `Advance repayment ${loan.amount}`; }
-        applyPayroll(Number(r.lastInsertRowid), inp); if (loan.amount) ctx.hooks.afterPayrollRow(Number(r.lastInsertRowid), e, m, loan.parts); n++;
+        applyPayroll(Number(r.lastInsertRowid), inp);
+        if (ctx.syncLoanDeduction) ctx.syncLoanDeduction(Number(r.lastInsertRowid));   // advance instalments due up to this month
+        n++;
       }
       audit(req, 'generate', 'payroll', 0, `${m}: ${n} rows`);
       return send(res, 200, { created: n });
     }
+    if (b === 'refresh' && method === 'POST') {                                       // re-read attendance, leave and advances into the draft rows (bonus and manual deductions are kept)
+      const { month: m } = await readBody(req);
+      if (!monthOk(m)) return send(res, 400, { error: 'month must be YYYY-MM' });
+      let n = 0;
+      for (const row of db.prepare("SELECT * FROM payroll WHERE month=? AND status!='final'").all(m)) {
+        const e = db.prepare('SELECT * FROM employees WHERE id=?').get(row.employee_id); if (!e) continue;
+        const inp = ctx.hooks.payrollInputs ? ctx.hooks.payrollInputs(e, m, payrollBaseDays(e, m)) : { days_worked: payrollBaseDays(e, m) };
+        applyPayroll(row.id, inp); if (ctx.syncLoanDeduction) ctx.syncLoanDeduction(row.id); n++;
+      }
+      audit(req, 'refresh', 'payroll', 0, `${m}: ${n} rows`);
+      return send(res, 200, { updated: n });
+    }
     if (b === 'finalize' && method === 'POST') {
       const { month: m } = await readBody(req);
+      if (!monthOk(m)) return send(res, 400, { error: 'month must be YYYY-MM' });
+      if (!db.prepare('SELECT 1 FROM payroll WHERE month=?').get(m)) return send(res, 400, { error: 'no payroll rows for this month — generate it first' });
       const issues = C.payrollIssues(getSettings(), payrollRows(m)).filter(i => !i.warn);
       if (issues.length) return send(res, 400, { error: 'WPS data incomplete', issues });
       db.prepare("UPDATE payroll SET status='final' WHERE month=?").run(m);
@@ -613,7 +634,10 @@ async function api(req, res, url) {
       const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(+b);
       if (!row) return send(res, 404, { error: 'not found' });
       if (row.status === 'final') return send(res, 409, { error: 'payroll is finalized' });
-      applyPayroll(+b, await readBody(req)); audit(req, 'update', 'payroll', +b, row.month);
+      const inp = await readBody(req), LIM = { days_worked: 30, leave_days: 31, ot_normal_hours: 400, ot_special_hours: 400, bonus: 1e9, deductions: 1e9 };
+      for (const k in LIM) if (k in inp && !(Number.isFinite(+inp[k]) && +inp[k] >= 0 && +inp[k] <= LIM[k])) return send(res, 400, { error: `${k.replace(/_/g, ' ')} must be between 0 and ${LIM[k]}` });
+      applyPayroll(+b, inp); if ('deductions' in inp && ctx.capLoanToDeductions) ctx.capLoanToDeductions(+b);
+      audit(req, 'update', 'payroll', +b, row.month);
       return send(res, 200, { ok: 1 });
     }
     const dropRow = id => { db.prepare('DELETE FROM payroll WHERE id=?').run(id); for (const t of ['loan_repayments', 'payroll_alloc']) db.prepare(`DELETE FROM ${t} WHERE payroll_id=?`).run(id); };

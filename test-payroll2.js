@@ -22,7 +22,8 @@ server.listen(0, async () => {
     const g1 = C.gratuity({ join_date: '2023-04-27', basic: 1500 }, '2026-10-27');
     const g2 = C.gratuity({ join_date: '2023-04-27', basic: 1500 }, '2026-10-27', 60);
     const g3 = C.gratuity({ join_date: '1996-10-27', basic: 1500 }, '2026-10-27');
-    assert.equal(g1.amount, 3679.32); assert.equal(g2.amount, 3506.71); assert.equal(g3.amount, 36000);
+    assert.equal(g1.amount, 3682.19); assert.equal(g2.amount, 3509.59);   // the last working day counts as service
+    assert.equal(C.gratuity({ join_date: "2025-01-01", basic: 3000 }, "2025-12-31").amount, 2100);                    // exactly one year of service earns 21 days assert.equal(g3.amount, 36000);
     out.push(`gratuity 3.5 y = ${g1.amount} | with 60 unpaid days = ${g2.amount} | 30 y = ${g3.amount} (cap 24 × basic)`);
 
     // ---- 2. provision: basic 1,500, three finalised months = 262.50; leaves before a year → gratuity 0, provision reversed, 2300 = 0
@@ -46,7 +47,7 @@ server.listen(0, async () => {
     ok(await call('PUT', `hr/leave/${lv}/decide`, { status: 'approved' }));
     for (let d = 1; d <= 10; d++) ok(await call('PUT', 'attendance', { employee_id: G, date: `2026-03-${String(d).padStart(2, '0')}`, status: 'absent' }));
     const gApi = ok(await call('GET', `employees/${G}/gratuity?end=2026-10-27`));
-    assert.equal(gApi.unpaid_days, 60); assert.equal(gApi.amount, 3506.71);
+    assert.equal(gApi.unpaid_days, 60); assert.equal(gApi.amount, 3509.59);
     out.push(`API gratuity: 50 unpaid-leave days + 10 absent days = ${gApi.unpaid_days} → ${gApi.amount}`);
     // sick leave: 15 days full, 30 half, then unpaid — the unpaid sick days are not service; half-pay days are
     const SK = ok(await call('POST', 'employees', { name: 'Sick Worker', join_date: '2023-04-27', basic: 1500, project_id: A, ...WPS })).id;
