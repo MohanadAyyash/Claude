@@ -163,7 +163,7 @@ PAGES.subcontracts = async () => {
   c.setRow(id => subDetail(rows.find(r => r.id === id), c.edit));
 };
 async function subDetail(sub, edit) {
-  const certs = (await api('GET', 'sub_certs')).filter(x => x.subcontract_id === sub.id);
+  const certs = (await api('GET', 'sub_certs').catch(() => [])).filter(x => x.subcontract_id === sub.id);   // roles without certificate access still open the subcontract
   const m = modal(`<h2>${esc(sub.party_name || '')} — ${esc(sub.description || '')}</h2><p class="muted">${esc(sub.project_name || '')} · ${tr('قيمة العقد', 'Contract')} ${money(sub.contract_value)} · ${tr('محتجزات', 'Retention')} ${sub.retention_pct}%</p>
     <div class="tw"><table><thead><tr><th>${tr('الشهادة', 'Cert')}</th><th>${tr('التاريخ', 'Date')}</th><th class="n">${tr('التراكمي', 'Cumulative')}</th><th class="n">${tr('هذه الفترة', 'This period')}</th><th class="n">${tr('المستحق الآن', 'Payable now')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
     ${certs.map(x => `<tr class="click" data-c="${x.id}"><td>${esc(x.number)}</td><td>${esc(x.date)}</td><td class="n">${money(x.cumulative)}</td><td class="n">${money(x.gross_this)}</td><td class="n">${money(x.payable_now)}</td><td>${tag(x.status === 'approved' ? 'approved' : 'draft')}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد شهادات', 'No certificates yet')}</td></tr>`}</tbody></table></div>

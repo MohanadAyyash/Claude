@@ -257,8 +257,9 @@ function compliance() {
 const isHttps = req => req.headers['x-forwarded-proto'] === 'https' || process.env.SECURE_COOKIES === '1';
 const cookie = (req, token, maxAge) => `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
 const fails = new Map();                                    // ip -> [timestamps of failed logins]
-const clientIp = req => (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-const locked = ip => { const t = (fails.get(ip) || []).filter(x => Date.now() - x < 15 * 60e3); fails.set(ip, t); return t.length >= 8; };
+// behind the reverse proxy the client address is the LAST X-Forwarded-For hop (the one the proxy added); earlier hops are whatever the client sent
+const clientIp = req => (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',').pop().trim();
+const locked = (key, max = 8) => { const t = (fails.get(key) || []).filter(x => Date.now() - x < 15 * 60e3); if (fails.size > 5000) fails.clear(); fails.set(key, t); return t.length >= max; };
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32).toString('hex');
 function createSession(userId) {
   const token = crypto.randomBytes(24).toString('hex');
@@ -285,8 +286,8 @@ const send = (res, code, body, headers = {}) => {
   res.end(out);
 };
 const readBody = (req, max = 5e6) => req._body !== undefined ? Promise.resolve(req._body) : new Promise((ok, no) => {
-  let b = ''; req.on('data', c => { b += c; if (b.length > max) req.destroy(); });
-  req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch (e) { no(e); } });
+  let b = '', over = false; req.on('data', c => { if (over) return; b += c; if (b.length > max) { over = true; b = ''; no(Object.assign(new Error('the request is too large'), { status: 413 })); req.resume(); } });
+  req.on('end', () => { if (over) return; try { ok(b ? JSON.parse(b) : {}); } catch (e) { no(Object.assign(new Error('invalid request body'), { status: 400 })); } });
 });
 
 // ---- site roles (site engineer, foreman) work only on the projects assigned to them in Users ----
@@ -319,8 +320,8 @@ async function scopeCheck(sc, req, method, url, a, b) {
   if (url.searchParams.get('entity') === 'project' && !p(url.searchParams.get('entity_id'))) return false;
   if (b && /^\d+$/.test(b) && TABLES[a]?.cols.includes('project_id')) { const row = db.prepare(`SELECT project_id FROM ${a} WHERE id=?`).get(+b); if (row && !p(row.project_id)) return false; }
   if (a === 'documents' && b && /^\d+$/.test(b)) { const d = db.prepare('SELECT entity, entity_id FROM documents WHERE id=?').get(+b); if (d && d.entity === 'project' && !p(d.entity_id)) return false; }
-  if (['POST', 'PUT', 'DELETE'].includes(method) && /json/.test(req.headers['content-type'] || '')) {
-    const x = req._body = await readBody(req);
+  if (['POST', 'PUT', 'DELETE'].includes(method)) {
+    const x = req._body = await readBody(req, a === 'documents' ? 12e6 : 5e6);
     if (!p(x.project_id) || !e(x.employee_id) || (x.entity === 'project' && !p(x.entity_id))) return false;
     if (Array.isArray(x.employee_ids) && !x.employee_ids.every(e)) return false;
   }
@@ -336,6 +337,7 @@ function clean(table, body) {
     if (spec.json?.includes(c)) v = JSON.stringify(Array.isArray(v) ? v : []);
     else if (spec.num?.includes(c)) v = +v || 0;
     else if (v === '') v = null;
+    if (v != null && (c === 'date' || c.endsWith('_date') || c.endsWith('_expiry')) && !/^\d{4}-\d\d-\d\d$/.test(String(v))) bad(`${c.replace(/_/g, ' ')} must be a date (YYYY-MM-DD)`);
     out[c] = v;
   }
   return out;
@@ -378,6 +380,7 @@ const mailCfgFor = () => {
   return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
 };
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+ctx.siteScope = me => siteScope(me);
 ctx.applyPayroll = (...a) => applyPayroll(...a);
 // brand e-mail signature: Arial text block + the one-line logo as an inline image
 ctx.signature = user => {
@@ -406,11 +409,11 @@ async function api(req, res, url) {
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(r.lastInsertRowid), 2592000) });
   }
   if (a === 'login' && method === 'POST') {
-    const { username, password } = await readBody(req), ip = clientIp(req);
-    if (locked(ip)) return send(res, 429, { error: 'too many failed attempts — try again in 15 minutes' });
+    const { username, password } = await readBody(req), ip = clientIp(req), acct = 'user:' + String(username || '').toLowerCase();
+    if (locked(ip) | locked(acct, 12)) return send(res, 429, { error: 'too many failed attempts — try again in 15 minutes' });   // per address and per account (both lists are refreshed)
     const u = db.prepare('SELECT * FROM users WHERE username=?').get(username || '');
-    if (!u || !crypto.timingSafeEqual(Buffer.from(hashPw(password || '', u.salt)), Buffer.from(u.hash))) { fails.get(ip).push(Date.now()); return send(res, 401, { error: 'invalid credentials' }); }
-    fails.delete(ip);
+    if (!u || !crypto.timingSafeEqual(Buffer.from(hashPw(password || '', u.salt)), Buffer.from(u.hash))) { fails.get(ip).push(Date.now()); fails.get(acct).push(Date.now()); return send(res, 401, { error: 'invalid credentials' }); }
+    fails.delete(ip); fails.delete(acct);
     if (u.disabled) return send(res, 403, { error: 'this account is disabled' });                    // employee who has left
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(u.id), 2592000) });
   }
@@ -524,10 +527,13 @@ async function api(req, res, url) {
     return send(res, 200, db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(me.id)), true;
   }
   if (a === 'password' && method === 'POST') {
-    const { password } = await readBody(req);
+    const { password, current } = await readBody(req), u = db.prepare('SELECT * FROM users WHERE id=?').get(sessionUser(req).id);
+    if (!crypto.timingSafeEqual(Buffer.from(hashPw(String(current || ''), u.salt)), Buffer.from(u.hash))) return send(res, 400, { error: 'current password is not correct' });
     if (!password || password.length < 6) return send(res, 400, { error: 'password must be at least 6 characters' });
     const salt = crypto.randomBytes(16).toString('hex');
-    db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(password, salt), sessionUser(req).id);
+    db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(password, salt), u.id);
+    const sid = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');                       // every other device is signed out
+    db.prepare('DELETE FROM sessions WHERE user_id=? AND token!=?').run(u.id, sid ? sid[1] : '');
     return send(res, 200, { ok: 1 });
   }
   if (a === 'dashboard') { const d = dashboard(); if (!['admin', 'accountant'].includes(me.role)) d.alerts = []; return send(res, 200, d); }
@@ -733,9 +739,18 @@ async function api(req, res, url) {
     if (a === 'boq_items' && me.role === 'site_engineer' && method !== 'GET' && method !== 'PUT') return send(res, 403, { error: 'your role does not allow this action' });
     if (method === 'GET') {
       const e = enrich();
-      if (['boq_items','variations','site_reports'].includes(a)) { const pid = url.searchParams.get('project_id'); const rows = pid ? db.prepare(`SELECT * FROM ${a} WHERE project_id=? ORDER BY ${a === 'site_reports' ? 'date DESC,' : ''} id`).all(+pid) : all(a); return send(res, 200, id ? rows.find(x => x.id === id) || null : rows); }
+      // "site roles never see money": contract terms and BOQ rates are dropped for roles outside MONEY
+      const HIDE = { projects: ['contract_value', 'retention_pct', 'advance_pct', 'advance_recovery_pct', 'budget'], boq_items: ['rate', 'cost_rate'], variations: ['amount', 'cost'] }[a];
+      const strip = x => { if (!x || !HIDE || ACLX.MONEY.includes(me.role)) return x; const o = { ...x }; for (const k of HIDE) delete o[k]; return o; };
+      const out = rows => send(res, 200, id ? strip(rows.find(x => x.id === id)) || null : rows.map(strip));
+      if (['boq_items','variations','site_reports'].includes(a)) { const pid = url.searchParams.get('project_id'); return out(pid ? db.prepare(`SELECT * FROM ${a} WHERE project_id=? ORDER BY ${a === 'site_reports' ? 'date DESC,' : ''} id`).all(+pid) : all(a)); }
+      if (a === 'quotes') {                                                   // the acceptance link lets its holder sign for the client: only for those who can send quotations; the signature image only on the single record
+        const mayShare = can(me.role, 'PUT', 'quotes');
+        return send(res, 200, id ? (q => q ? { ...q, share_token: mayShare ? q.share_token : undefined } : null)(e.quotes.find(x => x.id === id)) : e.quotes.map(({ signature, share_token, ...q }) => ({ ...q, signed: !!signature, shared: !!share_token })));
+      }
       if (e[a] && Array.isArray(e[a]) ) return send(res, 200, id ? e[a].find(x => x.id === id) || null : e[a]);
-      return send(res, 200, id ? db.prepare(`SELECT * FROM ${a} WHERE id=?`).get(id) : all(a));
+      if (!id) return out(all(a));
+      return send(res, 200, strip(db.prepare(`SELECT * FROM ${a} WHERE id=?`).get(id)));
     }
     const guardInvoice = () => { const st = getSettings(); if (a === 'invoices' && st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices'); };
     if (method === 'POST') {
@@ -856,8 +871,10 @@ const server = http.createServer(async (req, res) => {
     if (!file.startsWith(PUB) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, 'Not found');
     serveStatic(req, res, file);
   } catch (e) {
-    if (!e.status) console.error(e); send(res, e.status || 500, { error: String(e.message || e) });
+    if (!e.status) console.error(e); send(res, e.upstream ? 502 : e.status || 500, { error: String(e.message || e) });
   }
 });
+// one failed background callback (e.g. a locked temp file while a PDF is cleaned up on Windows) must not take the office server down
+if (require.main === module) for (const ev of ['uncaughtException', 'unhandledRejection']) process.on(ev, e => console.error(new Date().toISOString(), ev, e));
 if (require.main === module) server.listen(PORT, process.env.HOST || '0.0.0.0', () => console.log(`Contractor ERP running → http://localhost:${PORT}`));
 module.exports = { server };
