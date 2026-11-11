@@ -29,6 +29,7 @@ module.exports = ctx => {
   ctx.poNet = netItems;
   const poView = r => { const items = parseItems(r), t = C.docTotals(netItems(items), r.vat_pct), gross = round(items.reduce((x, i) => x + (+i.qty || 0) * (+i.rate || 0), 0));
     return { ...r, items, ...t, gross, discount: round(gross - t.subtotal), supplier_name: name('parties', r.party_id), supplier_trn: db.prepare('SELECT trn FROM parties WHERE id=?').get(r.party_id)?.trn, project_name: name('projects', r.project_id) }; };
+  ctx.poView = poView;
   const rfqView = r => {
     const items = json(r.items), quotes = json(r.quotes).map(q => ({ ...q, supplier_name: name('parties', q.party_id), total: round(items.reduce((s, it, i) => s + (+it.qty || 0) * (+(q.rates || [])[i] || 0), 0)), complete: items.every((_, i) => +(q.rates || [])[i] > 0) }));
     const priced = quotes.filter(q => q.complete); const low = priced.length ? Math.min(...priced.map(q => q.total)) : null;

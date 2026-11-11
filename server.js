@@ -9,6 +9,7 @@ const C = require('./lib/compliance');
 const { sendMail, validEmail } = require('./lib/mailer');
 const { docHtml, toText } = require('./lib/docs');
 const ACLX = require('./lib/acl');
+const TOTP = require('./lib/totp');
 
 // secrets (Zoho OAuth client…) live in .env next to server.js — never in the code, the database or git
 try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env */ }
@@ -38,7 +39,7 @@ CREATE TABLE IF NOT EXISTS site_reports(id INTEGER PRIMARY KEY, project_id INTEG
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, ts TEXT, user TEXT, action TEXT, tbl TEXT, rec INTEGER, detail TEXT);
 `);
 const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
-[['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
+[['users','totp_secret','TEXT'],['users','totp_on','INTEGER DEFAULT 0'],['users','totp_last','INTEGER DEFAULT 0'],['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
 
 // Editable columns per table (whitelist) and numeric columns
 const bad = m => { const e = new Error(m); e.status = 400; throw e; };
@@ -246,7 +247,9 @@ function compliance() {
   for (const d of db.prepare('SELECT name,entity,expiry_date FROM documents WHERE expiry_date IS NOT NULL AND expiry_date<? ORDER BY expiry_date').all(soon)) add(d.expiry_date < t ? 'bad' : 'warn', 'doc_file', { who: d.name, date: d.expiry_date });
   const bounced = db.prepare("SELECT COUNT(*) n FROM payments WHERE cheque_status='bounced'").get().n;
   if (bounced) add('bad', 'bounced', { count: bounced });
-  if (ctx.chequeAlerts) ctx.chequeAlerts(add);                              // post-dated cheques due this week / past their date
+  if (ctx.chequeAlerts) ctx.chequeAlerts(add);
+  if (ctx.treasuryAlerts) ctx.treasuryAlerts(add);
+  if (ctx.spendAlerts) ctx.spendAlerts(add);                          // guarantees expiring, projects over budget, cash shortfall ahead                              // post-dated cheques due this week / past their date
   if (ctx.backupStatus && fs.existsSync(path.join(DATA_DIR, 'backups'))) { const bk = ctx.backupStatus(); if (bk.stale) add('bad', 'backup_stale', { days: bk.age_days }); if (bk.last_copy && !bk.last_copy.ok) add('bad', 'backup_copy', { who: bk.last_copy.dir }); }
   const { invoices } = enrich();
   const noTrn = new Set(invoices.filter(i => !i.voided && i.warnings.includes('customer_trn_missing')).map(i => i.client_name));
@@ -347,7 +350,7 @@ function clean(table, body) {
 
 const { ROLES } = ACLX, can = ACLX.can;
 const { money } = require('./lib/render');
-const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir'];
+const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -390,7 +393,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -411,12 +414,18 @@ async function api(req, res, url) {
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(r.lastInsertRowid), 2592000) });
   }
   if (a === 'login' && method === 'POST') {
-    const { username, password } = await readBody(req), ip = clientIp(req), acct = 'user:' + String(username || '').toLowerCase();
+    const { username, password, code } = await readBody(req), ip = clientIp(req), acct = 'user:' + String(username || '').toLowerCase();
     if (locked(ip) | locked(acct, 12)) return send(res, 429, { error: 'too many failed attempts — try again in 15 minutes' });   // per address and per account (both lists are refreshed)
     const u = db.prepare('SELECT * FROM users WHERE username=?').get(username || '');
     if (!u || !crypto.timingSafeEqual(Buffer.from(hashPw(password || '', u.salt)), Buffer.from(u.hash))) { fails.get(ip).push(Date.now()); fails.get(acct).push(Date.now()); return send(res, 401, { error: 'invalid credentials' }); }
-    fails.delete(ip); fails.delete(acct);
+    fails.delete(ip); if (!u.totp_on) fails.delete(acct);                    // with two-step sign-in the account counter also guards the code
     if (u.disabled) return send(res, 403, { error: 'this account is disabled' });                    // employee who has left
+    if (u.totp_on) {                                                         // two-step sign-in: the password was right, now the code from the authenticator app
+      if (!code) return send(res, 401, { error: 'enter the 6-digit code from your authenticator app', need_code: true });
+      const step = TOTP.verify(u.totp_secret, code, u.totp_last || 0);
+      if (!step) { fails.set(acct, [...(fails.get(acct) || []), Date.now()]); return send(res, 401, { error: 'the code is not correct — check the time on your phone and try the next code', need_code: true }); }
+      db.prepare('UPDATE users SET totp_last=? WHERE id=?').run(step, u.id);
+    }
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(u.id), 2592000) });
   }
   if (a === 'logout') {
@@ -432,6 +441,7 @@ async function api(req, res, url) {
   const scope = siteScope(me);
   if (scope) { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }
   if (ctx.periodGuard) await ctx.periodGuard(req, method, url, parts);          // closed accounting period
+  if (ctx.spendGuard) await ctx.spendGuard(req, method, url, parts, me);        // purchase orders / payments above the approval limit
 
   const mailCfg = mailCfgFor;
   if (a === 'settings' && b === 'test-email' && method === 'POST') {
@@ -462,7 +472,7 @@ async function api(req, res, url) {
   if (a === 'users') {
     const admins = () => db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n;
     const hrOnly = me.role === 'hr';
-    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all()
+    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,COALESCE(u.totp_on,0) two_step,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all()
       .map(u => ({ ...u, projects: db.prepare('SELECT project_id FROM user_projects WHERE user_id=?').all(u.id).map(r => r.project_id) })));
     const body = ['POST', 'PUT'].includes(method) ? await readBody(req) : {};
     if (method === 'POST') {
@@ -528,6 +538,35 @@ async function api(req, res, url) {
   if (a === 'profile') {
     if (method === 'PUT') { const x = await readBody(req); db.prepare('UPDATE users SET display_name=?, job_title=?, mobile=? WHERE id=?').run(String(x.display_name || '').slice(0, 80), String(x.job_title || '').slice(0, 80), String(x.mobile || '').slice(0, 30), me.id); }
     return send(res, 200, db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(me.id)), true;
+  }
+  if (a === '2fa') {
+    const u = db.prepare('SELECT * FROM users WHERE id=?').get(me.id), pwOk = p => crypto.timingSafeEqual(Buffer.from(hashPw(String(p || ''), u.salt)), Buffer.from(u.hash));
+    if (method === 'GET') return send(res, 200, { enabled: !!u.totp_on });
+    const x = await readBody(req);
+    if (b === 'setup' && method === 'POST') {                                // a new secret, not active until a code from it is confirmed
+      if (u.totp_on) return send(res, 400, { error: 'two-step sign-in is already on — switch it off first' });
+      const secret = TOTP.newSecret(); db.prepare('UPDATE users SET totp_secret=?, totp_on=0 WHERE id=?').run(secret, u.id);
+      return send(res, 200, { secret, uri: TOTP.uri(secret, u.username, getSettings().company_name || 'Trigon ERP') });
+    }
+    if (b === 'enable' && method === 'POST') {
+      if (u.totp_on) return send(res, 400, { error: 'two-step sign-in is already on' });
+      const step = TOTP.verify(u.totp_secret, x.code, 0); if (!step) return send(res, 400, { error: 'the code is not correct — check the time on your phone and try the next code' });
+      db.prepare('UPDATE users SET totp_on=1, totp_last=? WHERE id=?').run(step, u.id);
+      const sid = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || ''); db.prepare('DELETE FROM sessions WHERE user_id=? AND token!=?').run(u.id, sid ? sid[1] : '');
+      audit(req, 'enable', '2fa', u.id, u.username); return send(res, 200, { enabled: true });
+    }
+    if (b === 'disable' && method === 'POST') {                               // own account: the password is asked again
+      if (!pwOk(x.password)) return send(res, 400, { error: 'current password is not correct' });
+      db.prepare('UPDATE users SET totp_on=0, totp_secret=NULL, totp_last=0 WHERE id=?').run(u.id); audit(req, 'disable', '2fa', u.id, u.username);
+      return send(res, 200, { enabled: false });
+    }
+    if (b === 'reset' && method === 'POST') {                                 // administrator: a user lost the phone
+      if (me.role !== 'admin') return send(res, 403, { error: 'only the administrator can reset two-step sign-in' });
+      const t = db.prepare('SELECT id, username FROM users WHERE id=?').get(+x.user_id); if (!t) return send(res, 404, { error: 'not found' });
+      db.prepare('UPDATE users SET totp_on=0, totp_secret=NULL, totp_last=0 WHERE id=?').run(t.id); db.prepare('DELETE FROM sessions WHERE user_id=? AND user_id!=?').run(t.id, me.id);
+      audit(req, 'reset', '2fa', t.id, t.username); return send(res, 200, { ok: 1 });
+    }
+    return send(res, 404, { error: 'not found' });
   }
   if (a === 'password' && method === 'POST') {
     const { password, current } = await readBody(req), u = db.prepare('SELECT * FROM users WHERE id=?').get(sessionUser(req).id);
