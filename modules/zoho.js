@@ -80,6 +80,7 @@ module.exports = ctx => {
       notes: [b.project_name && `Project: ${b.project_name}`, b.category && `Category: ${CAT[b.category] || b.category}`].filter(Boolean).join('\n'),
       cash: pay ? ['cash', 'petty'].includes(pay.method) : true };
   };
+  const payHash = d => hashOf([d.amount, d.date, d.inbound, d.inv ? 'i' + d.inv.id : d.bill ? 'b' + d.bill.id : '']);
   const payDoc = (p, e) => {
     const inv = p.invoice_id ? e.invoices.find(i => i.id === p.invoice_id) : null, bill = p.bill_id ? e.bills.find(b => b.id === p.bill_id) : null;
     return { inbound: p.kind === 'in', amount: round(p.amount), date: p.method === 'cheque' && p.cheque_date ? p.cheque_date : p.date, mode: MODE[p.method] || 'banktransfer', inv, bill,
@@ -122,8 +123,8 @@ module.exports = ctx => {
       ...(p.trn ? { tax_reg_no: p.trn } : {}), billing_address: { address: p.address || '' }, notes: [`Trigon ERP TRG-P${p.id}`, p.notes].filter(Boolean).join('\n') };
     const person = p.email || p.phone ? { first_name: p.name.slice(0, 100), email: p.email || '', phone: p.phone || '', is_primary_contact: true } : null;
     const h = hashOf([vals, person]), r = rec('contact', p.id);
-    if (r && r.status === 'ok' && r.zoho_id) {
-      if (r.hash === h) return r.zoho_id;
+    if (r && ['ok', 'error'].includes(r.status) && r.zoho_id) {
+      if (r.hash === h && r.status === 'ok') return r.zoho_id;
       try {
         const cp = (((await cl.get('/contacts/' + r.zoho_id)).contact || {}).contact_persons || [])[0];        // update the existing person instead of adding another
         await cl.put('/contacts/' + r.zoho_id, { ...vals, ...(person ? { contact_persons: [{ ...(cp ? { contact_person_id: cp.contact_person_id } : {}), ...person }] } : {}) });
@@ -152,10 +153,11 @@ module.exports = ctx => {
       if (r.status === 'cancelled') return;
       await cl.post(`${t.path}/${r.zoho_id}/status/void`); mark(kind, localId, r.zoho_id, type, 'cancelled', null, h); run.updated++; return;
     }
-    if (r && r.zoho_id && ['ok', 'changed'].includes(r.status)) {
-      if (r.zoho_type !== type) { if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, null, 'changed', `${label} changed between bill and expense after it was sent — fix it in Zoho`, null); run.failed++; } return; }
-      if (r.hash === h) return;
+    if (r && r.zoho_id && ['ok', 'changed', 'error'].includes(r.status)) {     // 'error' with a Zoho id: it IS there (a later update failed) → update it, never post a second one
+      if (r.zoho_type && r.zoho_type !== type) { if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, null, 'changed', `${label} changed between bill and expense after it was sent — fix it in Zoho`, null); run.failed++; } return; }
+      if (r.hash === h && r.status !== 'error') return;
       let cur = null; try { cur = (await cl.get(`${t.path}/${r.zoho_id}`))[t.key]; } catch (e) { if (!gone(e)) throw e; }
+      if (cur && r.hash === h) { mark(kind, localId, r.zoho_id, type, 'ok', null, h); return; }          // unchanged since it was sent: only the error flag is cleared
       if (cur && !LOCKED.includes(cur.status)) { await cl.put(`${t.path}/${r.zoho_id}`, vals, q); mark(kind, localId, r.zoho_id, type, 'ok', null, h); run.updated++; return; }
       if (cur) { if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, type, 'changed', 'edited here after it was paid in Zoho — correct it in Zoho or issue a credit note', null); run.failed++; } return; }
       // deleted in Zoho → send it again
@@ -171,7 +173,7 @@ module.exports = ctx => {
 
   async function pushPayment(cl, p, lk, run) {
     const r = rec('payment', p.id);
-    if (r && ['ok', 'skipped', 'included'].includes(r.status)) return;
+    if (r && (['ok', 'skipped', 'included'].includes(r.status) || (r.status === 'error' && r.zoho_id))) return;   // already in Zoho (a payment is never posted twice)
     if (p.method === 'cheque' && p.cheque_status === 'pending') return;               // post-dated cheque: sent once it clears
     const d = payDoc(p, run.e), skip = why => { mark('payment', p.id, null, null, 'skipped', why, null); run.skipped++; };
     if (p.method === 'offset') return skip('offset against another balance — record it in Zoho directly');
@@ -196,7 +198,7 @@ module.exports = ctx => {
         bills: apply > 0 ? [{ bill_id: docRec.zoho_id, amount_applied: apply }] : [] };
       id = (await cl.post('/vendorpayments', vals)).vendorpayment.payment_id;
     }
-    mark('payment', p.id, id, d.inbound ? 'customerpayment' : 'vendorpayment', 'ok', null, null); run.sent++;
+    mark('payment', p.id, id, d.inbound ? 'customerpayment' : 'vendorpayment', 'ok', null, payHash(d)); run.sent++;
   }
 
   // ---------- manual journals: payroll by project, salaries paid, end-of-service provision / settlement, salary advances, retention ----------
@@ -269,8 +271,8 @@ module.exports = ctx => {
       lines.push({ account_id: acc, debit_or_credit: l.dc, amount: round(l.amount), description: l.desc || '', ...(l.customer ? { customer_id: await contactId(cl, l.customer, run) } : {}), ...projectRef(l.project_id) });
     }
     const vals = { journal_date: j.date, reference_number: j.ref.slice(0, 100), notes: j.notes, line_items: lines }, h = hashOf(vals), r = rec(j.kind, j.local_id);
-    if (r && r.status === 'ok' && r.zoho_id) {
-      if (r.hash === h) return;
+    if (r && ['ok', 'error'].includes(r.status) && r.zoho_id) {                   // also after a failed update: the journal exists there, so it is updated, not posted twice
+      if (r.hash === h && r.status === 'ok') return;
       try { await cl.put('/journals/' + r.zoho_id, vals); mark(j.kind, j.local_id, r.zoho_id, 'journal', 'ok', null, h); run.updated++; return; } catch (e) { if (!gone(e)) throw e; }
     }
     const id = (await cl.post('/journals', vals)).journal.journal_id;
@@ -322,6 +324,12 @@ module.exports = ctx => {
         const d = billDoc(b, e), acct = accountFor(lk, d.category), tax = d.vat > 0.004 ? lk.std : null;
         if (d.vat > 0.004 && !tax) { d.amount = round(d.amount + d.vat); d.notes = [d.notes, `VAT ${d.vat.toFixed(2)} not recoverable (not VAT-registered) — included in the cost`].filter(Boolean).join('\n'); }   // not registered: input VAT is part of the cost
         if (!acct) throw new Error('no expense account in Zoho');
+        const pct = +(tax && tax.tax_percentage) || 5, exact = !tax || Math.abs(d.vat - round(d.amount * pct / 100)) <= 0.05, taxable = exact ? d.amount : round(d.vat * 100 / pct);
+        if (!exact && taxable > d.amount + 0.05) throw new Error(`VAT ${d.vat.toFixed(2)} is more than ${pct}% of the amount — check the bill`);
+        if (d.type === 'expense' && !exact) {                                           // an expense has one amount and one tax in Zoho
+          if ((rec('bill', b.id) || {}).status !== 'skipped') { mark('bill', b.id, null, null, 'skipped', `VAT ${d.vat.toFixed(2)} is not ${pct}% of the amount (partly outside VAT) — enter this expense in Zoho by hand`, null); run.skipped++; }
+          return;
+        }
         if (d.type === 'expense') {
           const paid = d.cash ? (lk.cash || lk.bank) : (lk.bank || lk.cash); if (!paid) throw new Error('no bank or cash account in Zoho');
           const vals = { account_id: acct.account_id, paid_through_account_id: paid.account_id, date: d.date, amount: d.amount, ...(tax ? { tax_id: tax.tax_id } : {}), is_inclusive_tax: false,
@@ -330,8 +338,19 @@ module.exports = ctx => {
         }
         const vendor = await contactId(cl, b.party_id, run);
         const vals = { vendor_id: vendor, bill_number: d.number, date: d.date, reference_number: d.project.slice(0, 100), place_of_supply: d.place, is_inclusive_tax: false, notes: d.notes,
-          line_items: [{ account_id: acct.account_id, description: d.description, quantity: 1, rate: d.amount, ...(tax ? { tax_id: tax.tax_id } : {}), ...projectRef(b.project_id) }] };
+          line_items: exact ? [{ account_id: acct.account_id, description: d.description, quantity: 1, rate: d.amount, ...(tax ? { tax_id: tax.tax_id } : {}), ...projectRef(b.project_id) }]
+            : [{ account_id: acct.account_id, description: d.description, quantity: 1, rate: taxable, tax_id: tax.tax_id, ...projectRef(b.project_id) },      // the part that carries VAT …
+              { account_id: acct.account_id, description: `${d.description} — part without VAT (retention / outside VAT)`, quantity: 1, rate: round(d.amount - taxable), ...projectRef(b.project_id) }] };   // … and the rest, so the VAT equals the VAT on the document
         await pushDoc(cl, 'bill', b.id, 'bill', vals, { find: { bill_number: d.number, vendor_id: vendor }, label: d.number }, run);
+      });
+      // receipts / payments already in Zoho that bounced, were deleted or were changed here: removed there (a changed one is sent again just below)
+      if (!dryRun) for (const r of db.prepare("SELECT * FROM zoho_sync WHERE kind='payment' AND status='ok' AND zoho_id IS NOT NULL").all()) await each('payment', r.local_id, `payment #${r.local_id}`, async () => {
+        const p = e.payments.find(x => x.id === r.local_id), live = p && p.cheque_status !== 'bounced';
+        if (live && (!r.hash || r.hash === payHash(payDoc(p, e)))) return;
+        try { await cl.del(`/${r.zoho_type === 'vendorpayment' ? 'vendorpayments' : 'customerpayments'}/${r.zoho_id}`); } catch (err) { if (!gone(err)) throw err; }
+        if (live) db.prepare("DELETE FROM zoho_sync WHERE kind='payment' AND local_id=?").run(r.local_id);
+        else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', p ? 'cheque bounced — removed from Zoho' : 'deleted here — removed from Zoho', null);
+        run.updated++;
       });
       for (const p of payments) await each('payment', p.id, `${p.kind === 'in' ? 'receipt' : 'payment'} ${p.reference || '#' + p.id}`, () => pushPayment(cl, p, lk, run));
       for (const j of journals(from || c.start || null, to || today())) await each(j.kind, j.local_id, j.ref, () => pushJournal(cl, j, lk, run));
@@ -507,7 +526,7 @@ module.exports = ctx => {
           return send(res, 200, { local, saved, zoho, error }), true;
         }
       }
-      if (m === 'POST' && b === 'retry') { db.prepare("DELETE FROM zoho_sync WHERE status IN ('error','skipped')").run(); return send(res, 200, { ok: true }), true; }
+      if (m === 'POST' && b === 'retry') { db.prepare("DELETE FROM zoho_sync WHERE status IN ('error','skipped') AND zoho_id IS NULL").run(); return send(res, 200, { ok: true }), true; }
       if (m === 'GET' && b === 'log') return send(res, 200, db.prepare('SELECT * FROM zoho_sync ORDER BY synced_at DESC, id DESC LIMIT 300').all()), true;
       if (m === 'GET' && b === 'report') { const d = q.get('date') || today(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return send(res, 400, { error: 'date must be YYYY-MM-DD' }), true; return send(res, 200, report(d)), true; }
       if (m === 'GET' && b === 'export') {
