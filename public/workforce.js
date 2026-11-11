@@ -40,7 +40,7 @@ const approvalRows = q => q.map(it => { const r = it.record; return `<div style=
   <div class="bar" style="margin-top:6px"><button class="btn sm" data-ap="${it.step_id}">${tr('موافقة', 'Approve')}</button><button class="btn sec sm" data-rj="${it.step_id}">${tr('رفض', 'Reject')}</button></div></div>`; }).join('');
 const wireApprovals = root => {
   root.querySelectorAll('[data-ap]').forEach(b => b.onclick = guard(async () => {
-    const note = prompt(tr('ملاحظة (اختياري):', 'Note (optional):')) ?? ''; if (note === null) return;
+    const note = prompt(tr('ملاحظة (اختياري):', 'Note (optional):')); if (note === null) return;
     try { await api('PUT', 'approvals/' + b.dataset.ap, { status: 'approved', note }); }
     catch (e) { if (/Insufficient/.test(e.message) && confirm(e.message + '\n\n' + tr('الموافقة رغم ذلك؟', 'Approve anyway?'))) await api('PUT', 'approvals/' + b.dataset.ap, { status: 'approved', note, force: 1 }); else throw e; }
     toast(tr('تمت الموافقة', 'Approved')); render(); onShell();

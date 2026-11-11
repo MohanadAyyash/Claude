@@ -12,9 +12,9 @@ module.exports = ctx => {
   function state(pid) {
     const p = db.prepare('SELECT * FROM projects WHERE id=?').get(pid); if (!p) return null;
     const inv = enrich().invoices.filter(i => i.project_id === pid && !i.voided);
-    const advance = round(inv.filter(i => i.kind === 'advance').reduce((s, i) => s + i.subtotal, 0)), recovered = round(inv.reduce((s, i) => s + (i.recovery || 0), 0));
+    const advance = round(inv.filter(i => i.kind === 'advance' || i.orig_kind === 'advance').reduce((s, i) => s + i.subtotal, 0)), recovered = round(inv.reduce((s, i) => s + (i.recovery || 0), 0));
     const work = inv.filter(i => i.kind !== 'advance' && i.kind !== 'credit_note');
-    const held = round(work.reduce((s, i) => s + i.retention, 0)), open = round(work.reduce((s, i) => s + i.retention_open, 0)), released = round(held - open);
+    const held = round(work.reduce((s, i) => s + i.retention - (i.retention_credited || 0), 0)), open = round(work.reduce((s, i) => s + i.retention_open, 0)), released = round(held - open);
     const first = round(held * (p.retention_handover_pct ?? 50) / 100), dlpDate = p.handover_date ? addMonths(p.handover_date, p.dlp_months ?? 12) : null;
     return { project: p,
       advance: { pct: p.advance_pct || 0, recovery_pct: p.advance_recovery_pct || p.advance_pct || 0, invoiced: advance, recovered, remaining: round(advance - recovered), invoices: inv.filter(i => i.kind === 'advance').map(i => ({ id: i.id, number: i.number, date: i.date, subtotal: i.subtotal, total: i.total, status: i.status })) },

@@ -167,6 +167,7 @@ const PO_CONDITIONS = `1. Order. This purchase order, its attachments and these 
 
       if (a === 'rfqs' && c === 'award' && m === 'POST') {
         const rfq = db.prepare('SELECT * FROM rfqs WHERE id=?').get(+b); if (!rfq) notFound();
+        if (!require('../lib/acl').can(me.role, 'POST', 'purchase_orders')) return send(res, 403, { error: 'your role cannot issue purchase orders' }), true;   // awarding creates a priced PO
         if (rfq.status === 'awarded') bad('This RFQ was already awarded');
         const { party_id } = await readBody(req), v = rfqView(rfq), q = v.quotes.find(x => x.party_id === +party_id);
         if (!q) bad('Select a supplier that submitted a quotation'); if (!q.complete) bad('That quotation has missing prices');
@@ -211,6 +212,14 @@ const PO_CONDITIONS = `1. Order. This purchase order, its attachments and these 
         const ex = k => (body[k] !== undefined ? body[k] : cur ? cur[k] : null);
         Object.assign(f, { period_to: ex('period_to') || null, materials: +ex('materials') || 0, release: +ex('release') || 0, app_ref: ex('app_ref') || '', cost_codes: ex('cost_codes') || '' });
         if (f.materials < 0 || f.release < 0 || f.deductions < 0 || f.advance_recovery < 0) bad('Amounts cannot be negative');
+        // within the subcontract: work up to its value + variations, advance recovered up to the advance, retention released up to what is held
+        const others = db.prepare('SELECT * FROM sub_certs WHERE subcontract_id=? AND id!=? ORDER BY id').all(subId, id || 0), limit = round((+sub.contract_value || 0) + (+sub.variations || 0));
+        if (limit > 0 && f.cumulative > limit + 0.01) bad(`Cumulative work ${money(f.cumulative)} is more than the subcontract value with variations (${money(limit)}) — record the variation on the subcontract first`);
+        const advSoFar = round(others.reduce((s, x) => s + (+x.advance_recovery || 0), 0));
+        if (f.advance_recovery > 0 && advSoFar + f.advance_recovery > (+sub.advance || 0) + 0.01) bad(`Advance recovery is more than the advance left to recover (${money(Math.max(0, (+sub.advance || 0) - advSoFar))})`);
+        let pc = 0, pm = 0, held = 0; for (const x of others.filter(x => !id || x.id < id)) { held += ((+x.cumulative || 0) - pc + (+x.materials || 0) - pm) * (+x.retention_pct || 0) / 100 - (+x.release || 0); pc = +x.cumulative || 0; pm = +x.materials || 0; }
+        held = round(held + (f.cumulative - pc + f.materials - pm) * f.retention_pct / 100);
+        if (f.release > held + 0.01) bad(`Retention release is more than the retention held (${money(held)})`);
         if (id) { db.prepare('UPDATE sub_certs SET date=?,cumulative=?,retention_pct=?,advance_recovery=?,deductions=?,vat_pct=?,notes=?,period_to=?,materials=?,release=?,app_ref=?,cost_codes=?,vat_basis=? WHERE id=?').run(body.date || cur.date, f.cumulative, f.retention_pct, f.advance_recovery, f.deductions, f.vat_pct, body.notes ?? cur.notes, f.period_to, f.materials, f.release, f.app_ref, f.cost_codes, sub.vat_basis === 'net' ? 'net' : 'gross', id); return send(res, 200, { ok: 1 }), true; }
         const r = db.prepare('INSERT INTO sub_certs(number,subcontract_id,date,cumulative,retention_pct,advance_recovery,deductions,vat_pct,notes,period_to,materials,release,app_ref,cost_codes,vat_basis) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(nextNumber('sub_certs', 'SC'), subId, body.date || today(), f.cumulative, f.retention_pct, f.advance_recovery, f.deductions, f.vat_pct, body.notes || '', f.period_to, f.materials, f.release, f.app_ref, f.cost_codes, sub.vat_basis === 'net' ? 'net' : 'gross');

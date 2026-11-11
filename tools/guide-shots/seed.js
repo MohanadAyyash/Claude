@@ -38,7 +38,7 @@ const day = o => { const d = new Date(); d.setDate(d.getDate() + o); return d.to
   const inv3 = (await call('POST', 'invoices', { project_id: p3, date: day(-60), due_date: day(-30), vat_pct: 5, retention_pct: 10, items: [{ description: 'Interlock paving works — final', unit: 'LS', qty: 1, rate: 640000, vat: 'std' }] })).id;
   // payments
   const invs = await call('GET', 'invoices');
-  for (const i of invs) { if (i.project_id === p1 && i.balance > 0) await call('POST', 'payments', { kind: 'in', date: day(-20), amount: Math.round(i.balance), method: 'bank', reference: 'TT-' + i.id, invoice_id: i.id, cheque_status: 'cleared' }); }
+  for (const i of invs) { if (i.project_id === p1 && i.balance > 0) await call('POST', 'payments', { kind: 'in', date: day(-20), amount: i.balance, method: 'bank', reference: 'TT-' + i.id, invoice_id: i.id, cheque_status: 'cleared' }); }
   await call('POST', 'payments', { kind: 'in', date: day(-15), amount: 300000, method: 'cheque', reference: 'CHQ 004512', invoice_id: inv3, cheque_date: day(10), cheque_status: 'pending' });
   // bills
   const bill = async b => (await call('POST', 'bills', b))?.id;

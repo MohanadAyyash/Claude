@@ -42,7 +42,7 @@ PAGES.documents = async () => {
 
 // ---- RFQ: items x suppliers comparison ------------------------------------------------------------
 PAGES.rfq = async () => {
-  const [rows, projects, parties] = await Promise.all([api('GET', 'rfqs'), api('GET', 'projects'), api('GET', 'parties')]);
+  const [rows, projects, parties] = await Promise.all([api('GET', 'rfqs'), api('GET', 'projects'), api('GET', 'parties').catch(() => [])]);
   const suppliers = parties.filter(p => p.type !== 'client');
   main(`<div class="bar"><h1>${tr('طلبات الأسعار (RFQ)', 'Requests for quotation')}</h1><span class="sp"></span>${canOps('rfqs') ? `<button class="btn" id="add">+ ${tr('طلب جديد', 'New RFQ')}</button>` : ''}</div>
   <p class="muted">${tr('أدخل البنود المطلوبة ثم أسعار كل مورد؛ يقارن النظام الإجمالي ويُبرز الأقل، وبنقرة واحدة تُحوَّل الترسية إلى أمر شراء.', 'List the items, enter each supplier’s prices; the system compares totals, highlights the lowest and turns the award into a purchase order in one click.')}</p>
@@ -89,7 +89,7 @@ PAGES.rfq = async () => {
 
 // ---- purchase orders ---------------------------------------------------------------------------
 window.poModal = guard(async (id, preset = {}) => {
-  const [parties, projects] = await Promise.all([api('GET', 'parties'), api('GET', 'projects')]);
+  const [parties, projects] = await Promise.all([api('GET', 'parties').catch(() => []), api('GET', 'projects')]);
   const row = id ? await api('GET', 'purchase_orders/' + id) : null;
   const r = row || { date: today(), vat_pct: S.vat_registered === '0' ? 0 : (S.vat_pct || 5), status: 'draft', payment_terms: '60 days from invoice', terms: '', ...preset };
   // order lines: item code, description, unit, qty, unit price, discount %, VAT — net amount after the discount
@@ -163,7 +163,7 @@ PAGES.subcontracts = async () => {
   c.setRow(id => subDetail(rows.find(r => r.id === id), c.edit));
 };
 async function subDetail(sub, edit) {
-  const certs = (await api('GET', 'sub_certs')).filter(x => x.subcontract_id === sub.id);
+  const certs = (await api('GET', 'sub_certs').catch(() => [])).filter(x => x.subcontract_id === sub.id);   // roles without certificate access still open the subcontract
   const m = modal(`<h2>${esc(sub.party_name || '')} — ${esc(sub.description || '')}</h2><p class="muted">${esc(sub.project_name || '')} · ${tr('قيمة العقد', 'Contract')} ${money(sub.contract_value)} · ${tr('محتجزات', 'Retention')} ${sub.retention_pct}%</p>
     <div class="tw"><table><thead><tr><th>${tr('الشهادة', 'Cert')}</th><th>${tr('التاريخ', 'Date')}</th><th class="n">${tr('التراكمي', 'Cumulative')}</th><th class="n">${tr('هذه الفترة', 'This period')}</th><th class="n">${tr('المستحق الآن', 'Payable now')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
     ${certs.map(x => `<tr class="click" data-c="${x.id}"><td>${esc(x.number)}</td><td>${esc(x.date)}</td><td class="n">${money(x.cumulative)}</td><td class="n">${money(x.gross_this)}</td><td class="n">${money(x.payable_now)}</td><td>${tag(x.status === 'approved' ? 'approved' : 'draft')}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد شهادات', 'No certificates yet')}</td></tr>`}</tbody></table></div>

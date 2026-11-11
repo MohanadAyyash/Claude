@@ -34,9 +34,37 @@ module.exports = ctx => {
   // ---------- advances: schedule and balance ----------
   const loanRows = eid => db.prepare('SELECT * FROM loans WHERE employee_id=? ORDER BY id').all(eid);
   const repaid = loanId => round(db.prepare("SELECT COALESCE(SUM(r.amount),0) s FROM loan_repayments r JOIN payroll p ON p.id=r.payroll_id WHERE r.loan_id=? AND p.status='final'").get(loanId).s);
-  const scheduled = (l, month) => {                                        // instalment due in this month (the last one takes the rounding)
-    const k = monthsBetween(l.start_month, month); if (k < 0 || k >= l.installments) return 0;
-    const inst = round(l.amount / l.installments); return k === l.installments - 1 ? round(l.amount - inst * (l.installments - 1)) : inst;
+  const cumulative = (l, month) => {                                       // instalments due from the start month up to this month (the last one takes the rounding)
+    const k = monthsBetween(l.start_month, month); if (k < 0) return 0;
+    return k >= l.installments - 1 ? l.amount : round(round(l.amount / l.installments) * (k + 1));
+  };
+  const takenElsewhere = (loanId, payrollId) => round(db.prepare('SELECT COALESCE(SUM(amount),0) s FROM loan_repayments WHERE loan_id=? AND payroll_id!=?').get(loanId, payrollId).s);
+  const loanPart = payrollId => round(db.prepare('SELECT COALESCE(SUM(amount),0) s FROM loan_repayments WHERE payroll_id=?').get(payrollId).s);
+  const loanNote = (row, amt) => !row.notes || /^Advance repayment [\d.]+$/.test(row.notes) ? (amt ? `Advance repayment ${amt}` : '') : row.notes;
+  // (Re)compute the advance deduction of a draft payroll row: everything due up to that month and not yet taken by another payroll
+  // row — so a month that was skipped, or generated before the advance was approved, is caught up instead of lost.
+  ctx.syncLoanDeduction = payrollId => {
+    const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(payrollId); if (!row || row.status === 'final') return;
+    const old = loanPart(payrollId); db.prepare('DELETE FROM loan_repayments WHERE payroll_id=?').run(payrollId);
+    let amt = 0;
+    for (const l of loanRows(row.employee_id)) {
+      const t = takenElsewhere(l.id, payrollId), due = round(Math.min(l.amount - t, cumulative(l, row.month) - t));
+      if (due > 0.004) { amt += due; db.prepare('INSERT INTO loan_repayments(loan_id,payroll_id,month,amount) VALUES(?,?,?,?)').run(l.id, payrollId, row.month, due); }
+    }
+    amt = round(amt);
+    if (amt !== old || amt) ctx.applyPayroll(payrollId, { deductions: Math.max(0, round((+row.deductions || 0) - old + amt)), notes: loanNote(row, amt) });
+  };
+  // HR lowered the deductions of a draft row below its advance part: the advance is then only repaid by what is really withheld
+  // (the rest stays owed and is caught up by the next payroll).
+  ctx.capLoanToDeductions = payrollId => {
+    const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(payrollId); if (!row || row.status === 'final') return;
+    let over = round(loanPart(payrollId) - (+row.deductions || 0)); if (over <= 0.004) return;
+    for (const r of db.prepare('SELECT * FROM loan_repayments WHERE payroll_id=? ORDER BY id DESC').all(payrollId)) {
+      const cut = Math.min(over, r.amount); over = round(over - cut);
+      if (round(r.amount - cut) > 0.004) db.prepare('UPDATE loan_repayments SET amount=? WHERE id=?').run(round(r.amount - cut), r.id); else db.prepare('DELETE FROM loan_repayments WHERE id=?').run(r.id);
+      if (over <= 0.004) break;
+    }
+    db.prepare('UPDATE payroll SET notes=? WHERE id=?').run(loanNote(row, loanPart(payrollId)), payrollId);
   };
   const balance = l => round(l.amount - repaid(l.id));
   ctx.loanBalance = eid => round(loanRows(eid).reduce((s, l) => s + balance(l), 0));
@@ -49,16 +77,11 @@ module.exports = ctx => {
     let sm = start_month || today().slice(0, 7);
     if (!start_month && db.prepare("SELECT 1 FROM payroll WHERE month=? AND employee_id=? AND status='final'").get(sm, employee_id)) sm = addMonths(sm, 1);   // this month already paid → next
     const r = db.prepare('INSERT INTO loans(employee_id,request_id,amount,installments,start_month,note,created,created_by,method) VALUES(?,?,?,?,?,?,?,?,?)').run(employee_id, request_id || null, round(+amount), n, sm, note || '', now(), by || '', method || 'bank');
+    // payroll drafts that already exist for this employee take the new instalments straight away
+    for (const p of db.prepare("SELECT id FROM payroll WHERE employee_id=? AND status!='final' AND month>=? ORDER BY month").all(employee_id, sm)) ctx.syncLoanDeduction(p.id);
     return Number(r.lastInsertRowid);
   }
   ctx.hooks.onAdvanceApproved = (r, by) => { if (!db.prepare('SELECT 1 FROM loans WHERE request_id=?').get(r.id)) createLoan({ employee_id: r.employee_id, amount: r.amount, installments: r.installments || 1, request_id: r.id, note: r.details }, by); };
-  // payroll generation asks for this month's deduction (hr.js payrollInputs); the repayment is linked to the payroll row
-  ctx.hooks.loanDeduction = (e, month) => {
-    let amt = 0; const parts = [];
-    for (const l of loanRows(e.id)) { const due = Math.min(scheduled(l, month), balance(l)); if (due > 0.004) { amt += due; parts.push({ loan: l.id, amount: round(due) }); } }
-    return { amount: round(amt), parts };
-  };
-  ctx.hooks.afterPayrollRow = (payrollId, e, month, parts) => { for (const p of parts || []) db.prepare('INSERT OR IGNORE INTO loan_repayments(loan_id,payroll_id,month,amount) VALUES(?,?,?,?)').run(p.loan, payrollId, month, p.amount); };
   ctx.loanInfo = row => {                                                  // for the payslip: deducted this month and what is left after it
     const ded = round(db.prepare('SELECT COALESCE(SUM(amount),0) s FROM loan_repayments WHERE payroll_id=?').get(row.id).s);
     const left = round(loanRows(row.employee_id).reduce((s, l) => s + l.amount - db.prepare('SELECT COALESCE(SUM(r.amount),0) s FROM loan_repayments r JOIN payroll p ON p.id=r.payroll_id WHERE r.loan_id=? AND (p.status=\'final\' OR p.id=?)').get(l.id, row.id).s, 0));

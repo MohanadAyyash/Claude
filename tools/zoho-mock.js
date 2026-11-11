@@ -39,7 +39,13 @@ function mockZoho() {
     const tb = T[p[0]], [one, idf, numf] = KEY[p[0]] || [];
     if (!tb) throw err(404, 5, 'Invalid URL Passed');
     if (p[0] === 'customerpayments' || p[0] === 'vendorpayments') {
-      const inbound = p[0] === 'customerpayments', docs = inbound ? T.invoices : T.bills, links = (inbound ? body.invoices : body.bills) || [];
+      const inbound = p[0] === 'customerpayments', docs = inbound ? T.invoices : T.bills;
+      if (method === 'DELETE' && p.length === 2) {                                      // deleting a payment gives the balance back to its documents
+        const row = tb.find(r => r.payment_id === p[1]); if (!row) throw err(404, 1002, 'Payment does not exist.');
+        for (const l of (inbound ? row.invoices : row.bills) || []) { const d = docs.find(x => x[inbound ? 'invoice_id' : 'bill_id'] === l[inbound ? 'invoice_id' : 'bill_id']); if (d) { d.balance = Math.round((d.balance + l.amount_applied) * 100) / 100; d.status = d.balance >= d.total - 0.004 ? 'sent' : 'partially_paid'; } }
+        tb.splice(tb.indexOf(row), 1); return { message: 'deleted' };
+      }
+      const links = (inbound ? body.invoices : body.bills) || [];
       if (!body[inbound ? 'customer_id' : 'vendor_id'] || !(body.amount > 0)) throw err(400, 4, 'Invalid payment');
       for (const l of links) {
         const d = docs.find(x => x[inbound ? 'invoice_id' : 'bill_id'] === l[inbound ? 'invoice_id' : 'bill_id']);

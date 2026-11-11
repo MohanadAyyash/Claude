@@ -39,7 +39,7 @@ module.exports = ctx => {
     const add = (date, ref, memo, source, lines) => { lines = lines.filter(l => l.debit || l.credit); if (lines.length) out.push({ date, ref, memo, source, lines }); };
     // advance invoices credit "advances from customers"; progress invoices recognise the full work value and debit the advance they recover
     for (const i of e.invoices) if (!i.voided) add(i.date, i.number, `${i.kind === 'credit_note' ? 'Credit note' : i.kind === 'advance' ? 'Advance payment invoice' : 'Invoice'} — ${i.client_name || ''}`, 'invoice',
-      [mk('1100', i.due_now), mk('1150', i.retention), mk('2400', i.recovery || 0), mk(i.kind === 'advance' ? '2400' : '4000', 0, i.kind === 'advance' ? i.subtotal : i.revenue), mk('2100', 0, i.vat), mk('1150', 0, i.release || 0)]);
+      [mk('1100', i.due_now), mk('1150', i.retention), mk('2400', i.recovery || 0), mk(i.kind === 'advance' || i.orig_kind === 'advance' ? '2400' : '4000', 0, i.kind === 'advance' || i.orig_kind === 'advance' ? i.subtotal : i.revenue), mk('2100', 0, i.vat), mk('1150', 0, i.release || 0)]);
     for (const b of e.bills) add(b.date, b.reference || `BILL-${b.id}`, `${b.party_name || 'Expense'} — ${b.description || ''}`, 'bill', [mk(CAT[b.category] || '5700', b.amount), mk('1200', b.vat_amount), mk('2000', 0, b.total)]);
     for (const p of e.payments) {
       if (p.cheque_status === 'bounced') continue;
@@ -58,8 +58,8 @@ module.exports = ctx => {
     for (const a of ctx.assetRegister('9999-12-31')) {
       if (!a.purchase_date) continue;
       const end = (a.status === 'disposed' && a.disposal_date) ? a.disposal_date.slice(0, 7) : today().slice(0, 7), monthly = (a.cost - a.salvage) / Math.max(1, a.life_years * 12);
-      let ym = a.purchase_date.slice(0, 7), done = 0;
-      while (ym <= end && done < a.cost - a.salvage - 0.005) { const amt = Math.min(monthly, a.cost - a.salvage - done); done += amt; add(monthEnd(ym), `DEP-${a.id}`, `Depreciation — ${a.name}`, 'depreciation', [mk('6100', amt), mk('1690', 0, amt)]); const y = +ym.slice(0, 4), m = +ym.slice(5, 7); ym = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`; }   // plain arithmetic: local-time Date + toISOString stays in the same month east of UTC (UAE)
+      let ym = a.purchase_date.slice(0, 7), done = 0, k = 0;
+      while (ym <= end && done < a.cost - a.salvage - 0.005) { const amt = round(Math.min(a.cost - a.salvage, monthly * ++k) - done); done = round(done + amt); add(monthEnd(ym), `DEP-${a.id}`, `Depreciation — ${a.name}`, 'depreciation', [mk('6100', amt), mk('1690', 0, amt)]); const y = +ym.slice(0, 4), m = +ym.slice(5, 7); ym = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`; }   // plain arithmetic: local-time Date + toISOString stays in the same month east of UTC (UAE)
     }
     for (const j of db.prepare('SELECT * FROM journal_entries').all()) add(j.date, `JV-${j.id}`, j.memo, 'journal', JSON.parse(j.lines || '[]').map(l => mk(l.account, +l.debit || 0, +l.credit || 0)));
     return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
