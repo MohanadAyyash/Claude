@@ -246,6 +246,8 @@ function compliance() {
   for (const d of db.prepare('SELECT name,entity,expiry_date FROM documents WHERE expiry_date IS NOT NULL AND expiry_date<? ORDER BY expiry_date').all(soon)) add(d.expiry_date < t ? 'bad' : 'warn', 'doc_file', { who: d.name, date: d.expiry_date });
   const bounced = db.prepare("SELECT COUNT(*) n FROM payments WHERE cheque_status='bounced'").get().n;
   if (bounced) add('bad', 'bounced', { count: bounced });
+  if (ctx.chequeAlerts) ctx.chequeAlerts(add);                              // post-dated cheques due this week / past their date
+  if (ctx.backupStatus && fs.existsSync(path.join(DATA_DIR, 'backups'))) { const bk = ctx.backupStatus(); if (bk.stale) add('bad', 'backup_stale', { days: bk.age_days }); if (bk.last_copy && !bk.last_copy.ok) add('bad', 'backup_copy', { who: bk.last_copy.dir }); }
   const { invoices } = enrich();
   const noTrn = new Set(invoices.filter(i => !i.voided && i.warnings.includes('customer_trn_missing')).map(i => i.client_name));
   if (noTrn.size) add('warn', 'customer_trn', { who: [...noTrn].join(', ') });
@@ -345,7 +347,7 @@ function clean(table, body) {
 
 const { ROLES } = ACLX, can = ACLX.can;
 const { money } = require('./lib/render');
-const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target'];
+const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -388,7 +390,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -429,6 +431,7 @@ async function api(req, res, url) {
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
   const scope = siteScope(me);
   if (scope) { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }
+  if (ctx.periodGuard) await ctx.periodGuard(req, method, url, parts);          // closed accounting period
 
   const mailCfg = mailCfgFor;
   if (a === 'settings' && b === 'test-email' && method === 'POST') {
@@ -539,7 +542,7 @@ async function api(req, res, url) {
   if (a === 'dashboard') { const d = dashboard(); if (!['admin', 'accountant'].includes(me.role)) d.alerts = []; return send(res, 200, d); }
   if (a === 'vat') return send(res, 200, vatReport(url.searchParams.get('from'), url.searchParams.get('to')));
   if (a === 'project-summary' && !b) return send(res, 200, projectRows());
-  if (a === 'backup') {
+  if (a === 'backup' && !b && method === 'GET') {
     const file = path.join(DATA_DIR, 'backup.db'); fs.rmSync(file, { force: true });
     db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
     return send(res, 200, fs.readFileSync(file), { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="erp-backup-${today()}.db"` });
@@ -876,5 +879,5 @@ const server = http.createServer(async (req, res) => {
 });
 // one failed background callback (e.g. a locked temp file while a PDF is cleaned up on Windows) must not take the office server down
 if (require.main === module) for (const ev of ['uncaughtException', 'unhandledRejection']) process.on(ev, e => console.error(new Date().toISOString(), ev, e));
-if (require.main === module) server.listen(PORT, process.env.HOST || '0.0.0.0', () => console.log(`Contractor ERP running → http://localhost:${PORT}`));
+if (require.main === module) server.listen(PORT, process.env.HOST || '0.0.0.0', () => { console.log(`Contractor ERP running → http://localhost:${PORT}`); if (ctx.startBackups) ctx.startBackups(); });
 module.exports = { server };
