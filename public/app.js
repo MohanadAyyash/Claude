@@ -80,10 +80,10 @@ const MONEYR = [...READR, 'qs'], SITER = ['site_engineer', 'foreman'], STAFFR = 
 const seesMoney = () => MONEYR.includes(ME.role);                       // contract values, costs, margins (site roles never)
 const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['portal', 'بوابتي', 'My portal', ['employee']], ['tasks', 'المهام', 'Tasks', STAFFR],
-  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['tenders', 'المناقصات والفرص', 'Tenders & opportunities', MONEYR], ['projects', 'المشاريع', 'Projects', [...MONEYR, 'site_engineer']], ['quotes', 'عروض الأسعار', 'Quotations', MONEYR], ['invoices', 'فواتير العملاء', 'Sales invoices', MONEYR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', [...READR, 'qs', ...SITER]],
+  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['tenders', 'المناقصات والفرص', 'Tenders & opportunities', MONEYR], ['projects', 'المشاريع', 'Projects', [...MONEYR, 'site_engineer']], ['quotes', 'عروض الأسعار', 'Quotations', MONEYR], ['invoices', 'فواتير العملاء', 'Sales invoices', MONEYR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', [...READR, 'qs', ...SITER]], ['schedule', 'الجدول الزمني', 'Programme (Gantt)', [...READR, 'qs', 'site_engineer', 'foreman']],
   ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', [...READR, 'procurement', 'site_engineer']], ['po', 'أوامر الشراء', 'Purchase orders', [...READR, 'procurement', 'storekeeper']], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', [...MONEYR, 'procurement']],
   ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', [...READR, 'procurement']], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['cheques', 'الشيكات المؤجلة', 'Post-dated cheques', READR], ['spend', 'اعتماد المشتريات والمدفوعات', 'Spend approvals', ['admin', 'accountant', 'manager', 'procurement', 'qs']], ['cashflow', 'توقع التدفق النقدي', 'Cash-flow forecast', READR], ['guarantees', 'الضمانات البنكية', 'Bank guarantees', [...READR, 'qs']], ['parties', 'العملاء والموردون', 'Clients & suppliers', [...READR, 'qs', 'procurement']],
-  ['stock', 'المخزون', 'Stock', [...READR, 'procurement', 'storekeeper', 'site_engineer']], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
+  ['stock', 'المخزون', 'Stock', [...READR, 'procurement', 'storekeeper', 'site_engineer']], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['equipment', 'تشغيل وصيانة المعدات', 'Equipment log', [...READR, 'qs', 'site_engineer', 'foreman', 'storekeeper']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
   ['#', 'المحاسبة', 'Accounting'], ['financials', 'القوائم المالية', 'Financial statements', FINR], ['ledger', 'دفتر الأستاذ', 'General ledger', FINR], ['journal', 'قيود اليومية', 'Journal entries', FINR], ['coa', 'دليل الحسابات', 'Chart of accounts', FINR], ['bank', 'مطابقة البنك', 'Bank reconciliation', FINR], ['zoho', 'الربط مع Zoho Books', 'Zoho Books link', FINR],
   ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['approvals', 'الاعتمادات', 'Approvals', STAFFR.filter(r => r !== 'viewer')], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager', ...SITER]],
   ['leave', 'الإجازات', 'Leave', HRR], ['hrrequests', 'طلبات الموظفين', 'Employee requests', HRR], ['letters', 'الخطابات الرسمية', 'Official letters', HRR], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS', EMPR],
@@ -116,7 +116,7 @@ function shell() {
 const go = r => { location.hash = r; };
 window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };
 // user guide (public/guide, built from docs/USER-GUIDE-*.md by tools/build-guide.js): the section that explains each page
-const GUIDE = { dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
+const GUIDE = { cheques: 35, cashflow: 36, guarantees: 37, spend: 38, equipment: 41, schedule: 42, dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
   employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31 };
 const guideUrl = p => `guide/index.html?lang=${lang}${GUIDE[p] ? '#s' + GUIDE[p] : ''}`;
 const PAGES = {};
@@ -667,6 +667,9 @@ const ALERT = {
   guarantee_soon: a => `${tr('ضمان بنكي ينتهي خلال ٣٠ يوماً — جدّده أو اطلب الإفراج', 'Bank guarantee expires within 30 days — extend it or get it released')}: ${a.who} (${a.date})`,
   over_budget: a => `${tr('مشروع متوقع أن يتجاوز ميزانيته', 'Project forecast to exceed its budget')}: ${a.who} — ${money(a.amount)}`,
   cash_short: a => `${tr('عجز نقدي متوقع في', 'Cash shortfall expected in')} ${a.month}: ${money(a.amount)} — ${tr('راجع توقع التدفق النقدي', 'see the cash-flow forecast')}`,
+  service_overdue: a => `${tr('صيانة معدة متأخرة', 'Equipment service overdue')}: ${a.who}`,
+  service_soon: a => `${tr('صيانة معدة قريبة', 'Equipment service due soon')}: ${a.who}${a.date ? ' (' + a.date + ')' : ''}`,
+  schedule_late: a => `${tr('أنشطة تجاوزت تاريخ انتهائها في الجدول الزمني', 'Programme activities past their finish date')}: ${a.who} (${a.count})`,
   spend_pending: a => `${a.count} ${tr('طلب اعتماد صرف بانتظار قرارك', 'spend approval request(s) waiting')}`,
   backup_copy: a => `${tr('تعذّر نسخ النسخة الاحتياطية إلى المجلد الثاني', 'The backup could not be copied to the second folder')}: ${a.who}`,
   customer_trn: a => `${tr('عملاء بدون رقم ضريبي', 'Clients missing TRN')}: ${a.who}`,
