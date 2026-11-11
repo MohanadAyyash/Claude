@@ -203,7 +203,7 @@ module.exports = ctx => {
         if (m === 'POST' && !c) {
           const x = await readBody(req), p = proj(+x.project_id);
           const lines = newLines(p.id); if (!lines.length) bad('Add the BOQ items to the project first');
-          const seq = db.prepare('SELECT COUNT(*) n FROM pay_apps WHERE project_id=?').get(p.id).n + 1;
+          const seq = (db.prepare('SELECT MAX(seq) n FROM pay_apps WHERE project_id=?').get(p.id).n || 0) + 1;   // a deleted draft must not make a number repeat
           const f = appFields({ date: today(), ...x }); if (!/^\d{4}-\d\d-\d\d$/.test(f.date)) bad('Invalid date');
           const r = db.prepare('INSERT INTO pay_apps(project_id,seq,number,date,period_to,lines,materials,notes,status,created,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
             .run(p.id, seq, nextNumber('pay_apps', 'PF'), f.date, f.period_to, JSON.stringify(lines), f.materials, f.notes, 'draft', today(), me.username);

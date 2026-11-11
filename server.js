@@ -76,8 +76,8 @@ function brandRef(table, col, entity) {
 function nextNumber(table, prefix, col = 'number') {
   const year = new Date().getFullYear();
   const like = `${prefix}-${year}-%`;
-  const row = db.prepare(`SELECT ${col} v FROM ${table} WHERE ${col} LIKE ? ORDER BY id DESC LIMIT 1`).get(like);
-  const n = row ? (parseInt(row.v.split('-').pop(), 10) || 0) + 1 : 1;
+  const head = `${prefix}-${year}-`.length;                                 // highest sequence of the year, whatever the row order (a renumbered document must not make the next number repeat)
+  const n = db.prepare(`SELECT ${col} v FROM ${table} WHERE ${col} LIKE ?`).all(like).reduce((m, r) => Math.max(m, parseInt(String(r.v).slice(head), 10) || 0), 0) + 1;
   return `${prefix}-${year}-${String(n).padStart(3, '0')}`;
 }
 
@@ -96,17 +96,20 @@ function enrich() {
     const mine = pays.filter(p => p.kind === 'in' && p.invoice_id === r.id);
     const paid = round(mine.filter(p => !p.is_retention).reduce((s, p) => s + p.amount, 0));
     const released = round(mine.filter(p => p.is_retention).reduce((s, p) => s + p.amount, 0));
-    const credited = r.kind === 'credit_note' ? 0 : round(raw.filter(c => c.kind === 'credit_note' && !c.voided && c.original_id === r.id).reduce((s, c) => { const t = docTotals(parseItems(c), c.vat_pct, 0, { retention: c.retention_amount, vatBasis: c.vat_basis }); return s + t.total - t.retention; }, 0));
+    let credited = 0, credited_total = 0, retention_credited = 0;         // credit notes against this invoice: net of retention / gross / the retention they cancel
+    if (r.kind !== 'credit_note') for (const c of raw) if (c.kind === 'credit_note' && !c.voided && c.original_id === r.id) { const t = docTotals(parseItems(c), c.vat_pct, c.retention_pct, { retention: c.retention_amount, vatBasis: c.vat_basis }); credited += t.total - t.retention; credited_total += t.total; retention_credited += t.retention; }
+    credited = round(credited); credited_total = round(credited_total); retention_credited = round(retention_credited);
     const dueNow = round(tt.total - tt.retention);
     const balance = r.kind === 'credit_note' ? 0 : round(dueNow - paid - credited);
-    const retention_open = round(tt.retention - released);
+    const retention_open = r.kind === 'credit_note' ? 0 : round(tt.retention - retention_credited - released);
+    const orig_kind = r.kind === 'credit_note' ? (raw.find(o => o.id === r.original_id)?.kind || '') : '';
     const proj = projects[r.project_id], client = parties[proj?.client_id];
     const status = dead ? 'void' : r.kind === 'credit_note' ? 'credit' : balance <= 0.005 ? (retention_open > 0.005 ? 'retention' : 'paid') : (r.due_date && r.due_date < today() ? 'overdue' : (paid > 0 ? 'partial' : 'unpaid'));
     const warnings = [];
     if (client && !client.trn) warnings.push('customer_trn_missing');
     if (client && !client.address) warnings.push('customer_address_missing');
-    const revenue = r.kind === 'advance' ? 0 : round(tt.subtotal + tt.recovery - tt.release);   // an advance is a liability until recovered; recovery lines don't reduce the work value; a retention release is not new revenue
-    return { ...r, items, ...tt, revenue, ipc: ipcs.has(r.id), due_now: dueNow, paid, credited, balance, retention_open, status, warnings,
+    const revenue = r.kind === 'advance' || orig_kind === 'advance' ? 0 : round(tt.subtotal + tt.recovery - tt.release);   // an advance is a liability until recovered; recovery lines don't reduce the work value; a retention release is not new revenue
+    return { ...r, items, ...tt, revenue, orig_kind, ipc: ipcs.has(r.id), due_now: dueNow, paid, released, credited, credited_total, retention_credited, balance, retention_open, status, warnings,
       project_name: proj?.name, emirate: proj?.emirate, contract_ref: proj?.client_contract_ref || '', main_contract: proj?.main_contract || '', client_id: proj?.client_id, client_name: client?.name, client_trn: client?.trn, client_address: client?.address, client_email: client?.email };
   });
   // retention released by invoice (main-contractor PCs): settles the oldest open retention of the same project first
@@ -339,6 +342,7 @@ function clean(table, body) {
 }
 
 const { ROLES } = ACLX, can = ACLX.can;
+const { money } = require('./lib/render');
 const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
@@ -543,9 +547,14 @@ async function api(req, res, url) {
   if (a === 'invoices' && c === 'credit-note' && method === 'POST') {
     const orig = enrich().invoices.find(i => i.id === +b);
     if (!orig || orig.kind === 'credit_note' || orig.voided) return send(res, 400, { error: 'cannot issue a credit note for this document' });
-    const body = await readBody(req);
-    const r = db.prepare("INSERT INTO invoices(number,date,project_id,items,vat_pct,notes,kind,original_id,retention_amount,vat_basis) VALUES(?,?,?,?,?,?,?,?,?,?)")
-      .run(nextNumber('invoices', 'CN'), today(), orig.project_id, JSON.stringify(Array.isArray(body.items) && body.items.length ? body.items : orig.items), orig.vat_pct, `Credit note against ${orig.number}${body.reason ? ' — ' + body.reason : ''}`, 'credit_note', orig.id, Array.isArray(body.items) && body.items.length ? null : orig.retention_amount ?? null, Array.isArray(body.items) && body.items.length ? null : orig.vat_basis || null);
+    const body = await readBody(req), partial = Array.isArray(body.items) && body.items.length, cnItems = partial ? body.items : orig.items;
+    // the credit note cancels the retention of what it credits (same % as the invoice; the fixed amount when the whole invoice is credited)
+    const ret = partial ? null : orig.retention_amount ?? null, basis = orig.vat_basis || null;
+    const tot = docTotals(cnItems, orig.vat_pct, orig.retention_pct, { retention: ret, vatBasis: basis });
+    if (!(tot.total > 0)) return send(res, 400, { error: 'the credit note must have a value' });
+    if (round(orig.credited_total + tot.total) > orig.total + 0.01) return send(res, 400, { error: `credit notes cannot exceed the invoice: ${money(orig.total)} invoiced, ${money(orig.credited_total)} already credited` });
+    const r = db.prepare("INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes,kind,original_id,retention_amount,vat_basis) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+      .run(nextNumber('invoices', 'CN'), today(), orig.project_id, JSON.stringify(cnItems), orig.vat_pct, orig.retention_pct || 0, `Credit note against ${orig.number}${body.reason ? ' — ' + body.reason : ''}`, 'credit_note', orig.id, ret, basis);
     audit(req, 'create', 'credit_note', Number(r.lastInsertRowid), `against ${orig.number}`);
     return send(res, 200, { id: Number(r.lastInsertRowid) });
   }
@@ -554,7 +563,14 @@ async function api(req, res, url) {
     if (!reason) return send(res, 400, { error: 'a reason is required to void a tax invoice' });
     const inv = enrich().invoices.find(i => i.id === +b);
     if (!inv) return send(res, 404, { error: 'not found' });
-    if (inv.paid > 0) return send(res, 409, { error: 'invoice has payments — issue a credit note instead' });
+    if (inv.voided) return send(res, 409, { error: 'already voided' });
+    if (inv.paid > 0 || inv.released > 0) return send(res, 409, { error: 'invoice has payments — issue a credit note instead' });
+    if (inv.kind !== 'credit_note' && inv.credited_total > 0) return send(res, 409, { error: 'invoice has credit notes — void them first' });
+    const ipc = ctx.ipcOf ? ctx.ipcOf(+b) : null;
+    if (ipc) {                                                              // progress invoice: only the latest one can be voided, and its lines become unbilled again
+      if (db.prepare('SELECT 1 FROM ipcs p JOIN invoices i ON i.id=p.invoice_id WHERE p.project_id=? AND p.id>? AND COALESCE(i.voided,0)=0').get(ipc.project_id, ipc.id)) return send(res, 409, { error: 'a later progress invoice exists — void that one first, or issue a credit note' });
+      for (const l of JSON.parse(ipc.lines || '[]')) if (l.cum_pct > l.prev_pct) db.prepare('UPDATE boq_items SET billed_pct=? WHERE id=? AND project_id=?').run(l.prev_pct, l.boq_id, ipc.project_id);
+    }
     db.prepare('UPDATE invoices SET voided=1, void_reason=? WHERE id=?').run(reason, +b);
     db.prepare("UPDATE pay_apps SET status='certified' WHERE id IN (SELECT app_id FROM client_pcs WHERE invoice_id=?)").run(+b);   // a PC whose invoice is voided can be invoiced again
     db.prepare("UPDATE client_pcs SET status='recorded', invoice_id=NULL WHERE invoice_id=?").run(+b);
@@ -671,7 +687,7 @@ async function api(req, res, url) {
     const r = db.prepare('INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes) VALUES(?,?,?,?,?,?,?)')
       .run(nextNumber('invoices', 'INV'), date, proj.id, JSON.stringify(items), (st.vat_registered === '0' ? 0 : +st.vat_pct || 5), proj.retention_pct || 0, 'Progress invoice');
     if (ctx.ipcSnapshot) ctx.ipcSnapshot(proj.id, Number(r.lastInsertRowid));   // payment certificate: previous / this period / cumulative per BOQ item
-    db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=?').run(+b);
+    db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=? AND done_pct>billed_pct+0.0001').run(+b);   // only the lines on this invoice: a line corrected downwards keeps what was billed
     audit(req, 'create', 'progress_invoice', Number(r.lastInsertRowid), `project ${proj.name}`);
     return send(res, 200, { id: Number(r.lastInsertRowid) });
   }
@@ -690,8 +706,29 @@ async function api(req, res, url) {
 
   for (const m of MODULES) if (m.handle && await m.handle(req, res, url, parts, me)) return;
 
-  if (TABLES[a]) {
+  if (TABLES[a] && !c) {
     const spec = TABLES[a], id = b ? +b : null;
+    const has = t => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+    // receipts and payments: a real amount against a live document, never more than what is open; reconciled ones are locked
+    const checkPayment = (row, cur) => {
+      const p = { ...(cur || {}), ...row };
+      if (!['in', 'out'].includes(p.kind)) bad('Payment kind must be in or out');
+      if (!(Number.isFinite(+p.amount) && +p.amount > 0)) bad('Amount must be greater than zero');
+      if (p.date && !/^\d{4}-\d\d-\d\d$/.test(p.date)) bad('Invalid date');
+      const e = enrich(), own = cur && countable(cur) ? +cur.amount : 0, bounced = p.cheque_status === 'bounced';
+      if (p.kind === 'in' && p.invoice_id) {
+        const inv = e.invoices.find(i => i.id === +p.invoice_id); if (!inv) bad('Invoice not found');
+        if (inv.voided) bad('This invoice is voided'); if (inv.kind === 'credit_note') bad('A receipt cannot be recorded against a credit note');
+        const sameTarget = cur && +cur.invoice_id === inv.id && !!cur.is_retention === !!p.is_retention ? own : 0, open = round((p.is_retention ? inv.retention_open : inv.balance) + sameTarget);
+        if (!bounced && +p.amount > open + 0.01) bad(`Amount is more than the open ${p.is_retention ? 'retention' : 'balance'} of ${inv.number} (${money(open)})`);
+      }
+      if (p.kind === 'out' && p.bill_id) {
+        const bill = e.bills.find(x => x.id === +p.bill_id); if (!bill) bad('Bill not found');
+        const open = round(bill.balance + (cur && +cur.bill_id === bill.id ? own : 0));
+        if (!bounced && +p.amount > open + 0.01) bad(`Amount is more than the open balance of this bill (${money(open)})`);
+      }
+    };
+    const reconciled = pid => has('bank_lines') && db.prepare('SELECT 1 FROM bank_lines WHERE payment_id=?').get(pid);
     // site engineers record progress on the BOQ; quantities, rates and new items stay with QS / management
     if (a === 'boq_items' && me.role === 'site_engineer' && method !== 'GET' && method !== 'PUT') return send(res, 403, { error: 'your role does not allow this action' });
     if (method === 'GET') {
@@ -704,6 +741,8 @@ async function api(req, res, url) {
     if (method === 'POST') {
       const row = clean(a, await readBody(req));
       guardInvoice(); spec.check?.(row);
+      if (a === 'payments') checkPayment(row, null);
+      if (a === 'invoices' && row.number && db.prepare('SELECT 1 FROM invoices WHERE number=?').get(row.number)) bad(`Invoice number ${row.number} already exists`);
       if (a === 'quotes' && !row.number) row.number = brandRef('quotes', 'number', db.prepare('SELECT name FROM parties WHERE id=?').get(+row.client_id)?.name);
       else if (spec.prefix && !row.number) row.number = nextNumber(a, spec.prefix);
       if (a === 'projects' && !row.code) row.code = nextNumber('projects', 'PRJ', 'code');
@@ -719,7 +758,32 @@ async function api(req, res, url) {
       if (a === 'boq_items' && me.role === 'site_engineer') row = 'done_pct' in row ? { done_pct: row.done_pct } : {};
       const ks = Object.keys(row);
       spec.check?.(row);
-      if (a === 'invoices') { const cur = db.prepare('SELECT voided FROM invoices WHERE id=?').get(id); if (cur?.voided) bad('voided invoices cannot be edited'); }
+      if (a === 'invoices') {
+        const cur = enrich().invoices.find(i => i.id === id); if (cur?.voided) bad('voided invoices cannot be edited');
+        if (cur && row.number && row.number !== cur.number && db.prepare('SELECT 1 FROM invoices WHERE number=? AND id!=?').get(row.number, id)) bad(`Invoice number ${row.number} already exists`);
+        const same = k => k === 'items' ? JSON.stringify(JSON.parse(row.items || '[]')) === JSON.stringify(cur.items) : String(row[k] ?? '') === String(cur[k] ?? '') || (+row[k] === +cur[k] && row[k] !== '' && row[k] != null);
+        const changed = ks => ks.some(k => k in row && !same(k));
+        // an invoice matched to a main-contractor payment certificate, or a credit note, keeps its figures
+        if (cur && (cur.kind === 'credit_note' || (has('client_pcs') && db.prepare('SELECT 1 FROM client_pcs WHERE invoice_id=?').get(id))) && changed(['number', 'project_id', 'items', 'vat_pct', 'retention_pct'])) bad('This document is tied to a payment certificate or is a credit note — its figures cannot be changed.');
+        // with money or credit notes on it: the number and project are fixed, and it can never drop below what was received / credited
+        if (cur && (cur.paid > 0 || cur.released > 0 || cur.credited_total > 0)) {
+          if (changed(['number', 'project_id'])) bad('This invoice has payments or credit notes — its number and project cannot be changed.');
+          if (changed(['items', 'vat_pct', 'retention_pct'])) {
+            const t = docTotals('items' in row ? JSON.parse(row.items || '[]') : cur.items, 'vat_pct' in row ? row.vat_pct : cur.vat_pct, 'retention_pct' in row ? row.retention_pct : cur.retention_pct, { retention: cur.retention_amount, vatBasis: cur.vat_basis });
+            if (round(t.total - t.retention) < round(cur.paid + cur.credited) - 0.01 || t.retention < round(cur.released + cur.retention_credited) - 0.01 || t.total < cur.credited_total - 0.01)
+              bad(`This invoice cannot go below what was already received or credited (${money(round(cur.paid + cur.released))} received, ${money(cur.credited_total)} credited). Issue a credit note instead.`);
+          }
+        }
+      }
+      if (a === 'payments') {
+        const cur = db.prepare('SELECT * FROM payments WHERE id=?').get(id); if (!cur) return send(res, 404, { error: 'not found' });
+        if (reconciled(id) && ['kind', 'amount', 'date', 'invoice_id', 'bill_id', 'bank_account_id', 'method'].some(k => k in row && String(row[k] ?? '') !== String(cur[k] ?? '') && +row[k] !== +cur[k])) bad('This payment is matched to a bank statement line — unmatch it first');
+        checkPayment(row, cur);
+      }
+      if (a === 'quotes') {                                                   // what the client signed stays as signed
+        const cur = db.prepare('SELECT * FROM quotes WHERE id=?').get(id);
+        if (cur?.accepted_at) for (const k of ['items', 'vat_pct', 'client_id', 'number']) if (k in row && (k === 'items' ? JSON.stringify(JSON.parse(row.items || '[]')) !== JSON.stringify(parseItems(cur)) : String(row[k] ?? '') !== String(cur[k] ?? '') && +row[k] !== +cur[k])) bad('This quotation was accepted and signed by the client — its prices cannot be changed. Create a new quotation instead.');
+      }
       audit(req, 'update', a, id, ks.join(','));
       if (ks.length) db.prepare(`UPDATE ${a} SET ${ks.map(k => k + '=?').join(',')} WHERE id=?`).run(...Object.values(row), id);
       return send(res, 200, { ok: 1 });
@@ -727,11 +791,20 @@ async function api(req, res, url) {
     if (method === 'DELETE' && id) {
       if (a === 'invoices') return send(res, 409, { error: 'Tax invoices cannot be deleted (sequential numbering). Void it or issue a credit note.' });
       if (a === 'employees' && db.prepare('SELECT COUNT(*) n FROM payroll WHERE employee_id=?').get(id).n) return send(res, 409, { error: 'employee has payroll records — mark as left instead' });
+      if (a === 'payments' && reconciled(id)) return send(res, 409, { error: 'This payment is matched to a bank statement line — unmatch it first' });
+      if (a === 'bills') {                                                    // a bill raised by a certificate or a purchase order belongs to it
+        const sc = has('sub_certs') && db.prepare('SELECT number FROM sub_certs WHERE bill_id=?').get(id), po = has('purchase_orders') && db.prepare('SELECT number FROM purchase_orders WHERE bill_id=?').get(id);
+        if (sc) return send(res, 409, { error: `This bill belongs to payment certificate ${sc.number} — it cannot be deleted on its own` });
+        if (po) return send(res, 409, { error: `This bill belongs to purchase order ${po.number} — cancel the purchase order instead` });
+        if (db.prepare('SELECT 1 FROM payments p WHERE p.bill_id=? AND EXISTS (SELECT 1 FROM bank_lines l WHERE l.payment_id=p.id)').get(id)) return send(res, 409, { error: 'A payment of this bill is matched to a bank statement line — unmatch it first' });
+      }
       audit(req, 'delete', a, id);
       if (a === 'bills') db.prepare('DELETE FROM payments WHERE bill_id=?').run(id);
       if (a === 'projects') {
         const used = db.prepare('SELECT (SELECT COUNT(*) FROM invoices WHERE project_id=?)+(SELECT COUNT(*) FROM bills WHERE project_id=?) n').get(id, id).n;
         if (used) return send(res, 409, { error: 'project has invoices or expenses' });
+        const linked = ['purchase_orders', 'subcontracts', 'rfqs', 'pay_apps', 'payroll', 'stock_moves', 'fixed_assets'].filter(t => has(t) && db.prepare(`SELECT 1 FROM ${t} WHERE project_id=?`).get(id));
+        if (linked.length) return send(res, 409, { error: `project is in use (${linked.join(', ').replace(/_/g, ' ')})` });
         for (const t of ['boq_items', 'variations', 'site_reports']) db.prepare(`DELETE FROM ${t} WHERE project_id=?`).run(id);
       }
       if (a === 'parties') {

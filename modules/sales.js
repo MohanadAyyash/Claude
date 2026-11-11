@@ -122,6 +122,7 @@ module.exports = ctx => {
         audit(req, 'create', 'tenders', Number(r.lastInsertRowid), o.title); return send(res, 200, { id: Number(r.lastInsertRowid) }), true;
       }
       const t = b && db.prepare('SELECT * FROM tenders WHERE id=?').get(+b); if (b && !t) return send(res, 404, { error: 'not found' }), true;
+      if (!t && ['PUT', 'DELETE'].includes(m)) return send(res, 404, { error: 'not found' }), true;
       if (m === 'PUT' && !c) {
         const o = clean(await readBody(req)); if (!Object.keys(o).length) bad('Nothing to change');
         if (o.stage && ['won', 'lost'].includes(o.stage) && !t.closing_date && !o.closing_date) o.closing_date = today();

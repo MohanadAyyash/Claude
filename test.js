@@ -311,7 +311,10 @@ server.listen(0, async () => {
     assert.ok(nov.filter(r => !r.project_id).some(r => r.employee_id === hq));
     assert.equal((await call('POST', 'accounts', { code: '5800', name: 'Insurance', type: 'expense' })).s, 200); assert.equal((await call('DELETE', 'accounts/1000')).s, 400); assert.equal((await call('POST', 'accounts', { code: 'x', name: 'bad', type: 'expense' })).s, 400);
     // bank reconciliation
-    const pay1 = (await call('POST', 'payments', { kind: 'in', amount: 777, invoice_id: inv3, method: 'bank', date: '2026-10-02' })).j.id; assert.ok(pay1);
+    const invBank = (await call('POST', 'invoices', { project_id: pid, items: [{ description: 'Bank reconciliation', qty: 1, rate: 800 }] })).j.id;
+    assert.equal((await call('POST', 'payments', { kind: 'in', amount: 777, invoice_id: inv3, method: 'bank', date: '2026-10-02' })).s, 400, 'a receipt cannot exceed the open balance');
+    assert.equal((await call('POST', 'payments', { kind: 'in', amount: -5, invoice_id: invBank, method: 'bank' })).s, 400);
+    const pay1 = (await call('POST', 'payments', { kind: 'in', amount: 777, invoice_id: invBank, method: 'bank', date: '2026-10-02' })).j.id; assert.ok(pay1);
     const imp = (await call('POST', 'bank/import', { csv: 'date,description,amount\n2026-10-03,TRANSFER CLIENT A,777.00\n2026-10-04,BANK FEES,-25.00\n' })).j; assert.equal(imp.added, 2);
     assert.equal((await call('POST', 'bank/import', { csv: '2026-10-03,TRANSFER CLIENT A,777.00' })).j.added, 0);                       // duplicates skipped
     assert.equal((await call('POST', 'bank/auto-match')).j.matched, 1);
