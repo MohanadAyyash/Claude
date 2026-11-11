@@ -37,6 +37,7 @@ module.exports = ctx => {
   const manager = me => ['admin', 'manager'].includes(me.role);
   const project = id => db.prepare('SELECT * FROM projects WHERE id=?').get(id);
 
+  ctx.projectBudget = pid => budget(pid);
   // ---------- budget vs actual vs committed, forecast at completion ----------
   function budget(pid) {
     const p = ctx.projectRows().find(r => r.id === pid); if (!p) return null;

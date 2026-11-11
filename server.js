@@ -246,7 +246,8 @@ function compliance() {
   for (const d of db.prepare('SELECT name,entity,expiry_date FROM documents WHERE expiry_date IS NOT NULL AND expiry_date<? ORDER BY expiry_date').all(soon)) add(d.expiry_date < t ? 'bad' : 'warn', 'doc_file', { who: d.name, date: d.expiry_date });
   const bounced = db.prepare("SELECT COUNT(*) n FROM payments WHERE cheque_status='bounced'").get().n;
   if (bounced) add('bad', 'bounced', { count: bounced });
-  if (ctx.chequeAlerts) ctx.chequeAlerts(add);                              // post-dated cheques due this week / past their date
+  if (ctx.chequeAlerts) ctx.chequeAlerts(add);
+  if (ctx.treasuryAlerts) ctx.treasuryAlerts(add);                          // guarantees expiring, projects over budget, cash shortfall ahead                              // post-dated cheques due this week / past their date
   if (ctx.backupStatus && fs.existsSync(path.join(DATA_DIR, 'backups'))) { const bk = ctx.backupStatus(); if (bk.stale) add('bad', 'backup_stale', { days: bk.age_days }); if (bk.last_copy && !bk.last_copy.ok) add('bad', 'backup_copy', { who: bk.last_copy.dir }); }
   const { invoices } = enrich();
   const noTrn = new Set(invoices.filter(i => !i.voided && i.warnings.includes('customer_trn_missing')).map(i => i.client_name));
@@ -347,7 +348,7 @@ function clean(table, body) {
 
 const { ROLES } = ACLX, can = ACLX.can;
 const { money } = require('./lib/render');
-const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir'];
+const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -390,7 +391,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
