@@ -116,7 +116,7 @@ function shell() {
 const go = r => { location.hash = r; };
 window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };
 // user guide (public/guide, built from docs/USER-GUIDE-*.md by tools/build-guide.js): the section that explains each page
-const GUIDE = { dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
+const GUIDE = { cheques: 35, cashflow: 36, guarantees: 37, spend: 38, equipment: 41, schedule: 42, dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
   employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31 };
 const guideUrl = p => `guide/index.html?lang=${lang}${GUIDE[p] ? '#s' + GUIDE[p] : ''}`;
 const PAGES = {};
