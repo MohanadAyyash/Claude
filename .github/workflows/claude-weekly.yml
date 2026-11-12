@@ -1,0 +1,56 @@
+# Weekly maintenance review (Claude Code), Sunday 05:17 Gulf time.
+# Reviews the week's changes and the code they touch, runs the tests, and — only if it finds real problems — opens ONE issue
+# listing them. It changes no code: a person reads the issue and replies "@claude fix 1 and 3" to have the agent prepare a PR.
+# (Issues opened by this workflow do not wake the agent by themselves — GitHub does not chain workflows on its own token.)
+# Note: scheduled workflows run from the DEFAULT branch, so this starts once merged there.
+name: Claude weekly review
+on:
+  schedule:
+    - cron: '17 1 * * 0'     # 01:17 UTC = 05:17 UAE, Sunday
+  workflow_dispatch:
+concurrency:
+  group: claude-weekly
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 300
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Read,Glob,Grep,Bash(npm test),Bash(node --no-warnings test*.js),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue list:*),Bash(gh issue create:*)"
+          settings: |
+            { "env": { "SKIP_PDF": "1" } }
+          prompt: |
+            You are the weekly maintenance reviewer for ${{ github.repository }}, a construction-company ERP used in production
+            (UAE: VAT, payroll/WPS, accounting). Read CLAUDE.md first and follow it.
+
+            1. List the commits of the last 7 days on this branch (git log --since="7 days ago"). If there are none, still do steps 2–3.
+            2. Run `npm test`. Any failure is a finding.
+            3. Review the changed code — and the code it calls — for real defects: wrong totals, VAT or payroll arithmetic,
+               rounding, ledger postings that do not balance, permission checks a role could bypass, data that could be lost,
+               crashes on empty or unusual input, security problems. Ignore style and matters of taste.
+            4. Check open issues (gh issue list --state open) so you do not repeat a known problem.
+
+            If you found nothing real, stop: do NOT open an issue.
+            Otherwise open exactly ONE issue with gh issue create, title "Weekly review — <YYYY-MM-DD>", body: a numbered list,
+            each item with file:line, what goes wrong (a concrete input → wrong result), and the fix you propose.
+            Most important first; at most 10 items. Do not modify any file. Never put personal data, secrets or customer
+            names in the issue (the repository may be public).

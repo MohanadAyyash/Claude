@@ -7,6 +7,8 @@ services:
       TRUST_PROXY: "1"
       SECURE_COOKIES: "1"
       SETUP_TOKEN: ${SETUP_TOKEN}
+      GITHUB_REPORT_TOKEN: ${GITHUB_REPORT_TOKEN:-}     # optional: daily-check failures → GitHub issue for the maintenance agent (OPS.md)
+      GITHUB_REPORT_REPO: ${GITHUB_REPORT_REPO:-}
     volumes:
       - erp-data:/data
     expose:

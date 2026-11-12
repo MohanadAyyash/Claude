@@ -1,0 +1,52 @@
+# Maintenance agent (Claude Code) — wakes up when there is work, never on its own:
+#   • an issue labelled "ops-report" (opened automatically by scripts/daily-check.js on the production server)
+#   • "@claude …" in an issue, an issue comment or a pull-request review comment, written by someone with write access
+# It works on a branch and proposes a pull request; it cannot merge (the branch ruleset requires a PR with green "tests").
+# Rules it follows: CLAUDE.md. Setup (one secret): OPS.md → "وكيل الصيانة".
+# Note: GitHub runs issue/comment workflows from the DEFAULT branch, so this works once merged there.
+name: Claude maintenance agent
+on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'ops-report') ||
+      (github.event_name == 'issues' && github.event.action == 'opened' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read          # lets it read CI results on pull requests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+      - uses: actions/setup-node@v4      # the ERP needs Node 22.5+ (built-in SQLite) to run its tests
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # one of the two (OPS.md): an API key, or a Claude subscription token from `claude setup-token`
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          label_trigger: ops-report
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Bash(npm test),Bash(npm run build:standalone),Bash(node --no-warnings test*.js),Bash(git diff:*),Bash(git log:*),Bash(git status)"
+          settings: |
+            { "env": { "SKIP_PDF": "1" } }
