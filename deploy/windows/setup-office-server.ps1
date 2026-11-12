@@ -2,6 +2,7 @@
  Turns an always-on Windows PC into the ERP server:
    - starts the ERP automatically at boot (no login needed) and restarts it if it ever crashes
    - runs a daily database backup at 02:30 (optionally copied to another folder / drive / OneDrive)
+   - runs the daily data-integrity check at 03:00 (OPS.md; reports problems to GitHub when .env has GITHUB_REPORT_TOKEN)
    - stops the PC from sleeping, opens the LAN port in the firewall, prints the office address
 
  Run PowerShell AS ADMINISTRATOR, from the project folder (e.g. C:\erp):
@@ -51,6 +52,14 @@ $copy
 "@
 Set-Content -Path (Join-Path $AppDir "run-backup.cmd") -Value $bk -Encoding ASCII
 
+# --- daily integrity check (reads only; GITHUB_REPORT_TOKEN / GITHUB_REPORT_REPO are read from .env next to server.js)
+$chk = @"
+@echo off
+cd /d "$AppDir"
+"$node" --no-warnings scripts\daily-check.js >> "$AppDir\data\daily-check.log" 2>&1
+"@
+Set-Content -Path (Join-Path $AppDir "run-check.cmd") -Value $chk -Encoding ASCII
+
 # --- scheduled tasks (run as SYSTEM at boot / daily)
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
@@ -60,6 +69,9 @@ Register-ScheduledTask -TaskName "TrigonERP" -Principal $principal -Settings $se
 Unregister-ScheduledTask -TaskName "TrigonERP-Backup" -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName "TrigonERP-Backup" -Principal $principal -Settings $settings `
   -Action (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$AppDir\run-backup.cmd`"" -WorkingDirectory $AppDir) -Trigger (New-ScheduledTaskTrigger -Daily -At 2:30am) | Out-Null
+Unregister-ScheduledTask -TaskName "TrigonERP-Check" -Confirm:$false -ErrorAction SilentlyContinue
+Register-ScheduledTask -TaskName "TrigonERP-Check" -Principal $principal -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable) `
+  -Action (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$AppDir\run-check.cmd`"" -WorkingDirectory $AppDir) -Trigger (New-ScheduledTaskTrigger -Daily -At 3:00am) | Out-Null
 
 # --- keep the PC awake, allow LAN access to the ERP port
 powercfg /change standby-timeout-ac 0 | Out-Null
@@ -79,5 +91,5 @@ Write-Host " Done. The ERP now starts with Windows and restarts if it stops."
 Write-Host " Office address(es):"; $ips | ForEach-Object { Write-Host "     http://${_}:3000" }
 Write-Host " First-time admin setup token (only needed once, on a brand-new database):"
 Write-Host "     $token"
-Write-Host " Logs: $AppDir\data\server.log   Backups: $AppDir\data\backups"
+Write-Host " Logs: $AppDir\data\server.log   Backups: $AppDir\data\backups   Daily check: $AppDir\data\daily-check.log"
 Write-Host "=============================================================="

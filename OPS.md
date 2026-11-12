@@ -52,10 +52,10 @@ Linux (VPS): `deploy/install.sh` يضيف تلقائياً النسخة الاح
 0 3 * * * cd /opt/erp/deploy && docker compose exec -T app node scripts/daily-check.js >> /var/log/erp-check.log 2>&1
 ```
 
-Windows (جهاز المكتب) — Task Scheduler، أو من PowerShell كمسؤول:
+Windows (جهاز المكتب): `deploy\windows\setup-office-server.ps1` يضيف مهمة **TrigonERP-Check** الساعة ٣:٠٠ (مع النسخة الاحتياطية ٢:٣٠). لو ركّبت قبل هذا التحديث، أعد تشغيل السكربت، أو أضف المهمة يدوياً من PowerShell **كمسؤول**:
 
 ```powershell
-schtasks /Create /SC DAILY /ST 03:00 /TN "TrigonDailyCheck" /TR "cmd /c cd /d C:\erp && node --no-warnings scripts\daily-check.js >> data\daily-check.log 2>&1"
+schtasks /Create /SC DAILY /ST 03:00 /TN "TrigonERP-Check" /RU SYSTEM /F /TR "cmd /c cd /d C:\erp && node --no-warnings scripts\daily-check.js >> data\daily-check.log 2>&1"
 ```
 
 ## ٤) CI — اختبارات على كل تعديل
