@@ -35,6 +35,10 @@ echo "==> Daily backup at 02:30 (kept 30 days in the data volume)"
 CRON="30 2 * * * cd $(pwd) && docker compose exec -T app node scripts/backup.js >> /var/log/erp-backup.log 2>&1"
 ( crontab -l 2>/dev/null | grep -v 'scripts/backup.js' ; echo "$CRON" ) | crontab -
 
+echo "==> Daily data-integrity check at 03:00 (reports in the data volume: ops/check-YYYY-MM-DD.json — see OPS.md)"
+CHECK="0 3 * * * cd $(pwd) && docker compose exec -T app node scripts/daily-check.js >> /var/log/erp-check.log 2>&1"
+( crontab -l 2>/dev/null | grep -v 'scripts/daily-check.js' ; echo "$CHECK" ) | crontab -
+
 echo
 echo "=============================================================="
 echo " Done.  Open:  https://$DOMAIN   (the certificate may take ~1 minute)"

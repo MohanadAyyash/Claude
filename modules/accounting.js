@@ -81,6 +81,8 @@ module.exports = ctx => {
       balance_sheet: { assets, liabilities, equity, current_earnings: earnings, total_assets: sum(assets, 'amount'), total_liabilities: sum(liabilities, 'amount'), total_equity: round(sum(equity, 'amount') + earnings) } };
   }
 
+  ctx.financials = financials;
+
   // ---- bank reconciliation ----
   const sameBank = (a, b) => codeOf(a) === codeOf(b);                                   // null = the main account
   const eligible = acc => db.prepare("SELECT p.* FROM payments p WHERE p.reconciled=0 AND p.method IN ('bank','card','cheque') AND COALESCE(p.cheque_status,'cleared')!='bounced' AND p.method!='petty'").all()

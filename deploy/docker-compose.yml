@@ -11,6 +11,11 @@ services:
       - erp-data:/data
     expose:
       - "3000"
+    healthcheck:                       # Docker restarts nothing by itself on "unhealthy", but `docker ps` shows it and monitors can alert on it
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
   caddy:
     image: caddy:2
     restart: always

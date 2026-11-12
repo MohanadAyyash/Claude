@@ -1,0 +1,29 @@
+# Runs every test on each pull request and push, so no change (by a person or an AI agent) is merged while it breaks something.
+# Make it required: Settings → Branches → branch protection rule → "Require status checks to pass" → select "tests".
+name: CI
+on:
+  pull_request:
+  push:
+    branches-ignore: [claude/construction-management-app-rfq8al, main]   # these are already tested by the Pages deploy workflow
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+        env:
+          SKIP_PDF: '1'          # no headless-browser PDF rendering in CI
+      - name: Standalone edition still builds
+        run: npm run build:standalone
