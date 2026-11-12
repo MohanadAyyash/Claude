@@ -39,7 +39,8 @@ module.exports = ctx => {
     const certs = db.prepare('SELECT * FROM sub_certs WHERE subcontract_id=? ORDER BY id').all(s.id).map(c => certView(c));
     const approved = certs.filter(c => c.status === 'approved');
     return { ...s, party_name: name('parties', s.party_id), project_name: name('projects', s.project_id), certified: round(Math.max(0, ...approved.map(c => c.cumulative))),
-      retention_held: round(approved.reduce((x, c) => x + c.retention, 0)), advance_recovered: round(approved.reduce((x, c) => x + c.advance_recovery, 0)), certs: certs.length };
+      retention_held: round(approved.reduce((x, c) => x + c.retention, 0)), advance_recovered: round(approved.reduce((x, c) => x + c.advance_recovery, 0)), certs: certs.length,
+      advance_bill_id: db.prepare("SELECT id FROM bills WHERE category='sub_advance' AND reference=?").get(`ADV-SC-${s.id}`)?.id || null };
   };
   // Cumulative, as on a main contractor's PC: (A) work done + materials − advance recovered to date; (B) retention + contra charges
   // − retention released + previous payments; net this certificate = A − B. VAT 'gross': on the work value of the period less contra
@@ -199,6 +200,20 @@ const PO_CONDITIONS = `1. Order. This purchase order, its attachments and these 
         await ctx.sendMail(ctx.mailCfg(), { to, subject: `Purchase Order ${po.number} — ${st.company_name || ''}`, html: full, text: ctx.toText(full), attachments, inline: sig.inline });
         audit(req, 'email', 'purchase_orders', po.id, `${po.number} to ${to}`);
         return send(res, 200, { ok: 1 }), true;
+      }
+
+      // ---- advance paid to the subcontractor: booked as an asset (1400), then paid from Payments and recovered through the certificates ----
+      if (a === 'subcontracts' && c === 'advance-bill' && m === 'POST') {
+        if (!require('../lib/acl').can(me.role, 'POST', 'bills')) return send(res, 403, { error: 'your role cannot record supplier bills' }), true;
+        const s = db.prepare('SELECT * FROM subcontracts WHERE id=?').get(+b); if (!s) notFound();
+        if (!(+s.advance > 0)) bad('This subcontract has no advance — enter the advance amount on the subcontract first');
+        if (db.prepare("SELECT 1 FROM bills WHERE category='sub_advance' AND reference=?").get(`ADV-SC-${s.id}`)) bad('The advance of this subcontract is already recorded');
+        const x = await readBody(req), date = x.date || today(), vat = +x.vat_amount || 0;
+        if (!/^\d{4}-\d\d-\d\d$/.test(date)) bad('Invalid date'); if (vat < 0) bad('VAT cannot be negative');
+        const r = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)')
+          .run(date, s.party_id, s.project_id, 'sub_advance', `Advance payment — ${s.description || 'subcontract'}`, round(+s.advance), round(vat), `ADV-SC-${s.id}`);
+        audit(req, 'create', 'bills', Number(r.lastInsertRowid), `advance of subcontract ${s.id}`);
+        return send(res, 200, { bill_id: Number(r.lastInsertRowid) }), true;
       }
 
       // ---- subcontractor certificates (validated writes) ----

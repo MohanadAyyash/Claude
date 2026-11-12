@@ -83,6 +83,7 @@ function nextNumber(table, prefix, col = 'number') {
 }
 
 // ---- enriched views -------------------------------------------------------
+const NOT_COST = ['asset', 'sub_advance'];                       // bills that create an asset, not a cost: a fixed asset bought, an advance paid to a subcontractor
 const countable = p => p.cheque_status !== 'bounced';           // bounced cheques never settle anything
 function enrich() {
   const parties = Object.fromEntries(all('parties').map(p => [p.id, p]));
@@ -157,7 +158,7 @@ function projectRows() {
     const invoiced = round(inv.reduce((s, i) => s + i.revenue, 0));
     const collected = round(inv.reduce((s, i) => s + i.paid, 0) + inv.reduce((s, i) => s + (i.retention - i.retention_open), 0));
     const pr = ctx.projectPayrollCost ? ctx.projectPayrollCost(p.id) : db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final' AND project_id=?").get(p.id).g;
-    const costBills = bl.filter(b => b.category !== 'asset');
+    const costBills = bl.filter(b => !NOT_COST.includes(b.category));
     const cost = round(costBills.reduce((s, b) => s + b.amount, 0) + pr + (ctx.projectEosCost ? ctx.projectEosCost(p.id) : 0));
     const byCat = {};
     costBills.forEach(b => byCat[b.category] = round((byCat[b.category] || 0) + b.amount));
@@ -193,7 +194,7 @@ function dashboard() {
     active_projects: projs.filter(p => p.status === 'active').length,
     contract_value: round(projs.filter(p => p.status !== 'cancelled').reduce((s, p) => s + p.revised_value, 0)),
     invoiced: round(invoices.reduce((s, i) => s + i.revenue, 0)),
-    expenses: round(bills.filter(b => b.category !== 'asset').reduce((s, b) => s + b.amount, 0) + db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final'").get().g),
+    expenses: round(bills.filter(b => !NOT_COST.includes(b.category)).reduce((s, b) => s + b.amount, 0) + db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final'").get().g),
     receivable: round(invoices.reduce((s, i) => s + i.balance, 0)),
     retention_held: round(invoices.reduce((s, i) => s + i.retention_open, 0)),
     payable: round(bills.reduce((s, b) => s + b.balance, 0)),
@@ -222,7 +223,7 @@ function corporateTaxReport(from, to) {
   const { invoices, bills } = enrich();
   const inR = dt => (!from || dt >= from) && (!to || dt <= to);
   const revenue = round(invoices.filter(i => !i.voided && inR(i.date)).reduce((s, i) => s + i.revenue, 0));
-  const billCost = round(bills.filter(b => inR(b.date) && b.category !== 'asset').reduce((s, b) => s + b.amount, 0));
+  const billCost = round(bills.filter(b => inR(b.date) && !NOT_COST.includes(b.category)).reduce((s, b) => s + b.amount, 0));
   const depreciation = ctx.depreciation(from, to || today());
   const payroll = round(payrollCost(from, to).reduce((s, r) => s + r.gross, 0));
   const r = C.corporateTax({ revenue, expenses: billCost + payroll + depreciation, periodEnd: to });
@@ -351,7 +352,7 @@ function clean(table, body) {
 
 const { ROLES } = ACLX, can = ACLX.can;
 const { money } = require('./lib/render');
-const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit'];
+const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }

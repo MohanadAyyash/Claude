@@ -321,6 +321,7 @@ module.exports = ctx => {
         await pushDoc(cl, 'invoice', i.id, d.type, vals, { voided: d.voided, find: { [credit ? 'creditnote_number' : 'invoice_number']: d.number }, label: i.number }, run);
       });
       for (const b of bills) await each('bill', b.id, b.reference || b.description || `#${b.id}`, async () => {
+        if (b.category === 'sub_advance') { if ((rec('bill', b.id) || {}).status !== 'skipped') { mark('bill', b.id, null, null, 'skipped', 'advance paid to a subcontractor — record it in Zoho as a vendor advance', null); run.skipped++; } return; }
         const d = billDoc(b, e), acct = accountFor(lk, d.category), tax = d.vat > 0.004 ? lk.std : null;
         if (d.vat > 0.004 && !tax) { d.amount = round(d.amount + d.vat); d.notes = [d.notes, `VAT ${d.vat.toFixed(2)} not recoverable (not VAT-registered) — included in the cost`].filter(Boolean).join('\n'); }   // not registered: input VAT is part of the cost
         if (!acct) throw new Error('no expense account in Zoho');

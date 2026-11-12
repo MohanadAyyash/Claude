@@ -2,7 +2,7 @@
 const CHART = [
   ['1000', 'Bank accounts', 'الحسابات البنكية', 'asset'], ['1010', 'Petty cash', 'العهدة النقدية', 'asset'], ['1020', 'Cash on hand', 'النقدية', 'asset'], ['1050', 'Cheques in hand (PDC)', 'شيكات برسم التحصيل', 'asset'],
   ['1100', 'Accounts receivable', 'ذمم العملاء', 'asset'], ['1150', 'Retention receivable', 'محتجزات لدى العملاء', 'asset'], ['1200', 'VAT input (recoverable)', 'ضريبة القيمة المضافة - مدخلات', 'asset'], ['1300', 'Employee advances', 'سلف الموظفين', 'asset'],
-  ['1400', 'Advances to subcontractors', 'دفعات مقدمة لمقاولي الباطن', 'asset'], ['1600', 'Fixed assets (cost)', 'الأصول الثابتة', 'asset'], ['1690', 'Accumulated depreciation', 'مجمع الإهلاك', 'asset'],
+  ['1400', 'Advances to subcontractors', 'دفعات مقدمة لمقاولي الباطن', 'asset'], ['1600', 'Fixed assets (cost)', 'الأصول الثابتة', 'asset'], ['1690', 'Accumulated depreciation', 'مجمع الإهلاك', 'asset'], ['6150', 'Gain / loss on disposal of assets', 'أرباح / خسائر استبعاد الأصول', 'expense'],
   ['2000', 'Accounts payable', 'ذمم الموردين', 'liability'], ['2050', 'Cheques issued (PDC payable)', 'شيكات برسم الدفع', 'liability'], ['2100', 'VAT output', 'ضريبة القيمة المضافة - مخرجات', 'liability'],
   ['2200', 'Salaries payable', 'رواتب مستحقة', 'liability'], ['2250', 'Employee deductions payable', 'خصومات موظفين مستحقة', 'liability'], ['2300', 'End-of-service provision', 'مخصص نهاية الخدمة', 'liability'], ['2400', 'Advances from customers', 'دفعات مقدمة من العملاء', 'liability'],
   ['3000', 'Share capital', 'رأس المال', 'equity'], ['3100', 'Retained earnings / owner current account', 'أرباح مبقاة / جاري الشريك', 'equity'],
@@ -11,7 +11,7 @@ const CHART = [
   ['5500', 'Transport', 'نقل', 'expense'], ['5600', 'Permits & fees', 'رسوم وتراخيص', 'expense'], ['5700', 'Other direct costs', 'تكاليف مباشرة أخرى', 'expense'], ['6000', 'Overheads', 'مصاريف عمومية', 'expense'], ['6100', 'Depreciation', 'الإهلاك', 'expense'], ['6200', 'Administrative salaries (head office)', 'رواتب إدارية (المكتب الرئيسي)', 'expense'],
   ['5260', 'End-of-service benefits', 'مكافأة نهاية الخدمة', 'expense'], ['5710', 'Accommodation', 'سكن العمال', 'expense'], ['5720', 'Visas & labour fees', 'تأشيرات ورسوم عمل', 'expense'], ['5730', 'Medical insurance', 'تأمين طبي', 'expense'],
 ];
-const CAT = { materials: '5100', labour: '5200', subcontract: '5300', equipment: '5400', transport: '5500', permits: '5600', overhead: '6000', other: '5700', asset: '1600', accommodation: '5710', visa: '5720', insurance: '5730' };
+const CAT = { materials: '5100', labour: '5200', subcontract: '5300', equipment: '5400', transport: '5500', permits: '5600', overhead: '6000', other: '5700', asset: '1600', sub_advance: '1400', accommodation: '5710', visa: '5720', insurance: '5730' };
 const TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense'];
 
 module.exports = ctx => {
@@ -58,8 +58,13 @@ module.exports = ctx => {
     for (const a of ctx.assetRegister('9999-12-31')) {
       if (!a.purchase_date) continue;
       const end = (a.status === 'disposed' && a.disposal_date) ? a.disposal_date.slice(0, 7) : today().slice(0, 7), monthly = (a.cost - a.salvage) / Math.max(1, a.life_years * 12);
+      // an asset owned before the system started has no purchase bill: its cost comes in against the owner's account
+      if (a.opening) add(a.purchase_date, `AST-${a.id}`, `Asset brought in — ${a.name}`, 'asset', [mk('1600', a.cost), mk('3100', 0, a.cost)]);
       let ym = a.purchase_date.slice(0, 7), done = 0, k = 0;
-      while (ym <= end && done < a.cost - a.salvage - 0.005) { const amt = round(Math.min(a.cost - a.salvage, monthly * ++k) - done); done = round(done + amt); add(monthEnd(ym), `DEP-${a.id}`, `Depreciation — ${a.name}`, 'depreciation', [mk('6100', amt), mk('1690', 0, amt)]); const y = +ym.slice(0, 4), m = +ym.slice(5, 7); ym = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`; }   // plain arithmetic: local-time Date + toISOString stays in the same month east of UTC (UAE)
+      while (ym <= end && done < a.cost - a.salvage - 0.005) { const amt = round(Math.min(a.cost - a.salvage, monthly * ++k) - done); done = round(done + amt); add(monthEnd(ym), `DEP-${a.id}`, `Depreciation — ${a.name}`, 'depreciation', [mk('6100', amt), mk('1690', 0, amt)]); const y = +ym.slice(0, 4), m = +ym.slice(5, 7); ym = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`; }
+      // disposal: cost and accumulated depreciation leave the books, the proceeds come into the bank, the difference is the gain or loss
+      if (a.status === 'disposed' && a.disposal_date) { const pr = round(+a.disposal_proceeds || 0), gl = round(a.cost - done - pr);
+        add(monthEnd(a.disposal_date.slice(0, 7)), `DISP-${a.id}`, `Asset disposed — ${a.name}`, 'asset', [mk('1690', done), mk('1000', pr), mk('6150', gl), mk('1600', 0, a.cost)]); }   // plain arithmetic: local-time Date + toISOString stays in the same month east of UTC (UAE)
     }
     for (const j of db.prepare('SELECT * FROM journal_entries').all()) add(j.date, `JV-${j.id}`, j.memo, 'journal', JSON.parse(j.lines || '[]').map(l => mk(l.account, +l.debit || 0, +l.credit || 0)));
     return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

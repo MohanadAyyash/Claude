@@ -8,10 +8,17 @@ module.exports = ctx => {
   CREATE TABLE IF NOT EXISTS petty_topups(id INTEGER PRIMARY KEY, date TEXT, amount REAL DEFAULT 0, note TEXT);`);
   Object.assign(TABLES, {
     stock_items: { cols: ['code', 'name', 'unit', 'min_qty', 'location'], num: ['min_qty'] },
-    fixed_assets: { cols: ['name', 'category', 'serial', 'purchase_date', 'cost', 'salvage', 'life_years', 'status', 'disposal_date', 'project_id', 'notes'], num: ['cost', 'salvage', 'life_years'] },
+    fixed_assets: { cols: ['name', 'category', 'serial', 'purchase_date', 'cost', 'salvage', 'life_years', 'status', 'disposal_date', 'project_id', 'notes', 'opening', 'disposal_proceeds'], num: ['cost', 'salvage', 'life_years', 'opening', 'disposal_proceeds'],
+      check: r => { if (r.cost !== undefined && r.cost < 0) bad('Cost cannot be negative'); if (r.disposal_proceeds !== undefined && r.disposal_proceeds < 0) bad('Sale proceeds cannot be negative'); if (r.status === 'disposed' && !r.disposal_date) bad('Enter the disposal date'); } },
     petty_topups: { cols: ['date', 'amount', 'note'], num: ['amount'] },
   });
 
+  for (const [c, d] of [['opening', 'INTEGER DEFAULT 0'], ['disposal_proceeds', 'REAL DEFAULT 0']]) if (!db.prepare('PRAGMA table_info(fixed_assets)').all().some(x => x.name === c)) db.exec(`ALTER TABLE fixed_assets ADD COLUMN ${c} ${d}`);
+  // the register against the purchase bills: every asset is either bought through a bill booked as "fixed asset purchase" or marked as owned before the system
+  const assetCheck = () => {
+    const bills = round(db.prepare("SELECT COALESCE(SUM(amount),0) s FROM bills WHERE category='asset'").get().s), reg = round(db.prepare('SELECT COALESCE(SUM(cost),0) s FROM fixed_assets WHERE COALESCE(opening,0)=0').get().s);
+    return { purchase_bills: bills, register_cost: reg, difference: round(bills - reg), balanced: Math.abs(bills - reg) < 0.01 };
+  };
   // ---- stock ----
   const balances = () => db.prepare('SELECT * FROM stock_items ORDER BY name').all().map(it => {
     let qty = 0, value = 0;
@@ -78,6 +85,7 @@ module.exports = ctx => {
           db.prepare('DELETE FROM stock_moves WHERE id=?').run(mv.id); audit(req, 'delete', 'stock_moves', mv.id, `${mv.type} ${mv.qty}`); return send(res, 200, { ok: 1 }), true;
         }
       }
+      if (a === 'fixed_assets' && b === 'check' && m === 'GET') return send(res, 200, assetCheck()), true;
       if (a === 'fixed_assets' && m === 'GET') { const rows = ctx.assetRegister(url.searchParams.get('as_of') || today()); return send(res, 200, b ? rows.find(r => r.id === +b) || null : rows), true; }
       if (a === 'petty_topups' && m === 'GET') return send(res, 200, pettyState()), true;
       if (a === 'petty_topups' && b === 'expense' && m === 'POST') {

@@ -996,6 +996,7 @@ Menu: **Subcontracts & certificates**.
 ### 14.1 Subcontract
 1. **+ Add**: **Subcontractor**, **Project**, **Scope of work**, **Contract value (ex VAT)**, **Retention %**, **Advance payment**, **Status**.
 2. For the certificate and the agreement also fill: **Sub-contract agreement no.** and **date**, **Commencement / completion / extended completion dates**, **Approved variations (total)**, **VAT basis on certificates** (net after retention and contra charges, or on the work value) and **Contra charge uplift %** (e.g. 12) → **Save**.
+3. **Advance to the subcontractor:** open the subcontract and press **Record the advance** (administrator and accountant). It is booked as payable to the subcontractor under “Advances to subcontractors” (an asset, not a project cost); then pay it under **Payments**. It is recovered afterwards through the certificates' advance recovery field.
 
 <!--img-->
 
@@ -1120,7 +1121,9 @@ Menu: **Stock**.
 Menu: **Assets & equipment**.
 1. **+ Add**: **Asset**, **Category**, **Serial / plate**, **Purchase date**, **Cost**, **Salvage value**, **Useful life (years)**, **Current project**, **Status**, **Disposal date** → **Save**.
 2. Depreciation is straight-line monthly from the purchase month; the list shows **Accum. dep.** and **Net book value**.
-3. Record the purchase bill with category **Fixed asset purchase** so it is not expensed in full.
+3. Record the purchase bill with category **Fixed asset purchase** for the same cost so it is not expensed in full. If the asset was **owned before the system started** (no bill), choose that under **Where it came from**; its cost enters the accounts against the owner's account.
+4. If the warning **The asset register does not match the asset purchase bills** appears, an asset has no purchase bill (record its bill or mark it as owned before the system) or an asset bill has no asset card.
+5. **Disposal or sale:** set the status to disposed and enter the disposal date and the **sale proceeds** (zero if not sold). The system takes the cost and accumulated depreciation out of the accounts, brings the proceeds into the bank, and books the difference as a gain or loss on disposal. Do not issue a separate sales invoice for the same sale.
 
 <!--img-->
 
@@ -1768,11 +1771,11 @@ Menu: **Cash-flow forecast**. It answers: is there enough cash for the coming mo
 1. Choose the horizon (1, 2, 3 or 6 months).
 2. **Cash now**: money actually received less money actually paid (pending cheques are not counted).
 3. Expected in: open customer invoices at their due date, retention at handover and at the end of the liability period, and pending cheques received.
-4. Expected out: supplier bills 30 days after their date, pending cheques issued, and salaries (finalized unpaid months, plus an estimate for the coming months from the last finalized month).
+4. Expected out: supplier bills 30 days after their date, pending cheques issued, salaries (finalized unpaid months, plus an estimate for the coming months from the last finalized month), and the **VAT payment**: last quarter if its payment date has not passed, and the current quarter so far as an estimate, on day 28 after the quarter ends. The administrator sets at the top of the screen which month your VAT quarters start in.
 5. Anything already late counts as due **now**. Click a month to see its details.
 6. If the expected balance drops below zero a warning appears here and on the dashboard.
 
-**Not included in the forecast:** VAT payments, work not invoiced yet, and purchase orders not billed yet. Keep them in mind when reading it.
+**Not included in the forecast:** work not invoiced yet, and purchase orders not billed yet. Keep them in mind when reading it.
 
 <!--img-->
 
