@@ -49,4 +49,4 @@ jobs:
             --max-turns 60
             --allowedTools "Bash(npm test),Bash(npm run build:standalone),Bash(node --no-warnings test*.js),Bash(git diff:*),Bash(git log:*),Bash(git status)"
           settings: |
-            { "env": { "SKIP_PDF": "1" } }
+            { "env": { "SKIP_PDF": "1", "TZ": "Asia/Dubai" } }

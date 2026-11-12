@@ -49,11 +49,13 @@ module.exports = ctx => {
     if (ctx.notify) ctx.notify({ employee_id: r.employee_id }, { title: status === 'approved' ? 'تمت الموافقة على طلبك / Your request was approved' : 'تم رفض طلبك / Your request was rejected', body: what + (note ? ' — ' + note : ''), url: '#portal' }).catch(() => {});
   };
 
-  function newLeave(employee_id, b, createdBy) {
+  function newLeave(employee_id, b, self) {
     if (!emp(employee_id)) bad('Employee not found');
     if (!LEAVE_TYPES.includes(b.type)) bad('Invalid leave type');
-    if (!b.start_date || !b.end_date || b.end_date < b.start_date) bad('Check the leave dates');
-    const span = spanDays(b.start_date, b.end_date), days = b.days ? +b.days : span;
+    const isDate = d => /^\d{4}-\d\d-\d\d$/.test(d || '') && !isNaN(Date.parse(d));
+    if (!isDate(b.start_date) || !isDate(b.end_date) || b.end_date < b.start_date) bad('Check the leave dates');
+    // an employee's own request always counts every day of the span (a single half day is allowed); only HR may enter another number
+    const span = spanDays(b.start_date, b.end_date), days = self ? (span === 1 && +b.days === 0.5 ? 0.5 : span) : b.days ? +b.days : span;
     if (!(days > 0) || days > span) bad('Number of days does not match the dates');
     const clash = db.prepare("SELECT 1 FROM leave_requests WHERE employee_id=? AND status IN ('pending','approved') AND start_date<=? AND end_date>=?").get(employee_id, b.end_date, b.start_date);
     if (clash) bad('There is already a leave request covering these dates');
@@ -107,13 +109,15 @@ module.exports = ctx => {
   // ---- payroll integration: unpaid leave + absences reduce days, attendance overtime feeds the sheet ----
   ctx.hooks.payrollInputs = (e, month, baseDays) => {
     const first = `${month}-01`, last = `${month}-${String(C.daysInMonth(month)).padStart(2, '0')}`;
-    let unpaid = 0;
+    // each date is deducted once, even when it is both unpaid leave and marked absent (or sick without pay)
+    const off = new Set(), iso = t => new Date(t).toISOString().slice(0, 10);
     for (const l of db.prepare("SELECT * FROM leave_requests WHERE employee_id=? AND type='unpaid' AND status='approved' AND start_date<=? AND end_date>=?").all(e.id, last, first))
-      unpaid += spanDays(l.start_date < first ? first : l.start_date, l.end_date > last ? last : l.end_date);
+      for (let t = Date.parse((l.start_date < first ? first : l.start_date) + 'T00:00:00Z'), z = Date.parse((l.end_date > last ? last : l.end_date) + 'T00:00:00Z'); t <= z; t += 864e5) off.add(iso(t));
+    for (const r of db.prepare("SELECT date FROM attendance WHERE employee_id=? AND status='absent' AND date>=? AND date<=?").all(e.id, first, last)) off.add(r.date);
     // a worked rest day compensated with a substitute day (rest_comp='day') earns no +50% pay for those hours
     const att = db.prepare("SELECT COALESCE(SUM(ot_normal_hours),0) n, COALESCE(SUM(CASE WHEN rest_comp='day' THEN 0 ELSE ot_special_hours END),0) s, SUM(status='absent') a FROM attendance WHERE employee_id=? AND date>=? AND date<=?").get(e.id, first, last);
-    let sickCut = 0; for (const [d, cut] of sickCuts(e, last)) if (d >= first) sickCut += cut;
-    const away = Math.min(30, unpaid + (att.a || 0) + sickCut);
+    let sickCut = 0; for (const [d, cut] of sickCuts(e, last)) if (d >= first && !off.has(d)) sickCut += cut;
+    const away = Math.min(30, off.size + sickCut);
     return { days_worked: Math.max(0, baseDays - away), leave_days: away, ot_normal_hours: att.n, ot_special_hours: att.s };
   };
 
@@ -138,7 +142,7 @@ module.exports = ctx => {
             payslips: db.prepare("SELECT id,month,net,paid_date FROM payroll WHERE employee_id=? AND status='final' ORDER BY month DESC").all(e.id),
           }), true;
         }
-        if (m === 'POST' && b === 'leave') { const id = newLeave(e.id, await readBody(req)); audit(req, 'create', 'leave_requests', id, e.name); return send(res, 200, { id }), true; }
+        if (m === 'POST' && b === 'leave') { const id = newLeave(e.id, await readBody(req), true); audit(req, 'create', 'leave_requests', id, e.name); return send(res, 200, { id }), true; }
         if (m === 'POST' && b === 'request') { const id = newRequest(e.id, await readBody(req)); audit(req, 'create', 'hr_requests', id, e.name); return send(res, 200, { id }), true; }
         if (m === 'DELETE' && (b === 'leave' || b === 'request')) {
           const t = b === 'leave' ? 'leave_requests' : 'hr_requests', r = db.prepare(`SELECT * FROM ${t} WHERE id=? AND employee_id=?`).get(+c, e.id);
@@ -168,6 +172,7 @@ module.exports = ctx => {
         if (m === 'PUT' && !b) {
           const x = await readBody(req);
           if (!emp(+x.employee_id)) bad('Employee not found'); if (!/^\d{4}-\d\d-\d\d$/.test(x.date || '')) bad('Invalid date'); if (!ATT.includes(x.status)) bad('Invalid status');
+          for (const k of ['ot_normal_hours', 'ot_special_hours']) if (x[k] != null && x[k] !== '' && !(+x[k] >= 0 && +x[k] <= 24)) bad('Overtime hours must be between 0 and 24');
           const rc = x.rest_comp === 'day' ? 'day' : 'pay';
           db.prepare(`INSERT INTO attendance(employee_id,date,status,ot_normal_hours,ot_special_hours,project_id,note,source,rest_comp) VALUES(?,?,?,?,?,?,?,'manual',?)
             ON CONFLICT(employee_id,date) DO UPDATE SET status=excluded.status, ot_normal_hours=excluded.ot_normal_hours, ot_special_hours=excluded.ot_special_hours, project_id=excluded.project_id, note=excluded.note, source='manual', rest_comp=excluded.rest_comp`)
@@ -204,9 +209,13 @@ module.exports = ctx => {
       if (b === 'letters') {
         if (m === 'POST') {
           const x = await readBody(req), l = newLetter(x.type, +x.employee_id, x, me.username);
-          if (x.request_id) db.prepare("UPDATE hr_requests SET letter_id=?, status='approved', decided_by=?, decided_at=? WHERE id=? AND employee_id=? AND status='pending'").run(l.id, me.username, today(), +x.request_id, +x.employee_id);
-          if (x.request_id) db.prepare('UPDATE hr_requests SET letter_id=? WHERE id=? AND employee_id=?').run(l.id, +x.request_id, +x.employee_id);
-          if (x.request_id) db.prepare("UPDATE approval_steps SET status='approved', decided_by=?, decided_at=?, note='letter issued' WHERE kind='request' AND ref_id=? AND status IN ('pending','waiting')").run(me.username, today(), +x.request_id);
+          // issuing the letter answers the employee's letter request — never another kind of request (an advance keeps its own approval chain)
+          const rq = x.request_id && db.prepare('SELECT * FROM hr_requests WHERE id=? AND employee_id=?').get(+x.request_id, +x.employee_id);
+          if (rq && LETTER_TYPES.includes(rq.type)) {
+            db.prepare("UPDATE hr_requests SET letter_id=?, status='approved', decided_by=?, decided_at=? WHERE id=? AND status='pending'").run(l.id, me.username, today(), rq.id);
+            db.prepare('UPDATE hr_requests SET letter_id=? WHERE id=?').run(l.id, rq.id);
+            db.prepare("UPDATE approval_steps SET status='approved', decided_by=?, decided_at=?, note='letter issued' WHERE kind='request' AND ref_id=? AND status IN ('pending','waiting')").run(me.username, today(), rq.id);
+          }
           audit(req, 'issue', 'letters', l.id, `${l.number} ${x.type}`);
           return send(res, 200, l), true;
         }

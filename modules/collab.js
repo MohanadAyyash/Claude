@@ -37,6 +37,7 @@ module.exports = ctx => {
   const manager = me => ['admin', 'manager'].includes(me.role);
   const project = id => db.prepare('SELECT * FROM projects WHERE id=?').get(id);
 
+  ctx.projectBudget = pid => budget(pid);
   // ---------- budget vs actual vs committed, forecast at completion ----------
   function budget(pid) {
     const p = ctx.projectRows().find(r => r.id === pid); if (!p) return null;
@@ -169,8 +170,18 @@ module.exports = ctx => {
       // ----- notes -----
       if (a === 'notes') {
         if (!staff(me)) return send(res, 403, { error: 'forbidden' }), true;
+        const RES = { project: 'projects', party: 'parties', invoice: 'invoices', quote: 'quotes', bill: 'bills', po: 'purchase_orders', employee: 'employees', task: 'tasks', subcontract: 'subcontracts', tender: 'tenders' };
+        const mayNote = (entity, id) => {
+          if (!RES[entity] || !require('../lib/acl').can(me.role, 'GET', RES[entity])) return false;
+          const sc = ctx.siteScope ? ctx.siteScope(me) : null; if (!sc) return true;
+          if (entity === 'project') return sc.projects.has(id);
+          if (entity === 'employee') return sc.emps.has(id);
+          if (entity === 'task') { const t = db.prepare('SELECT project_id FROM tasks WHERE id=?').get(id); return !!t && (t.project_id == null || sc.projects.has(t.project_id)); }
+          return true;
+        };
+        if (m === 'GET' && !mayNote(String(q.get('entity')), +q.get('id'))) return send(res, 403, { error: 'your role does not allow this action' }), true;
         if (m === 'GET') return send(res, 200, db.prepare('SELECT id,username,body,created,user_id FROM notes WHERE entity=? AND entity_id=? ORDER BY id DESC LIMIT 200').all(String(q.get('entity')), +q.get('id'))), true;
-        if (m === 'POST') { const x = await readBody(req); return send(res, 200, addNote(String(x.entity), +x.entity_id, x.body, me)), true; }
+        if (m === 'POST') { const x = await readBody(req); if (RES[x.entity] && !mayNote(String(x.entity), +x.entity_id)) return send(res, 403, { error: 'your role does not allow this action' }), true; return send(res, 200, addNote(String(x.entity), +x.entity_id, x.body, me)), true; }
         if (m === 'DELETE' && b) { const n = db.prepare('SELECT * FROM notes WHERE id=?').get(+b); if (!n) return send(res, 404, { error: 'not found' }), true; if (!(n.user_id === me.id || me.role === 'admin')) return send(res, 403, { error: 'forbidden' }), true; db.prepare('DELETE FROM notes WHERE id=?').run(n.id); return send(res, 200, { ok: 1 }), true; }
       }
       return false;

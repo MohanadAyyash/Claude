@@ -29,6 +29,7 @@ module.exports = ctx => {
   ctx.poNet = netItems;
   const poView = r => { const items = parseItems(r), t = C.docTotals(netItems(items), r.vat_pct), gross = round(items.reduce((x, i) => x + (+i.qty || 0) * (+i.rate || 0), 0));
     return { ...r, items, ...t, gross, discount: round(gross - t.subtotal), supplier_name: name('parties', r.party_id), supplier_trn: db.prepare('SELECT trn FROM parties WHERE id=?').get(r.party_id)?.trn, project_name: name('projects', r.project_id) }; };
+  ctx.poView = poView;
   const rfqView = r => {
     const items = json(r.items), quotes = json(r.quotes).map(q => ({ ...q, supplier_name: name('parties', q.party_id), total: round(items.reduce((s, it, i) => s + (+it.qty || 0) * (+(q.rates || [])[i] || 0), 0)), complete: items.every((_, i) => +(q.rates || [])[i] > 0) }));
     const priced = quotes.filter(q => q.complete); const low = priced.length ? Math.min(...priced.map(q => q.total)) : null;
@@ -38,7 +39,8 @@ module.exports = ctx => {
     const certs = db.prepare('SELECT * FROM sub_certs WHERE subcontract_id=? ORDER BY id').all(s.id).map(c => certView(c));
     const approved = certs.filter(c => c.status === 'approved');
     return { ...s, party_name: name('parties', s.party_id), project_name: name('projects', s.project_id), certified: round(Math.max(0, ...approved.map(c => c.cumulative))),
-      retention_held: round(approved.reduce((x, c) => x + c.retention, 0)), advance_recovered: round(approved.reduce((x, c) => x + c.advance_recovery, 0)), certs: certs.length };
+      retention_held: round(approved.reduce((x, c) => x + c.retention, 0)), advance_recovered: round(approved.reduce((x, c) => x + c.advance_recovery, 0)), certs: certs.length,
+      advance_bill_id: db.prepare("SELECT id FROM bills WHERE category='sub_advance' AND reference=?").get(`ADV-SC-${s.id}`)?.id || null };
   };
   // Cumulative, as on a main contractor's PC: (A) work done + materials − advance recovered to date; (B) retention + contra charges
   // − retention released + previous payments; net this certificate = A − B. VAT 'gross': on the work value of the period less contra
@@ -167,6 +169,7 @@ const PO_CONDITIONS = `1. Order. This purchase order, its attachments and these 
 
       if (a === 'rfqs' && c === 'award' && m === 'POST') {
         const rfq = db.prepare('SELECT * FROM rfqs WHERE id=?').get(+b); if (!rfq) notFound();
+        if (!require('../lib/acl').can(me.role, 'POST', 'purchase_orders')) return send(res, 403, { error: 'your role cannot issue purchase orders' }), true;   // awarding creates a priced PO
         if (rfq.status === 'awarded') bad('This RFQ was already awarded');
         const { party_id } = await readBody(req), v = rfqView(rfq), q = v.quotes.find(x => x.party_id === +party_id);
         if (!q) bad('Select a supplier that submitted a quotation'); if (!q.complete) bad('That quotation has missing prices');
@@ -199,6 +202,20 @@ const PO_CONDITIONS = `1. Order. This purchase order, its attachments and these 
         return send(res, 200, { ok: 1 }), true;
       }
 
+      // ---- advance paid to the subcontractor: booked as an asset (1400), then paid from Payments and recovered through the certificates ----
+      if (a === 'subcontracts' && c === 'advance-bill' && m === 'POST') {
+        if (!require('../lib/acl').can(me.role, 'POST', 'bills')) return send(res, 403, { error: 'your role cannot record supplier bills' }), true;
+        const s = db.prepare('SELECT * FROM subcontracts WHERE id=?').get(+b); if (!s) notFound();
+        if (!(+s.advance > 0)) bad('This subcontract has no advance — enter the advance amount on the subcontract first');
+        if (db.prepare("SELECT 1 FROM bills WHERE category='sub_advance' AND reference=?").get(`ADV-SC-${s.id}`)) bad('The advance of this subcontract is already recorded');
+        const x = await readBody(req), date = x.date || today(), vat = +x.vat_amount || 0;
+        if (!/^\d{4}-\d\d-\d\d$/.test(date)) bad('Invalid date'); if (vat < 0) bad('VAT cannot be negative');
+        const r = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)')
+          .run(date, s.party_id, s.project_id, 'sub_advance', `Advance payment — ${s.description || 'subcontract'}`, round(+s.advance), round(vat), `ADV-SC-${s.id}`);
+        audit(req, 'create', 'bills', Number(r.lastInsertRowid), `advance of subcontract ${s.id}`);
+        return send(res, 200, { bill_id: Number(r.lastInsertRowid) }), true;
+      }
+
       // ---- subcontractor certificates (validated writes) ----
       if (a === 'sub_certs' && ['POST', 'PUT'].includes(m) && c !== 'approve') {
         const body = await readBody(req), id = m === 'PUT' ? +b : null, cur = id ? db.prepare('SELECT * FROM sub_certs WHERE id=?').get(id) : null;
@@ -211,6 +228,14 @@ const PO_CONDITIONS = `1. Order. This purchase order, its attachments and these 
         const ex = k => (body[k] !== undefined ? body[k] : cur ? cur[k] : null);
         Object.assign(f, { period_to: ex('period_to') || null, materials: +ex('materials') || 0, release: +ex('release') || 0, app_ref: ex('app_ref') || '', cost_codes: ex('cost_codes') || '' });
         if (f.materials < 0 || f.release < 0 || f.deductions < 0 || f.advance_recovery < 0) bad('Amounts cannot be negative');
+        // within the subcontract: work up to its value + variations, advance recovered up to the advance, retention released up to what is held
+        const others = db.prepare('SELECT * FROM sub_certs WHERE subcontract_id=? AND id!=? ORDER BY id').all(subId, id || 0), limit = round((+sub.contract_value || 0) + (+sub.variations || 0));
+        if (limit > 0 && f.cumulative > limit + 0.01) bad(`Cumulative work ${money(f.cumulative)} is more than the subcontract value with variations (${money(limit)}) — record the variation on the subcontract first`);
+        const advSoFar = round(others.reduce((s, x) => s + (+x.advance_recovery || 0), 0));
+        if (f.advance_recovery > 0 && advSoFar + f.advance_recovery > (+sub.advance || 0) + 0.01) bad(`Advance recovery is more than the advance left to recover (${money(Math.max(0, (+sub.advance || 0) - advSoFar))})`);
+        let pc = 0, pm = 0, held = 0; for (const x of others.filter(x => !id || x.id < id)) { held += ((+x.cumulative || 0) - pc + (+x.materials || 0) - pm) * (+x.retention_pct || 0) / 100 - (+x.release || 0); pc = +x.cumulative || 0; pm = +x.materials || 0; }
+        held = round(held + (f.cumulative - pc + f.materials - pm) * f.retention_pct / 100);
+        if (f.release > held + 0.01) bad(`Retention release is more than the retention held (${money(held)})`);
         if (id) { db.prepare('UPDATE sub_certs SET date=?,cumulative=?,retention_pct=?,advance_recovery=?,deductions=?,vat_pct=?,notes=?,period_to=?,materials=?,release=?,app_ref=?,cost_codes=?,vat_basis=? WHERE id=?').run(body.date || cur.date, f.cumulative, f.retention_pct, f.advance_recovery, f.deductions, f.vat_pct, body.notes ?? cur.notes, f.period_to, f.materials, f.release, f.app_ref, f.cost_codes, sub.vat_basis === 'net' ? 'net' : 'gross', id); return send(res, 200, { ok: 1 }), true; }
         const r = db.prepare('INSERT INTO sub_certs(number,subcontract_id,date,cumulative,retention_pct,advance_recovery,deductions,vat_pct,notes,period_to,materials,release,app_ref,cost_codes,vat_basis) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(nextNumber('sub_certs', 'SC'), subId, body.date || today(), f.cumulative, f.retention_pct, f.advance_recovery, f.deductions, f.vat_pct, body.notes || '', f.period_to, f.materials, f.release, f.app_ref, f.cost_codes, sub.vat_basis === 'net' ? 'net' : 'gross');

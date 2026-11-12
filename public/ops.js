@@ -42,7 +42,7 @@ PAGES.documents = async () => {
 
 // ---- RFQ: items x suppliers comparison ------------------------------------------------------------
 PAGES.rfq = async () => {
-  const [rows, projects, parties] = await Promise.all([api('GET', 'rfqs'), api('GET', 'projects'), api('GET', 'parties')]);
+  const [rows, projects, parties] = await Promise.all([api('GET', 'rfqs'), api('GET', 'projects'), api('GET', 'parties').catch(() => [])]);
   const suppliers = parties.filter(p => p.type !== 'client');
   main(`<div class="bar"><h1>${tr('طلبات الأسعار (RFQ)', 'Requests for quotation')}</h1><span class="sp"></span>${canOps('rfqs') ? `<button class="btn" id="add">+ ${tr('طلب جديد', 'New RFQ')}</button>` : ''}</div>
   <p class="muted">${tr('أدخل البنود المطلوبة ثم أسعار كل مورد؛ يقارن النظام الإجمالي ويُبرز الأقل، وبنقرة واحدة تُحوَّل الترسية إلى أمر شراء.', 'List the items, enter each supplier’s prices; the system compares totals, highlights the lowest and turns the award into a purchase order in one click.')}</p>
@@ -89,7 +89,7 @@ PAGES.rfq = async () => {
 
 // ---- purchase orders ---------------------------------------------------------------------------
 window.poModal = guard(async (id, preset = {}) => {
-  const [parties, projects] = await Promise.all([api('GET', 'parties'), api('GET', 'projects')]);
+  const [parties, projects] = await Promise.all([api('GET', 'parties').catch(() => []), api('GET', 'projects')]);
   const row = id ? await api('GET', 'purchase_orders/' + id) : null;
   const r = row || { date: today(), vat_pct: S.vat_registered === '0' ? 0 : (S.vat_pct || 5), status: 'draft', payment_terms: '60 days from invoice', terms: '', ...preset };
   // order lines: item code, description, unit, qty, unit price, discount %, VAT — net amount after the discount
@@ -163,13 +163,15 @@ PAGES.subcontracts = async () => {
   c.setRow(id => subDetail(rows.find(r => r.id === id), c.edit));
 };
 async function subDetail(sub, edit) {
-  const certs = (await api('GET', 'sub_certs')).filter(x => x.subcontract_id === sub.id);
-  const m = modal(`<h2>${esc(sub.party_name || '')} — ${esc(sub.description || '')}</h2><p class="muted">${esc(sub.project_name || '')} · ${tr('قيمة العقد', 'Contract')} ${money(sub.contract_value)} · ${tr('محتجزات', 'Retention')} ${sub.retention_pct}%</p>
+  const certs = (await api('GET', 'sub_certs').catch(() => [])).filter(x => x.subcontract_id === sub.id);   // roles without certificate access still open the subcontract
+  const m = modal(`<h2>${esc(sub.party_name || '')} — ${esc(sub.description || '')}</h2><p class="muted">${esc(sub.project_name || '')} · ${tr('قيمة العقد', 'Contract')} ${money(sub.contract_value)} · ${tr('محتجزات', 'Retention')} ${sub.retention_pct}%${+sub.advance > 0 ? ` · ${tr('دفعة مقدمة', 'Advance')} ${money(sub.advance)} (${tr('مستردّ', 'recovered')} ${money(sub.advance_recovered)})` : ''}</p>
+    ${+sub.advance > 0 ? (sub.advance_bill_id ? `<p class="ok">✔ ${tr('الدفعة المقدمة مسجلة كمستحق للمقاول — ادفعها من «المدفوعات والمقبوضات»، وتُستردّ من شهادات الدفع.', 'The advance is recorded as payable to the subcontractor — pay it under Payments; it is recovered through the certificates.')}</p>` : (['admin', 'accountant'].includes(ME.role) ? `<p><button class="btn sec" id="advb">${tr('تسجيل الدفعة المقدمة', 'Record the advance')} (${money(sub.advance)})</button> <span class="muted">${tr('تُسجَّل كدفعة مقدمة للمقاول (أصل وليست مصروفاً) ثم تدفعها من المدفوعات.', 'Booked as an advance to the subcontractor (an asset, not a cost); then pay it under Payments.')}</span></p>` : '')) : ''}
     <div class="tw"><table><thead><tr><th>${tr('الشهادة', 'Cert')}</th><th>${tr('التاريخ', 'Date')}</th><th class="n">${tr('التراكمي', 'Cumulative')}</th><th class="n">${tr('هذه الفترة', 'This period')}</th><th class="n">${tr('المستحق الآن', 'Payable now')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
     ${certs.map(x => `<tr class="click" data-c="${x.id}"><td>${esc(x.number)}</td><td>${esc(x.date)}</td><td class="n">${money(x.cumulative)}</td><td class="n">${money(x.gross_this)}</td><td class="n">${money(x.payable_now)}</td><td>${tag(x.status === 'approved' ? 'approved' : 'draft')}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد شهادات', 'No certificates yet')}</td></tr>`}</tbody></table></div>
     <div class="acts">${canOps('subcontracts') ? `<button class="btn" id="nc">+ ${tr('شهادة دفع', 'New certificate')}</button><button class="btn sec" id="es">${tr('تعديل العقد', 'Edit contract')}</button><button class="btn sec" id="agr">📄 ${tr('اتفاقية عقد الباطن', 'Sub-contract agreement')}</button>` : ''}<button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`, true);
   $('#cancel', m).onclick = closeModal;
   const asc = [...certs].sort((a, b) => a.id - b.id), before = id => asc.filter(x => x.id < id).pop();
+  if ($('#advb', m)) $('#advb', m).onclick = guard(async () => { const v = prompt(tr('ضريبة القيمة المضافة على الدفعة المقدمة حسب فاتورة المقاول (0 إن لم توجد):', 'VAT on the advance as on the subcontractor\'s invoice (0 if none):'), '0'); if (v === null) return; await api('POST', `subcontracts/${sub.id}/advance-bill`, { vat_amount: +v || 0 }); toast(tr('سُجّلت الدفعة المقدمة', 'Advance recorded')); closeModal(); render(); });
   if ($('#nc', m)) $('#nc', m).onclick = () => certModal(sub, null, asc[asc.length - 1]);
   if ($('#es', m)) $('#es', m).onclick = () => { closeModal(); edit(sub); };
   if ($('#agr', m)) $('#agr', m).onclick = guard(async () => { closeModal(); scAgreementModal(sub); });
@@ -268,12 +270,14 @@ PAGES.stock = async () => {
 
 // ---- fixed assets --------------------------------------------------------------------------------
 PAGES.assets = async () => {
-  const [rows, projects] = await Promise.all([api('GET', 'fixed_assets'), api('GET', 'projects')]);
+  const [rows, projects, chk] = await Promise.all([api('GET', 'fixed_assets'), api('GET', 'projects'), api('GET', 'fixed_assets/check').catch(() => null)]);
+  const warn = chk && !chk.balanced ? `<p class="neg">⚠ ${tr('سجل الأصول لا يطابق فواتير شراء الأصول', 'The asset register does not match the asset purchase bills')}: ${tr('فواتير «شراء أصل ثابت»', '“Fixed asset purchase” bills')} <b>${money(chk.purchase_bills)}</b> — ${tr('أصول مسجلة (غير المملوكة قبل النظام)', 'registered assets (not owned before the system)')} <b>${money(chk.register_cost)}</b> — ${tr('الفرق', 'difference')} <b>${money(chk.difference)}</b>. ${tr('لكل أصل: إما فاتورة شراء بالبند «شراء أصل ثابت» بنفس التكلفة، أو علّمه «مملوك قبل بدء النظام».', 'Each asset needs either a purchase bill under “Fixed asset purchase” for the same cost, or the mark “Owned before the system started”.')}</p>` : '';
   await crud({ title: tr('الأصول والمعدات', 'Assets & equipment'), table: 'fixed_assets', load: async () => rows, noAdd: !canFin(), extra: xl('assets'),
-    intro: `<p class="muted">${tr('الإهلاك بالقسط الثابت شهرياً من شهر الشراء. عند شراء أصل سجّل فاتورة المورد بالبند "شراء أصل ثابت" حتى لا يُحتسب مصروفاً كاملاً، ويُدخل النظام الإهلاك في المحاسبة وضريبة الشركات.', 'Straight-line depreciation monthly from the month of purchase. When you buy an asset, record the supplier bill with category “Fixed asset purchase” so it is not expensed in full; depreciation flows into the ledger and corporate-tax estimate.')}</p>`,
+    intro: warn + `<p class="muted">${tr('الإهلاك بالقسط الثابت شهرياً من شهر الشراء. عند شراء أصل سجّل فاتورة المورد بالبند "شراء أصل ثابت" حتى لا يُحتسب مصروفاً كاملاً، ويُدخل النظام الإهلاك في المحاسبة وضريبة الشركات.', 'Straight-line depreciation monthly from the month of purchase. When you buy an asset, record the supplier bill with category “Fixed asset purchase” so it is not expensed in full; depreciation flows into the ledger and corporate-tax estimate.')}</p>`,
     fields: async () => [{ k: 'name', ar: 'الأصل', en: 'Asset', req: 1 }, { k: 'category', ar: 'الفئة (معدات، مركبات…)', en: 'Category' }, { k: 'serial', ar: 'الرقم التسلسلي / اللوحة', en: 'Serial / plate' }, { k: 'purchase_date', ar: 'تاريخ الشراء', en: 'Purchase date', type: 'date' },
-      { k: 'cost', ar: 'التكلفة', en: 'Cost', type: 'number', def: 0 }, { k: 'salvage', ar: 'القيمة التخريدية', en: 'Salvage value', type: 'number', def: 0 }, { k: 'life_years', ar: 'العمر الإنتاجي (سنوات)', en: 'Useful life (years)', type: 'number', def: 5 },
-      { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['active', tr(...STATUS.active)], ['disposed', tr(...STATUS.disposed)]] }, { k: 'disposal_date', ar: 'تاريخ الاستبعاد', en: 'Disposal date', type: 'date' },
+      { k: 'cost', ar: 'التكلفة', en: 'Cost', type: 'number', def: 0 }, { k: 'salvage', ar: 'القيمة التخريدية', en: 'Salvage value', type: 'number', def: 0 }, { k: 'life_years', ar: 'العمر الإنتاجي (سنوات)', en: 'Useful life (years)', type: 'number', def: 5 }, { k: 'hourly_rate', ar: 'سعر ساعة التشغيل الداخلي (للمعدات)', en: 'Internal hourly rate (equipment)', type: 'number', def: 0 },
+      { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: [['active', tr(...STATUS.active)], ['disposed', tr(...STATUS.disposed)]] }, { k: 'disposal_date', ar: 'تاريخ الاستبعاد', en: 'Disposal date', type: 'date' }, { k: 'disposal_proceeds', ar: 'ثمن البيع عند الاستبعاد (يدخل البنك)', en: 'Sale proceeds on disposal (into the bank)', type: 'number', def: 0 },
+      { k: 'opening', ar: 'مصدر الأصل', en: 'Where it came from', type: 'select', options: [[0, tr('اشتُري بفاتورة مسجلة في النظام', 'Bought with a bill recorded in the system')], [1, tr('مملوك قبل بدء النظام (بدون فاتورة)', 'Owned before the system started (no bill)')]], def: 0 },
       { k: 'project_id', ar: 'المشروع الحالي', en: 'Current project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`) }, { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }],
     cols: [{ ar: 'الأصل', en: 'Asset', k: 'name' }, { ar: 'الفئة', en: 'Category', k: 'category' }, { ar: 'تاريخ الشراء', en: 'Purchased', k: 'purchase_date' }, { ar: 'التكلفة', en: 'Cost', n: 1, f: r => money(r.cost) }, { ar: 'مجمع الإهلاك', en: 'Accum. dep.', n: 1, f: r => money(r.accumulated) },
       { ar: 'القيمة الدفترية', en: 'Net book value', n: 1, f: r => money(r.nbv) }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) }] });

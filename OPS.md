@@ -59,7 +59,7 @@ schtasks /Create /SC DAILY /ST 03:00 /TN "TrigonDailyCheck" /TR "cmd /c cd /d C:
 ```
 
 ## ٤) CI — اختبارات على كل تعديل
-`.github/workflows/ci.yml` يشغّل `npm test` وبناء النسخة المستقلة على كل Pull Request وكل push.
+`.github/workflows/tests.yml` يشغّل `npm test` وبناء النسخة المستقلة على كل Pull Request (الفحص اسمه **tests**).
 اجعله **إلزامياً** قبل الدمج: Settings ← Branches ← Add branch protection rule ← فعّل "Require status checks to pass" واختر **tests**.
 هذا هو صمام الأمان قبل أن يفتح وكيل الذكاء الاصطناعي أي PR.
 

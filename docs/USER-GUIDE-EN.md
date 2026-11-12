@@ -48,6 +48,14 @@
 32. [Printing, PDF, Excel and mobile](#32-printing-pdf-excel-and-mobile)
 33. [Backup and good practice](#33-backup-and-good-practice)
 34. [Common questions](#34-common-questions)
+35. [Post-dated cheques](#35-post-dated-cheques)
+36. [Cash-flow forecast](#36-cash-flow-forecast)
+37. [Bank guarantees](#37-bank-guarantees)
+38. [Spend approvals](#38-spend-approvals)
+39. [Closing the accounting period](#39-closing-the-accounting-period)
+40. [Two-step sign-in](#40-two-step-sign-in)
+41. [Equipment log](#41-equipment-log)
+42. [Project programme (Gantt)](#42-project-programme-gantt)
 
 ---
 
@@ -200,7 +208,7 @@ Menu: **Settings** → **Email sending**.
 Menu: **Settings** → **My profile**. Enter **Full name**, **Job title**, **Mobile** → **Save**. These appear in the signature of every email you send from the system.
 
 ### 2.6 Change your password
-Menu: **Settings** → **Change password** → type the new password → **Change**.
+Menu: **Settings** → **Change password** → type your **current password**, then the new one → **Change**. Your other devices are signed out automatically. For stronger protection switch on **two-step sign-in** (section 40).
 
 ---
 
@@ -807,7 +815,7 @@ When you work for a main contractor the order is: **proforma → payment certifi
 
 Menu: **Payments** (or **Record payment** inside an invoice or expense).
 
-1. Press **+ Record payment**.
+1. Press **+ Record payment**. The amount must be positive and cannot exceed the open balance of the invoice or expense. For post-dated cheques see section 35; for supplier payments above the approval limit see section 38.
 2. **Type**: **Receipt from client** or **Payment to supplier**.
 3. **Against**: choose the open invoice or bill.
 4. **Date**, **Amount**.
@@ -988,6 +996,7 @@ Menu: **Subcontracts & certificates**.
 ### 14.1 Subcontract
 1. **+ Add**: **Subcontractor**, **Project**, **Scope of work**, **Contract value (ex VAT)**, **Retention %**, **Advance payment**, **Status**.
 2. For the certificate and the agreement also fill: **Sub-contract agreement no.** and **date**, **Commencement / completion / extended completion dates**, **Approved variations (total)**, **VAT basis on certificates** (net after retention and contra charges, or on the work value) and **Contra charge uplift %** (e.g. 12) → **Save**.
+3. **Advance to the subcontractor:** open the subcontract and press **Record the advance** (administrator and accountant). It is booked as payable to the subcontractor under “Advances to subcontractors” (an asset, not a project cost); then pay it under **Payments**. It is recovered afterwards through the certificates' advance recovery field.
 
 <!--img-->
 
@@ -1112,7 +1121,9 @@ Menu: **Stock**.
 Menu: **Assets & equipment**.
 1. **+ Add**: **Asset**, **Category**, **Serial / plate**, **Purchase date**, **Cost**, **Salvage value**, **Useful life (years)**, **Current project**, **Status**, **Disposal date** → **Save**.
 2. Depreciation is straight-line monthly from the purchase month; the list shows **Accum. dep.** and **Net book value**.
-3. Record the purchase bill with category **Fixed asset purchase** so it is not expensed in full.
+3. Record the purchase bill with category **Fixed asset purchase** for the same cost so it is not expensed in full. If the asset was **owned before the system started** (no bill), choose that under **Where it came from**; its cost enters the accounts against the owner's account.
+4. If the warning **The asset register does not match the asset purchase bills** appears, an asset has no purchase bill (record its bill or mark it as owned before the system) or an asset bill has no asset card.
+5. **Disposal or sale:** set the status to disposed and enter the disposal date and the **sale proceeds** (zero if not sold). The system takes the cost and accumulated depreciation out of the accounts, brings the proceeds into the bank, and books the difference as a gain or loss on disposal. Do not issue a separate sales invoice for the same sale.
 
 <!--img-->
 
@@ -1386,6 +1397,7 @@ Menu: **Payroll & WPS**. Monthly steps:
 3. Read **Missing data / warnings** (missing IBAN, routing code, person code…) and fix them in the employee record.
 4. Adjust per employee if needed: **Days**, **Leave days**, **OT hrs (+25%)**, **OT hrs (+50%)**, **Bonus**, **Deductions**. **Net** recalculates.
    - Daily wage = gross ÷ 30. OT hour = basic ÷ 30 ÷ 8, +25% by day, +50% at night (10 pm–4 am) or on rest days/public holidays.
+   - If attendance, overtime, leave or an advance was entered **after** the sheet was generated, press **Refresh from attendance**: it re-reads them into the draft and keeps bonuses and manual deductions. A full month always counts as 30 days (February included).
 5. **Finalize payroll** — after this the month cannot be edited; the cost is split to projects and the end-of-service provision is booked.
 6. **Download WPS SIF file** and upload it through your bank or exchange house portal (ask the bank to validate the first file).
 7. After the transfer press **Mark salaries paid**. Salaries unpaid 15 days after month-end appear as a compliance alert.
@@ -1703,7 +1715,11 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 ## 33. Backup and good practice
 
-1. **Settings** → **Backup** → **Download backup** — at least weekly, store it outside the computer. It contains attachments and the email password; keep it safe.
+1. **Automatic backups:** the system writes a backup of the database every day and keeps the last 30 days in the `data\backups` folder on the server PC. Under **Settings** → **Automatic backups** you see the last backup and the stored ones, and **Back up now** writes one immediately.
+   - **Second copy folder:** a copy on the same PC does not protect you from a failed disk or theft. Enter a folder off the machine (external disk, OneDrive folder, network share) and press **Save folder**; every backup is copied there automatically.
+   - The dashboard warns you if two days pass without a backup, or if the copy to the second folder fails.
+   - **Restoring:** on the server PC run `Trigon-Restore.bat` from the system folder, choose the backup and type YES. It stops the system, checks the backup, keeps the current database as `erp-before-restore-…`, and starts the system again. Everything entered after that backup is replaced.
+   - The **Download backup** button remains for a manual download. It contains attachments and the email password; keep it safe.
 2. Use a long, unique administrator password; do not share the admin account — give each person their own user and role.
 3. Keep financial records 5–7 years.
 4. After each code update restart the server.
@@ -1721,3 +1737,214 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 | A site engineer sees no projects | Settings → Users → **Projects** → tick their projects. |
 | Phone clock-in says outside the site | Set the project's latitude/longitude/radius (7.1, step 9). |
 | "This page could not be loaded… old version" | Restart the server and refresh the page (Ctrl+F5). |
+
+---
+
+## 35. Post-dated cheques
+
+Menu: **Post-dated cheques**. Every cheque recorded under **Payments** (received from clients and issued to suppliers), ordered by its date.
+
+1. Record the cheque as a normal payment with method **Cheque**, enter the **Cheque date** and choose status **Pending**.
+2. The screen shows the pending cheques to collect, the pending cheques to pay, and what falls due within 7 days each way.
+3. When a cheque clears, change its status in the **Status** column to **Cleared**; if it bounces choose **Bounced** (the amount becomes due on the invoice again).
+4. A pending cheque is not part of the bank balance until it clears.
+5. The dashboard warns about cheques due within 7 days and cheques past their date whose status was not updated.
+
+<!--img-->
+
+**📷 Post-dated cheques**
+
+![Post-dated cheques](../public/guide/img/en/n1-cheques.jpg)
+
+1. Totals: to collect, to pay, and due within 7 days.
+2. Each cheque with its date and the days left.
+3. Change the status here when it clears or bounces (administrator and accountant).
+
+<!--/img-->
+
+---
+
+## 36. Cash-flow forecast
+
+Menu: **Cash-flow forecast**. It answers: is there enough cash for the coming months?
+
+1. Choose the horizon (1, 2, 3 or 6 months).
+2. **Cash now**: money actually received less money actually paid (pending cheques are not counted).
+3. Expected in: open customer invoices at their due date, retention at handover and at the end of the liability period, and pending cheques received.
+4. Expected out: supplier bills 30 days after their date, pending cheques issued, salaries (finalized unpaid months, plus an estimate for the coming months from the last finalized month), and the **VAT payment**: last quarter if its payment date has not passed, and the current quarter so far as an estimate, on day 28 after the quarter ends. The administrator sets at the top of the screen which month your VAT quarters start in.
+5. Anything already late counts as due **now**. Click a month to see its details.
+6. If the expected balance drops below zero a warning appears here and on the dashboard.
+
+**Not included in the forecast:** work not invoiced yet, and purchase orders not billed yet. Keep them in mind when reading it.
+
+<!--img-->
+
+**📷 Cash-flow forecast**
+
+![Cash-flow forecast](../public/guide/img/en/n2-cashflow.jpg)
+
+1. Cash now, expected in and out, and the lowest expected balance.
+2. The balance at the end of each month.
+3. Details of the selected month; late items show their original date.
+
+<!--/img-->
+
+---
+
+## 37. Bank guarantees
+
+Menu: **Bank guarantees**. A register of the performance, advance-payment, tender and retention bonds your bank issued in favour of clients.
+
+1. **+ Add**: type, project, beneficiary, bank, guarantee number, amount, **cash margin blocked**, issue date and expiry date.
+2. The screen shows the number of active guarantees, their total value and the margin blocked.
+3. 30 days before a guarantee expires the dashboard warns you: extend it or ask for its release.
+4. When the obligation ends, get the **release letter** from the client and set the status to **Released**; an active guarantee keeps the margin blocked and the bank commission running.
+
+<!--img-->
+
+**📷 Bank guarantees**
+
+![Bank guarantees](../public/guide/img/en/n3-guarantees.jpg)
+
+1. Summary of active guarantees and the margin blocked.
+2. Expiry date, with a warning when it is near.
+
+<!--/img-->
+
+---
+
+## 38. Spend approvals
+
+To control spending: any purchase order or supplier payment above a limit needs the **administrator's** approval.
+
+**Switching it on (administrator):** **Settings** → **Spend approval limits** → enter the purchase order limit (including VAT) and the payment limit → **Save limits**. Leave a field empty to switch the approval off (this is the default).
+
+**A purchase order above the limit:**
+1. It is saved as a draft and cannot be issued, printed, e-mailed or received before approval.
+2. Under **Spend approvals** press **Ask for approval**; the administrator is notified.
+3. The administrator presses **Approve** or **Reject** on the same screen, and the requester is notified of the decision.
+4. If the order's total changes after approval, approval is asked again.
+
+**A supplier payment above the limit:**
+1. On the same screen press **Ask to pay** on the supplier bill and enter the amount.
+2. Once approved, the accountant records the payment as usual, up to the approved amount.
+3. Payments below the limit, and changing a cheque's status, need no approval.
+
+The administrator acts directly, and that action is recorded as the approval in the audit log.
+
+<!--img-->
+
+**📷 Spend approvals**
+
+![Spend approvals](../public/guide/img/en/n4-spend-approvals.jpg)
+
+1. The current limits.
+2. Documents above the limit that need a request.
+3. Requests: the administrator approves or rejects here.
+
+<!--/img-->
+
+---
+
+## 39. Closing the accounting period
+
+**Settings** → **Close the accounting period** (administrator).
+
+1. After filing the VAT return or approving a month's accounts, choose the last day of the period and press **Save**.
+2. After that, no invoice, expense, payment, journal entry, payroll, payment certificate or stock movement dated inside the closed period can be added, changed, voided or deleted.
+3. Corrections go into the open period: a **credit note** for an invoice, or a journal entry with a new date.
+4. Still possible: recording a new payment with an open date against an old invoice, and changing a pending cheque from a closed period to cleared or bounced.
+5. To reopen: clear the date and save. Every closing and reopening is written to the audit log.
+
+<!--img-->
+
+**📷 Closing the period and backups**
+
+![Closing the period and backups](../public/guide/img/en/n5-period-backup.jpg)
+
+1. The current closing date and the field to change it.
+2. Status of the last backup and the second folder (see section 33).
+
+<!--/img-->
+
+---
+
+## 40. Two-step sign-in
+
+Extra protection for an account: even with the password, nobody signs in without your phone. Recommended for the administrator and the accountant.
+
+**Switching it on (each user, own account):**
+1. Install a free authenticator app on your phone: Google Authenticator or Microsoft Authenticator.
+2. **Settings** → **Two-step sign-in** → **Switch on**.
+3. In the app choose **Add account** → **Enter a setup key**, and type the account name and key shown on the screen (type: time-based). Or open the page on the phone and tap **Add directly from this phone**.
+4. Type the 6-digit code the app shows and press **Confirm and switch on**.
+
+**Signing in afterwards:** username and password, then a **code** field appears — type the current code from the app.
+
+**Switching it off:** on the same card, with your current password.
+
+**Lost the phone?** The administrator switches it off for your account: **Settings** → **Users** → 🔐 **Reset two-step**. If the administrator is the one locked out, on the server PC inside the system folder: `node --no-warnings scripts/reset-2fa.js admin`.
+
+<!--img-->
+
+**📷 Two-step sign-in**
+
+![Two-step sign-in](../public/guide/img/en/n6-two-step.jpg)
+
+1. The account name and key to enter in the authenticator app.
+2. Type the code from the app to confirm.
+
+<!--/img-->
+
+---
+
+## 41. Equipment log
+
+Menu: **Equipment log**. The machines themselves are added under **Assets & equipment** (section 16), where each one gets its **internal hourly rate**.
+
+1. **+ Usage**: machine, date, project, hours worked, operator. (Foremen and site engineers log for their own projects.)
+2. **+ Fuel**: litres and cost.
+3. **+ Maintenance**: what was done, the cost, and the **next service** by date or at a number of hours.
+4. The table shows for each machine: hours, fuel, **litres/hour**, fuel + repair cost and **cost/hour**, and the next service.
+5. The dashboard warns when a service is near (14 days or 25 hours) and when it is overdue.
+6. **Equipment use by project**: each project's hours × the internal hourly rate.
+
+This is an operating record: nothing in it is posted to the accounts. Fuel and repair costs reach the accounts through supplier bills, and depreciation through the asset register. Site roles do not see costs.
+
+<!--img-->
+
+**📷 Equipment log**
+
+![Equipment log](../public/guide/img/en/n7-equipment.jpg)
+
+1. Buttons to log usage, fuel and maintenance.
+2. Summary of each machine with its next service.
+3. The log; click a machine to see only its entries.
+
+<!--/img-->
+
+---
+
+## 42. Project programme (Gantt)
+
+Menu: **Programme (Gantt)**. Choose the project at the top of the screen.
+
+1. For a project with no programme: **Create a first programme from the BOQ** makes one activity per item spread over the project dates; then adjust the dates. Or add activities by hand with **+ Activity**.
+2. Each activity has a name, start, finish and progress. If you link it to a BOQ item, its progress is read from the BOQ automatically.
+3. The chart: the light bar is the planned duration, the dark part is what is done, and the red line is today.
+4. **Planned to date** against **Actual progress** shows whether the project is ahead or behind.
+5. Flags: ⚠ behind plan (actual more than 10 points below planned), ⛔ past its finish date and not complete.
+6. If the programme finishes after the project end date, a warning shows by how many days.
+7. The site engineer updates progress only; dates are edited by the administrator, accountant, project manager or QS.
+
+<!--img-->
+
+**📷 Project programme**
+
+![Project programme](../public/guide/img/en/n8-programme.jpg)
+
+1. Actual against planned progress, and late activities.
+2. The Gantt chart with the today line.
+3. The activity table and each status; click an activity to edit it.
+
+<!--/img-->

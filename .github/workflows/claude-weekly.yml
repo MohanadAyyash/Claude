@@ -37,7 +37,7 @@ jobs:
             --max-turns 60
             --allowedTools "Read,Glob,Grep,Bash(npm test),Bash(node --no-warnings test*.js),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue list:*),Bash(gh issue create:*)"
           settings: |
-            { "env": { "SKIP_PDF": "1" } }
+            { "env": { "SKIP_PDF": "1", "TZ": "Asia/Dubai" } }
           prompt: |
             You are the weekly maintenance reviewer for ${{ github.repository }}, a construction-company ERP used in production
             (UAE: VAT, payroll/WPS, accounting). Read CLAUDE.md first and follow it.

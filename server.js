@@ -9,6 +9,7 @@ const C = require('./lib/compliance');
 const { sendMail, validEmail } = require('./lib/mailer');
 const { docHtml, toText } = require('./lib/docs');
 const ACLX = require('./lib/acl');
+const TOTP = require('./lib/totp');
 
 // secrets (Zoho OAuth client…) live in .env next to server.js — never in the code, the database or git
 try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env */ }
@@ -38,7 +39,7 @@ CREATE TABLE IF NOT EXISTS site_reports(id INTEGER PRIMARY KEY, project_id INTEG
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, ts TEXT, user TEXT, action TEXT, tbl TEXT, rec INTEGER, detail TEXT);
 `);
 const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
-[['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
+[['users','totp_secret','TEXT'],['users','totp_on','INTEGER DEFAULT 0'],['users','totp_last','INTEGER DEFAULT 0'],['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
 
 // Editable columns per table (whitelist) and numeric columns
 const bad = m => { const e = new Error(m); e.status = 400; throw e; };
@@ -76,12 +77,13 @@ function brandRef(table, col, entity) {
 function nextNumber(table, prefix, col = 'number') {
   const year = new Date().getFullYear();
   const like = `${prefix}-${year}-%`;
-  const row = db.prepare(`SELECT ${col} v FROM ${table} WHERE ${col} LIKE ? ORDER BY id DESC LIMIT 1`).get(like);
-  const n = row ? (parseInt(row.v.split('-').pop(), 10) || 0) + 1 : 1;
+  const head = `${prefix}-${year}-`.length;                                 // highest sequence of the year, whatever the row order (a renumbered document must not make the next number repeat)
+  const n = db.prepare(`SELECT ${col} v FROM ${table} WHERE ${col} LIKE ?`).all(like).reduce((m, r) => Math.max(m, parseInt(String(r.v).slice(head), 10) || 0), 0) + 1;
   return `${prefix}-${year}-${String(n).padStart(3, '0')}`;
 }
 
 // ---- enriched views -------------------------------------------------------
+const NOT_COST = ['asset', 'sub_advance'];                       // bills that create an asset, not a cost: a fixed asset bought, an advance paid to a subcontractor
 const countable = p => p.cheque_status !== 'bounced';           // bounced cheques never settle anything
 function enrich() {
   const parties = Object.fromEntries(all('parties').map(p => [p.id, p]));
@@ -96,17 +98,20 @@ function enrich() {
     const mine = pays.filter(p => p.kind === 'in' && p.invoice_id === r.id);
     const paid = round(mine.filter(p => !p.is_retention).reduce((s, p) => s + p.amount, 0));
     const released = round(mine.filter(p => p.is_retention).reduce((s, p) => s + p.amount, 0));
-    const credited = r.kind === 'credit_note' ? 0 : round(raw.filter(c => c.kind === 'credit_note' && !c.voided && c.original_id === r.id).reduce((s, c) => { const t = docTotals(parseItems(c), c.vat_pct, 0, { retention: c.retention_amount, vatBasis: c.vat_basis }); return s + t.total - t.retention; }, 0));
+    let credited = 0, credited_total = 0, retention_credited = 0;         // credit notes against this invoice: net of retention / gross / the retention they cancel
+    if (r.kind !== 'credit_note') for (const c of raw) if (c.kind === 'credit_note' && !c.voided && c.original_id === r.id) { const t = docTotals(parseItems(c), c.vat_pct, c.retention_pct, { retention: c.retention_amount, vatBasis: c.vat_basis }); credited += t.total - t.retention; credited_total += t.total; retention_credited += t.retention; }
+    credited = round(credited); credited_total = round(credited_total); retention_credited = round(retention_credited);
     const dueNow = round(tt.total - tt.retention);
     const balance = r.kind === 'credit_note' ? 0 : round(dueNow - paid - credited);
-    const retention_open = round(tt.retention - released);
+    const retention_open = r.kind === 'credit_note' ? 0 : round(tt.retention - retention_credited - released);
+    const orig_kind = r.kind === 'credit_note' ? (raw.find(o => o.id === r.original_id)?.kind || '') : '';
     const proj = projects[r.project_id], client = parties[proj?.client_id];
     const status = dead ? 'void' : r.kind === 'credit_note' ? 'credit' : balance <= 0.005 ? (retention_open > 0.005 ? 'retention' : 'paid') : (r.due_date && r.due_date < today() ? 'overdue' : (paid > 0 ? 'partial' : 'unpaid'));
     const warnings = [];
     if (client && !client.trn) warnings.push('customer_trn_missing');
     if (client && !client.address) warnings.push('customer_address_missing');
-    const revenue = r.kind === 'advance' ? 0 : round(tt.subtotal + tt.recovery - tt.release);   // an advance is a liability until recovered; recovery lines don't reduce the work value; a retention release is not new revenue
-    return { ...r, items, ...tt, revenue, ipc: ipcs.has(r.id), due_now: dueNow, paid, credited, balance, retention_open, status, warnings,
+    const revenue = r.kind === 'advance' || orig_kind === 'advance' ? 0 : round(tt.subtotal + tt.recovery - tt.release);   // an advance is a liability until recovered; recovery lines don't reduce the work value; a retention release is not new revenue
+    return { ...r, items, ...tt, revenue, orig_kind, ipc: ipcs.has(r.id), due_now: dueNow, paid, released, credited, credited_total, retention_credited, balance, retention_open, status, warnings,
       project_name: proj?.name, emirate: proj?.emirate, contract_ref: proj?.client_contract_ref || '', main_contract: proj?.main_contract || '', client_id: proj?.client_id, client_name: client?.name, client_trn: client?.trn, client_address: client?.address, client_email: client?.email };
   });
   // retention released by invoice (main-contractor PCs): settles the oldest open retention of the same project first
@@ -153,7 +158,7 @@ function projectRows() {
     const invoiced = round(inv.reduce((s, i) => s + i.revenue, 0));
     const collected = round(inv.reduce((s, i) => s + i.paid, 0) + inv.reduce((s, i) => s + (i.retention - i.retention_open), 0));
     const pr = ctx.projectPayrollCost ? ctx.projectPayrollCost(p.id) : db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final' AND project_id=?").get(p.id).g;
-    const costBills = bl.filter(b => b.category !== 'asset');
+    const costBills = bl.filter(b => !NOT_COST.includes(b.category));
     const cost = round(costBills.reduce((s, b) => s + b.amount, 0) + pr + (ctx.projectEosCost ? ctx.projectEosCost(p.id) : 0));
     const byCat = {};
     costBills.forEach(b => byCat[b.category] = round((byCat[b.category] || 0) + b.amount));
@@ -180,7 +185,7 @@ function dashboard() {
   const months = [];
   const d = new Date(); d.setDate(1);
   for (let i = 5; i >= 0; i--) {
-    const m = new Date(d.getFullYear(), d.getMonth() - i, 1).toISOString().slice(0, 7);
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1), m = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`;   // local month (toISOString would give the month before, east of UTC)
     months.push({ month: m,
       in: round(inc.filter(p => (p.date || '').startsWith(m)).reduce((s, p) => s + p.amount, 0)),
       out: round(out.filter(p => (p.date || '').startsWith(m)).reduce((s, p) => s + p.amount, 0)) });
@@ -189,7 +194,7 @@ function dashboard() {
     active_projects: projs.filter(p => p.status === 'active').length,
     contract_value: round(projs.filter(p => p.status !== 'cancelled').reduce((s, p) => s + p.revised_value, 0)),
     invoiced: round(invoices.reduce((s, i) => s + i.revenue, 0)),
-    expenses: round(bills.filter(b => b.category !== 'asset').reduce((s, b) => s + b.amount, 0) + db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final'").get().g),
+    expenses: round(bills.filter(b => !NOT_COST.includes(b.category)).reduce((s, b) => s + b.amount, 0) + db.prepare("SELECT COALESCE(SUM(gross),0) g FROM payroll WHERE status='final'").get().g),
     receivable: round(invoices.reduce((s, i) => s + i.balance, 0)),
     retention_held: round(invoices.reduce((s, i) => s + i.retention_open, 0)),
     payable: round(bills.reduce((s, b) => s + b.balance, 0)),
@@ -218,7 +223,7 @@ function corporateTaxReport(from, to) {
   const { invoices, bills } = enrich();
   const inR = dt => (!from || dt >= from) && (!to || dt <= to);
   const revenue = round(invoices.filter(i => !i.voided && inR(i.date)).reduce((s, i) => s + i.revenue, 0));
-  const billCost = round(bills.filter(b => inR(b.date) && b.category !== 'asset').reduce((s, b) => s + b.amount, 0));
+  const billCost = round(bills.filter(b => inR(b.date) && !NOT_COST.includes(b.category)).reduce((s, b) => s + b.amount, 0));
   const depreciation = ctx.depreciation(from, to || today());
   const payroll = round(payrollCost(from, to).reduce((s, r) => s + r.gross, 0));
   const r = C.corporateTax({ revenue, expenses: billCost + payroll + depreciation, periodEnd: to });
@@ -243,6 +248,11 @@ function compliance() {
   for (const d of db.prepare('SELECT name,entity,expiry_date FROM documents WHERE expiry_date IS NOT NULL AND expiry_date<? ORDER BY expiry_date').all(soon)) add(d.expiry_date < t ? 'bad' : 'warn', 'doc_file', { who: d.name, date: d.expiry_date });
   const bounced = db.prepare("SELECT COUNT(*) n FROM payments WHERE cheque_status='bounced'").get().n;
   if (bounced) add('bad', 'bounced', { count: bounced });
+  if (ctx.chequeAlerts) ctx.chequeAlerts(add);
+  if (ctx.treasuryAlerts) ctx.treasuryAlerts(add);
+  if (ctx.spendAlerts) ctx.spendAlerts(add);
+  if (ctx.siteAlerts) ctx.siteAlerts(add);                                  // equipment service due, programme activities past their finish date                          // guarantees expiring, projects over budget, cash shortfall ahead                              // post-dated cheques due this week / past their date
+  if (ctx.backupStatus && fs.existsSync(path.join(DATA_DIR, 'backups'))) { const bk = ctx.backupStatus(); if (bk.stale) add('bad', 'backup_stale', { days: bk.age_days }); if (bk.last_copy && !bk.last_copy.ok) add('bad', 'backup_copy', { who: bk.last_copy.dir }); }
   const { invoices } = enrich();
   const noTrn = new Set(invoices.filter(i => !i.voided && i.warnings.includes('customer_trn_missing')).map(i => i.client_name));
   if (noTrn.size) add('warn', 'customer_trn', { who: [...noTrn].join(', ') });
@@ -254,8 +264,9 @@ function compliance() {
 const isHttps = req => req.headers['x-forwarded-proto'] === 'https' || process.env.SECURE_COOKIES === '1';
 const cookie = (req, token, maxAge) => `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
 const fails = new Map();                                    // ip -> [timestamps of failed logins]
-const clientIp = req => (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-const locked = ip => { const t = (fails.get(ip) || []).filter(x => Date.now() - x < 15 * 60e3); fails.set(ip, t); return t.length >= 8; };
+// behind the reverse proxy the client address is the LAST X-Forwarded-For hop (the one the proxy added); earlier hops are whatever the client sent
+const clientIp = req => (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',').pop().trim();
+const locked = (key, max = 8) => { const t = (fails.get(key) || []).filter(x => Date.now() - x < 15 * 60e3); if (fails.size > 5000) fails.clear(); fails.set(key, t); return t.length >= max; };
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32).toString('hex');
 function createSession(userId) {
   const token = crypto.randomBytes(24).toString('hex');
@@ -282,8 +293,8 @@ const send = (res, code, body, headers = {}) => {
   res.end(out);
 };
 const readBody = (req, max = 5e6) => req._body !== undefined ? Promise.resolve(req._body) : new Promise((ok, no) => {
-  let b = ''; req.on('data', c => { b += c; if (b.length > max) req.destroy(); });
-  req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch (e) { no(e); } });
+  let b = '', over = false; req.on('data', c => { if (over) return; b += c; if (b.length > max) { over = true; b = ''; no(Object.assign(new Error('the request is too large'), { status: 413 })); req.resume(); } });
+  req.on('end', () => { if (over) return; try { ok(b ? JSON.parse(b) : {}); } catch (e) { no(Object.assign(new Error('invalid request body'), { status: 400 })); } });
 });
 
 // ---- site roles (site engineer, foreman) work only on the projects assigned to them in Users ----
@@ -316,8 +327,8 @@ async function scopeCheck(sc, req, method, url, a, b) {
   if (url.searchParams.get('entity') === 'project' && !p(url.searchParams.get('entity_id'))) return false;
   if (b && /^\d+$/.test(b) && TABLES[a]?.cols.includes('project_id')) { const row = db.prepare(`SELECT project_id FROM ${a} WHERE id=?`).get(+b); if (row && !p(row.project_id)) return false; }
   if (a === 'documents' && b && /^\d+$/.test(b)) { const d = db.prepare('SELECT entity, entity_id FROM documents WHERE id=?').get(+b); if (d && d.entity === 'project' && !p(d.entity_id)) return false; }
-  if (['POST', 'PUT', 'DELETE'].includes(method) && /json/.test(req.headers['content-type'] || '')) {
-    const x = req._body = await readBody(req);
+  if (['POST', 'PUT', 'DELETE'].includes(method)) {
+    const x = req._body = await readBody(req, a === 'documents' ? 12e6 : 5e6);
     if (!p(x.project_id) || !e(x.employee_id) || (x.entity === 'project' && !p(x.entity_id))) return false;
     if (Array.isArray(x.employee_ids) && !x.employee_ids.every(e)) return false;
   }
@@ -333,13 +344,15 @@ function clean(table, body) {
     if (spec.json?.includes(c)) v = JSON.stringify(Array.isArray(v) ? v : []);
     else if (spec.num?.includes(c)) v = +v || 0;
     else if (v === '') v = null;
+    if (v != null && (c === 'date' || c.endsWith('_date') || c.endsWith('_expiry')) && !/^\d{4}-\d\d-\d\d$/.test(String(v))) bad(`${c.replace(/_/g, ' ')} must be a date (YYYY-MM-DD)`);
     out[c] = v;
   }
   return out;
 }
 
 const { ROLES } = ACLX, can = ACLX.can;
-const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target'];
+const { money } = require('./lib/render');
+const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -347,6 +360,12 @@ const monthOk = m => /^\d{4}-(0[1-9]|1[0-2])$/.test(m || '');
 function payrollRows(month) {
   return db.prepare(`SELECT p.*, e.name, e.person_code, e.routing_code, e.iban, e.designation FROM payroll p JOIN employees e ON e.id=p.employee_id WHERE p.month=? ORDER BY e.name`).all(month)
     .map(r => ({ ...r, deduction_ratio: r.gross ? r.deductions / r.gross : 0 }));
+}
+// days of the month the employee is on the payroll: a full month is 30 days whatever its length (February included)
+function payrollBaseDays(e, m) {
+  const first = `${m}-01`, last = `${m}-${String(C.daysInMonth(m)).padStart(2, '0')}`;
+  const from = e.join_date && e.join_date > first ? e.join_date : first, to = e.end_date && e.end_date < last ? e.end_date : last;
+  return from === first && to === last ? 30 : Math.max(0, Math.min(30, Math.round((new Date(to) - new Date(from)) / 864e5) + 1));
 }
 function applyPayroll(id, inp) {
   const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(id), emp = db.prepare('SELECT * FROM employees WHERE id=?').get(row.employee_id);
@@ -368,13 +387,15 @@ const mailCfgFor = () => {
   return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
 };
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+ctx.siteScope = me => siteScope(me);
+ctx.applyPayroll = (...a) => applyPayroll(...a);
 // brand e-mail signature: Arial text block + the one-line logo as an inline image
 ctx.signature = user => {
   const S = getSettings(), prof = db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(user.id) || user, logo = ctx.brandBuf && ctx.brandBuf('logo_line');
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/health')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -396,12 +417,18 @@ async function api(req, res, url) {
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(r.lastInsertRowid), 2592000) });
   }
   if (a === 'login' && method === 'POST') {
-    const { username, password } = await readBody(req), ip = clientIp(req);
-    if (locked(ip)) return send(res, 429, { error: 'too many failed attempts — try again in 15 minutes' });
+    const { username, password, code } = await readBody(req), ip = clientIp(req), acct = 'user:' + String(username || '').toLowerCase();
+    if (locked(ip) | locked(acct, 12)) return send(res, 429, { error: 'too many failed attempts — try again in 15 minutes' });   // per address and per account (both lists are refreshed)
     const u = db.prepare('SELECT * FROM users WHERE username=?').get(username || '');
-    if (!u || !crypto.timingSafeEqual(Buffer.from(hashPw(password || '', u.salt)), Buffer.from(u.hash))) { fails.get(ip).push(Date.now()); return send(res, 401, { error: 'invalid credentials' }); }
-    fails.delete(ip);
+    if (!u || !crypto.timingSafeEqual(Buffer.from(hashPw(password || '', u.salt)), Buffer.from(u.hash))) { fails.get(ip).push(Date.now()); fails.get(acct).push(Date.now()); return send(res, 401, { error: 'invalid credentials' }); }
+    fails.delete(ip); if (!u.totp_on) fails.delete(acct);                    // with two-step sign-in the account counter also guards the code
     if (u.disabled) return send(res, 403, { error: 'this account is disabled' });                    // employee who has left
+    if (u.totp_on) {                                                         // two-step sign-in: the password was right, now the code from the authenticator app
+      if (!code) return send(res, 401, { error: 'enter the 6-digit code from your authenticator app', need_code: true });
+      const step = TOTP.verify(u.totp_secret, code, u.totp_last || 0);
+      if (!step) { fails.set(acct, [...(fails.get(acct) || []), Date.now()]); return send(res, 401, { error: 'the code is not correct — check the time on your phone and try the next code', need_code: true }); }
+      db.prepare('UPDATE users SET totp_last=? WHERE id=?').run(step, u.id);
+    }
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(u.id), 2592000) });
   }
   if (a === 'logout') {
@@ -416,6 +443,8 @@ async function api(req, res, url) {
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
   const scope = siteScope(me);
   if (scope) { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }
+  if (ctx.periodGuard) await ctx.periodGuard(req, method, url, parts);          // closed accounting period
+  if (ctx.spendGuard) await ctx.spendGuard(req, method, url, parts, me);        // purchase orders / payments above the approval limit
 
   const mailCfg = mailCfgFor;
   if (a === 'settings' && b === 'test-email' && method === 'POST') {
@@ -446,7 +475,7 @@ async function api(req, res, url) {
   if (a === 'users') {
     const admins = () => db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n;
     const hrOnly = me.role === 'hr';
-    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all()
+    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,COALESCE(u.totp_on,0) two_step,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all()
       .map(u => ({ ...u, projects: db.prepare('SELECT project_id FROM user_projects WHERE user_id=?').all(u.id).map(r => r.project_id) })));
     const body = ['POST', 'PUT'].includes(method) ? await readBody(req) : {};
     if (method === 'POST') {
@@ -513,17 +542,49 @@ async function api(req, res, url) {
     if (method === 'PUT') { const x = await readBody(req); db.prepare('UPDATE users SET display_name=?, job_title=?, mobile=? WHERE id=?').run(String(x.display_name || '').slice(0, 80), String(x.job_title || '').slice(0, 80), String(x.mobile || '').slice(0, 30), me.id); }
     return send(res, 200, db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(me.id)), true;
   }
+  if (a === '2fa') {
+    const u = db.prepare('SELECT * FROM users WHERE id=?').get(me.id), pwOk = p => crypto.timingSafeEqual(Buffer.from(hashPw(String(p || ''), u.salt)), Buffer.from(u.hash));
+    if (method === 'GET') return send(res, 200, { enabled: !!u.totp_on });
+    const x = await readBody(req);
+    if (b === 'setup' && method === 'POST') {                                // a new secret, not active until a code from it is confirmed
+      if (u.totp_on) return send(res, 400, { error: 'two-step sign-in is already on — switch it off first' });
+      const secret = TOTP.newSecret(); db.prepare('UPDATE users SET totp_secret=?, totp_on=0 WHERE id=?').run(secret, u.id);
+      return send(res, 200, { secret, uri: TOTP.uri(secret, u.username, getSettings().company_name || 'Trigon ERP') });
+    }
+    if (b === 'enable' && method === 'POST') {
+      if (u.totp_on) return send(res, 400, { error: 'two-step sign-in is already on' });
+      const step = TOTP.verify(u.totp_secret, x.code, 0); if (!step) return send(res, 400, { error: 'the code is not correct — check the time on your phone and try the next code' });
+      db.prepare('UPDATE users SET totp_on=1, totp_last=? WHERE id=?').run(step, u.id);
+      const sid = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || ''); db.prepare('DELETE FROM sessions WHERE user_id=? AND token!=?').run(u.id, sid ? sid[1] : '');
+      audit(req, 'enable', '2fa', u.id, u.username); return send(res, 200, { enabled: true });
+    }
+    if (b === 'disable' && method === 'POST') {                               // own account: the password is asked again
+      if (!pwOk(x.password)) return send(res, 400, { error: 'current password is not correct' });
+      db.prepare('UPDATE users SET totp_on=0, totp_secret=NULL, totp_last=0 WHERE id=?').run(u.id); audit(req, 'disable', '2fa', u.id, u.username);
+      return send(res, 200, { enabled: false });
+    }
+    if (b === 'reset' && method === 'POST') {                                 // administrator: a user lost the phone
+      if (me.role !== 'admin') return send(res, 403, { error: 'only the administrator can reset two-step sign-in' });
+      const t = db.prepare('SELECT id, username FROM users WHERE id=?').get(+x.user_id); if (!t) return send(res, 404, { error: 'not found' });
+      db.prepare('UPDATE users SET totp_on=0, totp_secret=NULL, totp_last=0 WHERE id=?').run(t.id); db.prepare('DELETE FROM sessions WHERE user_id=? AND user_id!=?').run(t.id, me.id);
+      audit(req, 'reset', '2fa', t.id, t.username); return send(res, 200, { ok: 1 });
+    }
+    return send(res, 404, { error: 'not found' });
+  }
   if (a === 'password' && method === 'POST') {
-    const { password } = await readBody(req);
+    const { password, current } = await readBody(req), u = db.prepare('SELECT * FROM users WHERE id=?').get(sessionUser(req).id);
+    if (!crypto.timingSafeEqual(Buffer.from(hashPw(String(current || ''), u.salt)), Buffer.from(u.hash))) return send(res, 400, { error: 'current password is not correct' });
     if (!password || password.length < 6) return send(res, 400, { error: 'password must be at least 6 characters' });
     const salt = crypto.randomBytes(16).toString('hex');
-    db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(password, salt), sessionUser(req).id);
+    db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(password, salt), u.id);
+    const sid = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');                       // every other device is signed out
+    db.prepare('DELETE FROM sessions WHERE user_id=? AND token!=?').run(u.id, sid ? sid[1] : '');
     return send(res, 200, { ok: 1 });
   }
   if (a === 'dashboard') { const d = dashboard(); if (!['admin', 'accountant'].includes(me.role)) d.alerts = []; return send(res, 200, d); }
   if (a === 'vat') return send(res, 200, vatReport(url.searchParams.get('from'), url.searchParams.get('to')));
   if (a === 'project-summary' && !b) return send(res, 200, projectRows());
-  if (a === 'backup') {
+  if (a === 'backup' && !b && method === 'GET') {
     const file = path.join(DATA_DIR, 'backup.db'); fs.rmSync(file, { force: true });
     db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
     return send(res, 200, fs.readFileSync(file), { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="erp-backup-${today()}.db"` });
@@ -537,9 +598,14 @@ async function api(req, res, url) {
   if (a === 'invoices' && c === 'credit-note' && method === 'POST') {
     const orig = enrich().invoices.find(i => i.id === +b);
     if (!orig || orig.kind === 'credit_note' || orig.voided) return send(res, 400, { error: 'cannot issue a credit note for this document' });
-    const body = await readBody(req);
-    const r = db.prepare("INSERT INTO invoices(number,date,project_id,items,vat_pct,notes,kind,original_id,retention_amount,vat_basis) VALUES(?,?,?,?,?,?,?,?,?,?)")
-      .run(nextNumber('invoices', 'CN'), today(), orig.project_id, JSON.stringify(Array.isArray(body.items) && body.items.length ? body.items : orig.items), orig.vat_pct, `Credit note against ${orig.number}${body.reason ? ' — ' + body.reason : ''}`, 'credit_note', orig.id, Array.isArray(body.items) && body.items.length ? null : orig.retention_amount ?? null, Array.isArray(body.items) && body.items.length ? null : orig.vat_basis || null);
+    const body = await readBody(req), partial = Array.isArray(body.items) && body.items.length, cnItems = partial ? body.items : orig.items;
+    // the credit note cancels the retention of what it credits (same % as the invoice; the fixed amount when the whole invoice is credited)
+    const ret = partial ? null : orig.retention_amount ?? null, basis = orig.vat_basis || null;
+    const tot = docTotals(cnItems, orig.vat_pct, orig.retention_pct, { retention: ret, vatBasis: basis });
+    if (!(tot.total > 0)) return send(res, 400, { error: 'the credit note must have a value' });
+    if (round(orig.credited_total + tot.total) > orig.total + 0.01) return send(res, 400, { error: `credit notes cannot exceed the invoice: ${money(orig.total)} invoiced, ${money(orig.credited_total)} already credited` });
+    const r = db.prepare("INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes,kind,original_id,retention_amount,vat_basis) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+      .run(nextNumber('invoices', 'CN'), today(), orig.project_id, JSON.stringify(cnItems), orig.vat_pct, orig.retention_pct || 0, `Credit note against ${orig.number}${body.reason ? ' — ' + body.reason : ''}`, 'credit_note', orig.id, ret, basis);
     audit(req, 'create', 'credit_note', Number(r.lastInsertRowid), `against ${orig.number}`);
     return send(res, 200, { id: Number(r.lastInsertRowid) });
   }
@@ -548,7 +614,14 @@ async function api(req, res, url) {
     if (!reason) return send(res, 400, { error: 'a reason is required to void a tax invoice' });
     const inv = enrich().invoices.find(i => i.id === +b);
     if (!inv) return send(res, 404, { error: 'not found' });
-    if (inv.paid > 0) return send(res, 409, { error: 'invoice has payments — issue a credit note instead' });
+    if (inv.voided) return send(res, 409, { error: 'already voided' });
+    if (inv.paid > 0 || inv.released > 0) return send(res, 409, { error: 'invoice has payments — issue a credit note instead' });
+    if (inv.kind !== 'credit_note' && inv.credited_total > 0) return send(res, 409, { error: 'invoice has credit notes — void them first' });
+    const ipc = ctx.ipcOf ? ctx.ipcOf(+b) : null;
+    if (ipc) {                                                              // progress invoice: only the latest one can be voided, and its lines become unbilled again
+      if (db.prepare('SELECT 1 FROM ipcs p JOIN invoices i ON i.id=p.invoice_id WHERE p.project_id=? AND p.id>? AND COALESCE(i.voided,0)=0').get(ipc.project_id, ipc.id)) return send(res, 409, { error: 'a later progress invoice exists — void that one first, or issue a credit note' });
+      for (const l of JSON.parse(ipc.lines || '[]')) if (l.cum_pct > l.prev_pct) db.prepare('UPDATE boq_items SET billed_pct=? WHERE id=? AND project_id=?').run(l.prev_pct, l.boq_id, ipc.project_id);
+    }
     db.prepare('UPDATE invoices SET voided=1, void_reason=? WHERE id=?').run(reason, +b);
     db.prepare("UPDATE pay_apps SET status='certified' WHERE id IN (SELECT app_id FROM client_pcs WHERE invoice_id=?)").run(+b);   // a PC whose invoice is voided can be invoiced again
     db.prepare("UPDATE client_pcs SET status='recorded', invoice_id=NULL WHERE invoice_id=?").run(+b);
@@ -570,21 +643,35 @@ async function api(req, res, url) {
       if (!monthOk(m)) return send(res, 400, { error: 'month must be YYYY-MM' });
       const first = `${m}-01`, last = `${m}-${String(C.daysInMonth(m)).padStart(2, '0')}`;
       let n = 0;
-      for (const e of db.prepare("SELECT * FROM employees WHERE (join_date IS NULL OR join_date<=?) AND (end_date IS NULL OR end_date>=?) AND status='active'").all(last, first)) {
+      for (const e of db.prepare("SELECT * FROM employees WHERE (join_date IS NULL OR join_date<=?) AND (end_date IS NULL OR end_date>=?) AND (status='active' OR (end_date IS NOT NULL AND end_date>=?))").all(last, first, first)) {
+        if (ctx.salaryInSettlement && ctx.salaryInSettlement(e.id, m)) continue;   // the last month was paid in the final settlement
         if (db.prepare('SELECT 1 FROM payroll WHERE month=? AND employee_id=?').get(m, e.id)) continue;
-        const from = e.join_date && e.join_date > first ? e.join_date : first, to = e.end_date && e.end_date < last ? e.end_date : last;
-        const days = Math.min(30, Math.round((new Date(to) - new Date(from)) / 864e5) + 1);
+        const days = payrollBaseDays(e, m);
         const r = db.prepare('INSERT INTO payroll(month,employee_id,project_id,days_worked) VALUES(?,?,?,?)').run(m, e.id, e.project_id, days);
         const inp = ctx.hooks.payrollInputs ? ctx.hooks.payrollInputs(e, m, days) : {};
-        const loan = ctx.hooks.loanDeduction ? ctx.hooks.loanDeduction(e, m) : { amount: 0 };   // advance instalment due this month
-        if (loan.amount) { inp.deductions = round((+inp.deductions || 0) + loan.amount); inp.notes = `Advance repayment ${loan.amount}`; }
-        applyPayroll(Number(r.lastInsertRowid), inp); if (loan.amount) ctx.hooks.afterPayrollRow(Number(r.lastInsertRowid), e, m, loan.parts); n++;
+        applyPayroll(Number(r.lastInsertRowid), inp);
+        if (ctx.syncLoanDeduction) ctx.syncLoanDeduction(Number(r.lastInsertRowid));   // advance instalments due up to this month
+        n++;
       }
       audit(req, 'generate', 'payroll', 0, `${m}: ${n} rows`);
       return send(res, 200, { created: n });
     }
+    if (b === 'refresh' && method === 'POST') {                                       // re-read attendance, leave and advances into the draft rows (bonus and manual deductions are kept)
+      const { month: m } = await readBody(req);
+      if (!monthOk(m)) return send(res, 400, { error: 'month must be YYYY-MM' });
+      let n = 0;
+      for (const row of db.prepare("SELECT * FROM payroll WHERE month=? AND status!='final'").all(m)) {
+        const e = db.prepare('SELECT * FROM employees WHERE id=?').get(row.employee_id); if (!e) continue;
+        const inp = ctx.hooks.payrollInputs ? ctx.hooks.payrollInputs(e, m, payrollBaseDays(e, m)) : { days_worked: payrollBaseDays(e, m) };
+        applyPayroll(row.id, inp); if (ctx.syncLoanDeduction) ctx.syncLoanDeduction(row.id); n++;
+      }
+      audit(req, 'refresh', 'payroll', 0, `${m}: ${n} rows`);
+      return send(res, 200, { updated: n });
+    }
     if (b === 'finalize' && method === 'POST') {
       const { month: m } = await readBody(req);
+      if (!monthOk(m)) return send(res, 400, { error: 'month must be YYYY-MM' });
+      if (!db.prepare('SELECT 1 FROM payroll WHERE month=?').get(m)) return send(res, 400, { error: 'no payroll rows for this month — generate it first' });
       const issues = C.payrollIssues(getSettings(), payrollRows(m)).filter(i => !i.warn);
       if (issues.length) return send(res, 400, { error: 'WPS data incomplete', issues });
       db.prepare("UPDATE payroll SET status='final' WHERE month=?").run(m);
@@ -614,7 +701,10 @@ async function api(req, res, url) {
       const row = db.prepare('SELECT * FROM payroll WHERE id=?').get(+b);
       if (!row) return send(res, 404, { error: 'not found' });
       if (row.status === 'final') return send(res, 409, { error: 'payroll is finalized' });
-      applyPayroll(+b, await readBody(req)); audit(req, 'update', 'payroll', +b, row.month);
+      const inp = await readBody(req), LIM = { days_worked: 30, leave_days: 31, ot_normal_hours: 400, ot_special_hours: 400, bonus: 1e9, deductions: 1e9 };
+      for (const k in LIM) if (k in inp && !(Number.isFinite(+inp[k]) && +inp[k] >= 0 && +inp[k] <= LIM[k])) return send(res, 400, { error: `${k.replace(/_/g, ' ')} must be between 0 and ${LIM[k]}` });
+      applyPayroll(+b, inp); if ('deductions' in inp && ctx.capLoanToDeductions) ctx.capLoanToDeductions(+b);
+      audit(req, 'update', 'payroll', +b, row.month);
       return send(res, 200, { ok: 1 });
     }
     const dropRow = id => { db.prepare('DELETE FROM payroll WHERE id=?').run(id); for (const t of ['loan_repayments', 'payroll_alloc']) db.prepare(`DELETE FROM ${t} WHERE payroll_id=?`).run(id); };
@@ -648,7 +738,7 @@ async function api(req, res, url) {
     const r = db.prepare('INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes) VALUES(?,?,?,?,?,?,?)')
       .run(nextNumber('invoices', 'INV'), date, proj.id, JSON.stringify(items), (st.vat_registered === '0' ? 0 : +st.vat_pct || 5), proj.retention_pct || 0, 'Progress invoice');
     if (ctx.ipcSnapshot) ctx.ipcSnapshot(proj.id, Number(r.lastInsertRowid));   // payment certificate: previous / this period / cumulative per BOQ item
-    db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=?').run(+b);
+    db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=? AND done_pct>billed_pct+0.0001').run(+b);   // only the lines on this invoice: a line corrected downwards keeps what was billed
     audit(req, 'create', 'progress_invoice', Number(r.lastInsertRowid), `project ${proj.name}`);
     return send(res, 200, { id: Number(r.lastInsertRowid) });
   }
@@ -667,20 +757,52 @@ async function api(req, res, url) {
 
   for (const m of MODULES) if (m.handle && await m.handle(req, res, url, parts, me)) return;
 
-  if (TABLES[a]) {
+  if (TABLES[a] && !c) {
     const spec = TABLES[a], id = b ? +b : null;
+    const has = t => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+    // receipts and payments: a real amount against a live document, never more than what is open; reconciled ones are locked
+    const checkPayment = (row, cur) => {
+      const p = { ...(cur || {}), ...row };
+      if (!['in', 'out'].includes(p.kind)) bad('Payment kind must be in or out');
+      if (!(Number.isFinite(+p.amount) && +p.amount > 0)) bad('Amount must be greater than zero');
+      if (p.date && !/^\d{4}-\d\d-\d\d$/.test(p.date)) bad('Invalid date');
+      const e = enrich(), own = cur && countable(cur) ? +cur.amount : 0, bounced = p.cheque_status === 'bounced';
+      if (p.kind === 'in' && p.invoice_id) {
+        const inv = e.invoices.find(i => i.id === +p.invoice_id); if (!inv) bad('Invoice not found');
+        if (inv.voided) bad('This invoice is voided'); if (inv.kind === 'credit_note') bad('A receipt cannot be recorded against a credit note');
+        const sameTarget = cur && +cur.invoice_id === inv.id && !!cur.is_retention === !!p.is_retention ? own : 0, open = round((p.is_retention ? inv.retention_open : inv.balance) + sameTarget);
+        if (!bounced && +p.amount > open + 0.01) bad(`Amount is more than the open ${p.is_retention ? 'retention' : 'balance'} of ${inv.number} (${money(open)})`);
+      }
+      if (p.kind === 'out' && p.bill_id) {
+        const bill = e.bills.find(x => x.id === +p.bill_id); if (!bill) bad('Bill not found');
+        const open = round(bill.balance + (cur && +cur.bill_id === bill.id ? own : 0));
+        if (!bounced && +p.amount > open + 0.01) bad(`Amount is more than the open balance of this bill (${money(open)})`);
+      }
+    };
+    const reconciled = pid => has('bank_lines') && db.prepare('SELECT 1 FROM bank_lines WHERE payment_id=?').get(pid);
     // site engineers record progress on the BOQ; quantities, rates and new items stay with QS / management
     if (a === 'boq_items' && me.role === 'site_engineer' && method !== 'GET' && method !== 'PUT') return send(res, 403, { error: 'your role does not allow this action' });
     if (method === 'GET') {
       const e = enrich();
-      if (['boq_items','variations','site_reports'].includes(a)) { const pid = url.searchParams.get('project_id'); const rows = pid ? db.prepare(`SELECT * FROM ${a} WHERE project_id=? ORDER BY ${a === 'site_reports' ? 'date DESC,' : ''} id`).all(+pid) : all(a); return send(res, 200, id ? rows.find(x => x.id === id) || null : rows); }
+      // "site roles never see money": contract terms and BOQ rates are dropped for roles outside MONEY
+      const HIDE = { projects: ['contract_value', 'retention_pct', 'advance_pct', 'advance_recovery_pct', 'budget'], boq_items: ['rate', 'cost_rate'], variations: ['amount', 'cost'] }[a];
+      const strip = x => { if (!x || !HIDE || ACLX.MONEY.includes(me.role)) return x; const o = { ...x }; for (const k of HIDE) delete o[k]; return o; };
+      const out = rows => send(res, 200, id ? strip(rows.find(x => x.id === id)) || null : rows.map(strip));
+      if (['boq_items','variations','site_reports'].includes(a)) { const pid = url.searchParams.get('project_id'); return out(pid ? db.prepare(`SELECT * FROM ${a} WHERE project_id=? ORDER BY ${a === 'site_reports' ? 'date DESC,' : ''} id`).all(+pid) : all(a)); }
+      if (a === 'quotes') {                                                   // the acceptance link lets its holder sign for the client: only for those who can send quotations; the signature image only on the single record
+        const mayShare = can(me.role, 'PUT', 'quotes');
+        return send(res, 200, id ? (q => q ? { ...q, share_token: mayShare ? q.share_token : undefined } : null)(e.quotes.find(x => x.id === id)) : e.quotes.map(({ signature, share_token, ...q }) => ({ ...q, signed: !!signature, shared: !!share_token })));
+      }
       if (e[a] && Array.isArray(e[a]) ) return send(res, 200, id ? e[a].find(x => x.id === id) || null : e[a]);
-      return send(res, 200, id ? db.prepare(`SELECT * FROM ${a} WHERE id=?`).get(id) : all(a));
+      if (!id) return out(all(a));
+      return send(res, 200, strip(db.prepare(`SELECT * FROM ${a} WHERE id=?`).get(id)));
     }
     const guardInvoice = () => { const st = getSettings(); if (a === 'invoices' && st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices'); };
     if (method === 'POST') {
       const row = clean(a, await readBody(req));
       guardInvoice(); spec.check?.(row);
+      if (a === 'payments') checkPayment(row, null);
+      if (a === 'invoices' && row.number && db.prepare('SELECT 1 FROM invoices WHERE number=?').get(row.number)) bad(`Invoice number ${row.number} already exists`);
       if (a === 'quotes' && !row.number) row.number = brandRef('quotes', 'number', db.prepare('SELECT name FROM parties WHERE id=?').get(+row.client_id)?.name);
       else if (spec.prefix && !row.number) row.number = nextNumber(a, spec.prefix);
       if (a === 'projects' && !row.code) row.code = nextNumber('projects', 'PRJ', 'code');
@@ -696,7 +818,32 @@ async function api(req, res, url) {
       if (a === 'boq_items' && me.role === 'site_engineer') row = 'done_pct' in row ? { done_pct: row.done_pct } : {};
       const ks = Object.keys(row);
       spec.check?.(row);
-      if (a === 'invoices') { const cur = db.prepare('SELECT voided FROM invoices WHERE id=?').get(id); if (cur?.voided) bad('voided invoices cannot be edited'); }
+      if (a === 'invoices') {
+        const cur = enrich().invoices.find(i => i.id === id); if (cur?.voided) bad('voided invoices cannot be edited');
+        if (cur && row.number && row.number !== cur.number && db.prepare('SELECT 1 FROM invoices WHERE number=? AND id!=?').get(row.number, id)) bad(`Invoice number ${row.number} already exists`);
+        const same = k => k === 'items' ? JSON.stringify(JSON.parse(row.items || '[]')) === JSON.stringify(cur.items) : String(row[k] ?? '') === String(cur[k] ?? '') || (+row[k] === +cur[k] && row[k] !== '' && row[k] != null);
+        const changed = ks => ks.some(k => k in row && !same(k));
+        // an invoice matched to a main-contractor payment certificate, or a credit note, keeps its figures
+        if (cur && (cur.kind === 'credit_note' || (has('client_pcs') && db.prepare('SELECT 1 FROM client_pcs WHERE invoice_id=?').get(id))) && changed(['number', 'project_id', 'items', 'vat_pct', 'retention_pct'])) bad('This document is tied to a payment certificate or is a credit note — its figures cannot be changed.');
+        // with money or credit notes on it: the number and project are fixed, and it can never drop below what was received / credited
+        if (cur && (cur.paid > 0 || cur.released > 0 || cur.credited_total > 0)) {
+          if (changed(['number', 'project_id'])) bad('This invoice has payments or credit notes — its number and project cannot be changed.');
+          if (changed(['items', 'vat_pct', 'retention_pct'])) {
+            const t = docTotals('items' in row ? JSON.parse(row.items || '[]') : cur.items, 'vat_pct' in row ? row.vat_pct : cur.vat_pct, 'retention_pct' in row ? row.retention_pct : cur.retention_pct, { retention: cur.retention_amount, vatBasis: cur.vat_basis });
+            if (round(t.total - t.retention) < round(cur.paid + cur.credited) - 0.01 || t.retention < round(cur.released + cur.retention_credited) - 0.01 || t.total < cur.credited_total - 0.01)
+              bad(`This invoice cannot go below what was already received or credited (${money(round(cur.paid + cur.released))} received, ${money(cur.credited_total)} credited). Issue a credit note instead.`);
+          }
+        }
+      }
+      if (a === 'payments') {
+        const cur = db.prepare('SELECT * FROM payments WHERE id=?').get(id); if (!cur) return send(res, 404, { error: 'not found' });
+        if (reconciled(id) && ['kind', 'amount', 'date', 'invoice_id', 'bill_id', 'bank_account_id', 'method'].some(k => k in row && String(row[k] ?? '') !== String(cur[k] ?? '') && +row[k] !== +cur[k])) bad('This payment is matched to a bank statement line — unmatch it first');
+        checkPayment(row, cur);
+      }
+      if (a === 'quotes') {                                                   // what the client signed stays as signed
+        const cur = db.prepare('SELECT * FROM quotes WHERE id=?').get(id);
+        if (cur?.accepted_at) for (const k of ['items', 'vat_pct', 'client_id', 'number']) if (k in row && (k === 'items' ? JSON.stringify(JSON.parse(row.items || '[]')) !== JSON.stringify(parseItems(cur)) : String(row[k] ?? '') !== String(cur[k] ?? '') && +row[k] !== +cur[k])) bad('This quotation was accepted and signed by the client — its prices cannot be changed. Create a new quotation instead.');
+      }
       audit(req, 'update', a, id, ks.join(','));
       if (ks.length) db.prepare(`UPDATE ${a} SET ${ks.map(k => k + '=?').join(',')} WHERE id=?`).run(...Object.values(row), id);
       return send(res, 200, { ok: 1 });
@@ -704,11 +851,20 @@ async function api(req, res, url) {
     if (method === 'DELETE' && id) {
       if (a === 'invoices') return send(res, 409, { error: 'Tax invoices cannot be deleted (sequential numbering). Void it or issue a credit note.' });
       if (a === 'employees' && db.prepare('SELECT COUNT(*) n FROM payroll WHERE employee_id=?').get(id).n) return send(res, 409, { error: 'employee has payroll records — mark as left instead' });
+      if (a === 'payments' && reconciled(id)) return send(res, 409, { error: 'This payment is matched to a bank statement line — unmatch it first' });
+      if (a === 'bills') {                                                    // a bill raised by a certificate or a purchase order belongs to it
+        const sc = has('sub_certs') && db.prepare('SELECT number FROM sub_certs WHERE bill_id=?').get(id), po = has('purchase_orders') && db.prepare('SELECT number FROM purchase_orders WHERE bill_id=?').get(id);
+        if (sc) return send(res, 409, { error: `This bill belongs to payment certificate ${sc.number} — it cannot be deleted on its own` });
+        if (po) return send(res, 409, { error: `This bill belongs to purchase order ${po.number} — cancel the purchase order instead` });
+        if (db.prepare('SELECT 1 FROM payments p WHERE p.bill_id=? AND EXISTS (SELECT 1 FROM bank_lines l WHERE l.payment_id=p.id)').get(id)) return send(res, 409, { error: 'A payment of this bill is matched to a bank statement line — unmatch it first' });
+      }
       audit(req, 'delete', a, id);
       if (a === 'bills') db.prepare('DELETE FROM payments WHERE bill_id=?').run(id);
       if (a === 'projects') {
         const used = db.prepare('SELECT (SELECT COUNT(*) FROM invoices WHERE project_id=?)+(SELECT COUNT(*) FROM bills WHERE project_id=?) n').get(id, id).n;
         if (used) return send(res, 409, { error: 'project has invoices or expenses' });
+        const linked = ['purchase_orders', 'subcontracts', 'rfqs', 'pay_apps', 'payroll', 'stock_moves', 'fixed_assets'].filter(t => has(t) && db.prepare(`SELECT 1 FROM ${t} WHERE project_id=?`).get(id));
+        if (linked.length) return send(res, 409, { error: `project is in use (${linked.join(', ').replace(/_/g, ' ')})` });
         for (const t of ['boq_items', 'variations', 'site_reports']) db.prepare(`DELETE FROM ${t} WHERE project_id=?`).run(id);
       }
       if (a === 'parties') {
@@ -761,8 +917,10 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res, file);
   } catch (e) {
     if (!e.status) { console.error(e); ctx.logError && ctx.logError(e, req); }
-    send(res, e.status || 500, { error: String(e.message || e) });
+    send(res, e.upstream ? 502 : e.status || 500, { error: String(e.message || e) });
   }
 });
-if (require.main === module) server.listen(PORT, process.env.HOST || '0.0.0.0', () => console.log(`Contractor ERP running → http://localhost:${PORT}`));
+// one failed background callback (e.g. a locked temp file while a PDF is cleaned up on Windows) must not take the office server down
+if (require.main === module) for (const ev of ['uncaughtException', 'unhandledRejection']) process.on(ev, e => console.error(new Date().toISOString(), ev, e));
+if (require.main === module) server.listen(PORT, process.env.HOST || '0.0.0.0', () => { console.log(`Contractor ERP running → http://localhost:${PORT}`); if (ctx.startBackups) ctx.startBackups(); });
 module.exports = { server, ctx };

@@ -15,7 +15,7 @@ async function api(method, url, body) {
   const r = await fetch('/api/' + url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && url !== 'login') { boot(); throw new Error('unauthorized'); }
-  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { data: j });
   return j;
 }
 const toast = m => { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); };
@@ -29,7 +29,7 @@ const STATUS = { approved: ['معتمد', 'Approved'], pending_v: ['قيد ال�
   paid: ['مدفوع', 'Paid'], unpaid: ['غير مدفوع', 'Unpaid'], partial: ['جزئي', 'Partial'], overdue: ['متأخر', 'Overdue'], credit: ['إشعار دائن', 'Credit note'], void: ['ملغاة', 'Void'], final: ['معتمد', 'Final'], pending: ['قيد التحصيل', 'Pending'], cleared: ['تم صرفه', 'Cleared'], bounced: ['مرتجع', 'Bounced'], left: ['ترك العمل', 'Left'], retention: ['محتجز', 'Retention held'],
 };
 const tag = s => `<span class="tag ${s}">${esc(STATUS[s] ? tr(...STATUS[s]) : s)}</span>`;
-const CATS = { asset: ['شراء أصل ثابت (يُهلك)', 'Fixed asset purchase (depreciated)'], materials: ['مواد', 'Materials'], labour: ['عمالة', 'Labour'], subcontract: ['مقاولو باطن', 'Subcontractor'], equipment: ['معدات', 'Equipment'], transport: ['نقل', 'Transport'], permits: ['رسوم وتراخيص', 'Permits & fees'], accommodation: ['سكن العمال', 'Accommodation'], visa: ['تأشيرات ورسوم عمل', 'Visas & labour fees'], insurance: ['تأمين طبي', 'Medical insurance'], overhead: ['مصاريف عامة', 'Overheads'], other: ['أخرى', 'Other'] };
+const CATS = { asset: ['شراء أصل ثابت (يُهلك)', 'Fixed asset purchase (depreciated)'], sub_advance: ['دفعة مقدمة لمقاول باطن (ليست مصروفاً)', 'Advance to a subcontractor (not a cost)'], materials: ['مواد', 'Materials'], labour: ['عمالة', 'Labour'], subcontract: ['مقاولو باطن', 'Subcontractor'], equipment: ['معدات', 'Equipment'], transport: ['نقل', 'Transport'], permits: ['رسوم وتراخيص', 'Permits & fees'], accommodation: ['سكن العمال', 'Accommodation'], visa: ['تأشيرات ورسوم عمل', 'Visas & labour fees'], insurance: ['تأمين طبي', 'Medical insurance'], overhead: ['مصاريف عامة', 'Overheads'], other: ['أخرى', 'Other'] };
 const PTYPE = { client: ['عميل', 'Client'], supplier: ['مورد', 'Supplier'], subcontractor: ['مقاول باطن', 'Subcontractor'] };
 const EMIRATES = { abu_dhabi: ['أبوظبي', 'Abu Dhabi'], dubai: ['دبي', 'Dubai'], sharjah: ['الشارقة', 'Sharjah'], ajman: ['عجمان', 'Ajman'], uaq: ['أم القيوين', 'Umm Al Quwain'], rak: ['رأس الخيمة', 'Ras Al Khaimah'], fujairah: ['الفجيرة', 'Fujairah'] };
 const VATC = { std: ['خاضع 5%', 'Standard 5%'], zero: ['صفري', 'Zero-rated'], exempt: ['معفى', 'Exempt'] };
@@ -66,10 +66,11 @@ function authBox(title, extra, btn, onsubmit) {
   $('#lg').onclick = e => { e.preventDefault(); lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('form').onsubmit = async e => {
     e.preventDefault();
-    try { await onsubmit(Object.fromEntries(new FormData(e.target))); boot(); } catch (x) { $('#err').textContent = x.message; }
+    try { await onsubmit(Object.fromEntries(new FormData(e.target))); boot(); }
+    catch (x) { $('#err').textContent = x.message; if (x.data && x.data.need_code && $('#codef')) { $('#codef').style.display = ''; $('[name=code]').value = ''; $('[name=code]').focus(); } }
   };
 }
-const loginScreen = () => authBox(tr('تسجيل الدخول', 'Sign in'), '', tr('دخول', 'Sign in'), d => api('POST', 'login', d));
+const loginScreen = () => authBox(tr('تسجيل الدخول', 'Sign in'), `<div class="f" id="codef" style="display:none"><label>${tr('رمز التحقق من تطبيق المصادقة', 'Code from your authenticator app')}</label><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" dir="ltr"></div>`, tr('دخول', 'Sign in'), d => api('POST', 'login', d));
 const setupScreen = needToken => authBox(tr('إعداد النظام لأول مرة', 'First-time setup'),
   `<div class="f"><label>${tr('اسم الشركة', 'Company name')}</label><input name="company"></div>${needToken ? `<div class="f"><label>${tr('رمز الإعداد السري (من ملف .env على الخادم)', 'Setup token (from the .env file on the server)')}</label><input name="token" required></div>` : ''}`, tr('إنشاء الحساب', 'Create account'), d => api('POST', 'setup', d));
 
@@ -79,10 +80,10 @@ const MONEYR = [...READR, 'qs'], SITER = ['site_engineer', 'foreman'], STAFFR = 
 const seesMoney = () => MONEYR.includes(ME.role);                       // contract values, costs, margins (site roles never)
 const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['portal', 'بوابتي', 'My portal', ['employee']], ['tasks', 'المهام', 'Tasks', STAFFR],
-  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['tenders', 'المناقصات والفرص', 'Tenders & opportunities', MONEYR], ['projects', 'المشاريع', 'Projects', [...MONEYR, 'site_engineer']], ['quotes', 'عروض الأسعار', 'Quotations', MONEYR], ['invoices', 'فواتير العملاء', 'Sales invoices', MONEYR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', [...READR, 'qs', ...SITER]],
+  ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['tenders', 'المناقصات والفرص', 'Tenders & opportunities', MONEYR], ['projects', 'المشاريع', 'Projects', [...MONEYR, 'site_engineer']], ['quotes', 'عروض الأسعار', 'Quotations', MONEYR], ['invoices', 'فواتير العملاء', 'Sales invoices', MONEYR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', [...READR, 'qs', ...SITER]], ['schedule', 'الجدول الزمني', 'Programme (Gantt)', [...READR, 'qs', 'site_engineer', 'foreman']],
   ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', [...READR, 'procurement', 'site_engineer']], ['po', 'أوامر الشراء', 'Purchase orders', [...READR, 'procurement', 'storekeeper']], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', [...MONEYR, 'procurement']],
-  ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', [...READR, 'procurement']], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['parties', 'العملاء والموردون', 'Clients & suppliers', [...READR, 'qs', 'procurement']],
-  ['stock', 'المخزون', 'Stock', [...READR, 'procurement', 'storekeeper', 'site_engineer']], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
+  ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', [...READR, 'procurement']], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['cheques', 'الشيكات المؤجلة', 'Post-dated cheques', READR], ['spend', 'اعتماد المشتريات والمدفوعات', 'Spend approvals', ['admin', 'accountant', 'manager', 'procurement', 'qs']], ['cashflow', 'توقع التدفق النقدي', 'Cash-flow forecast', READR], ['guarantees', 'الضمانات البنكية', 'Bank guarantees', [...READR, 'qs']], ['parties', 'العملاء والموردون', 'Clients & suppliers', [...READR, 'qs', 'procurement']],
+  ['stock', 'المخزون', 'Stock', [...READR, 'procurement', 'storekeeper', 'site_engineer']], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['equipment', 'تشغيل وصيانة المعدات', 'Equipment log', [...READR, 'qs', 'site_engineer', 'foreman', 'storekeeper']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
   ['#', 'المحاسبة', 'Accounting'], ['financials', 'القوائم المالية', 'Financial statements', FINR], ['ledger', 'دفتر الأستاذ', 'General ledger', FINR], ['journal', 'قيود اليومية', 'Journal entries', FINR], ['coa', 'دليل الحسابات', 'Chart of accounts', FINR], ['bank', 'مطابقة البنك', 'Bank reconciliation', FINR], ['zoho', 'الربط مع Zoho Books', 'Zoho Books link', FINR],
   ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['approvals', 'الاعتمادات', 'Approvals', STAFFR.filter(r => r !== 'viewer')], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager', ...SITER]],
   ['leave', 'الإجازات', 'Leave', HRR], ['hrrequests', 'طلبات الموظفين', 'Employee requests', HRR], ['letters', 'الخطابات الرسمية', 'Official letters', HRR], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS', EMPR],
@@ -115,7 +116,7 @@ function shell() {
 const go = r => { location.hash = r; };
 window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };
 // user guide (public/guide, built from docs/USER-GUIDE-*.md by tools/build-guide.js): the section that explains each page
-const GUIDE = { dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
+const GUIDE = { cheques: 35, cashflow: 36, guarantees: 37, spend: 38, equipment: 41, schedule: 42, dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
   employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31 };
 const guideUrl = p => `guide/index.html?lang=${lang}${GUIDE[p] ? '#s' + GUIDE[p] : ''}`;
 const PAGES = {};
@@ -326,7 +327,7 @@ async function siteProjectDetail(id) {
 }
 async function projectDetail(id) {
   if (!seesMoney()) return siteProjectDetail(id);
-  const [rows, inv, bills, boq, vars] = await Promise.all([api('GET', 'project-summary'), api('GET', 'invoices'), api('GET', 'bills'), api('GET', 'boq_items?project_id=' + id), api('GET', 'variations?project_id=' + id)]);
+  const [rows, inv, bills, boq, vars] = await Promise.all([api('GET', 'project-summary'), api('GET', 'invoices'), api('GET', 'bills').catch(() => []), api('GET', 'boq_items?project_id=' + id), api('GET', 'variations?project_id=' + id)]);
   const p = rows.find(r => r.id === id); if (!p) return go('projects');
   const mine = inv.filter(i => i.project_id === id), bl = bills.filter(b => b.project_id === id);
   const kpi = (l, v, c = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${c}">${money(v)}</div></div>`;
@@ -599,7 +600,7 @@ PAGES.employees = async () => {
       { k: 'probation_end', ar: 'نهاية فترة التجربة (حتى ٦ أشهر)', en: 'Probation ends (max 6 months)', type: 'date' },
       { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }],
     cols: [{ ar: 'الاسم', en: 'Name', k: 'name' }, { ar: 'المهنة', en: 'Role', k: 'designation' }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) },
-      { ar: 'تحميل التكلفة', en: 'Cost charged to', f: r => { const p = projects.find(x => x.id === r.project_id); return p ? esc(p.name) : `<span class="muted">${tr('عمومي', 'General')}</span>`; } }, { ar: 'الإجمالي الشهري', en: 'Monthly total', n: 1, f: r => money(r.basic + r.housing + r.other_allowance) }, { ar: 'نهاية الخدمة (تقديري)', en: 'Gratuity (est.)', n: 1, f: r => money(grat[r.id]) },
+      { ar: 'تحميل التكلفة', en: 'Cost charged to', f: r => { const p = projects.find(x => x.id === r.project_id); return p ? esc(p.name) : `<span class="muted">${tr('عمومي', 'General')}</span>`; } }, { ar: 'الإجمالي الشهري', en: 'Monthly total', n: 1, f: r => money(r.basic + r.housing + (+r.transport || 0) + r.other_allowance) }, { ar: 'نهاية الخدمة (تقديري)', en: 'Gratuity (est.)', n: 1, f: r => money(grat[r.id]) },
       { ar: 'IBAN', en: 'IBAN', f: r => r.iban ? esc(r.iban) : `<span class="neg">${tr('ناقص', 'missing')}</span>` }] });
 };
 
@@ -610,7 +611,7 @@ PAGES.payroll = async () => {
   const final = rows.length && rows.every(r => r.status === 'final'), paid = final && rows.every(r => r.paid_date);
   const num = (r, k) => final ? money(r[k]) : `<input type="number" step="any" style="width:80px" data-id="${r.id}" data-k="${k}" value="${r[k]}">`;
   main(`<div class="bar"><h1>${tr('الرواتب ونظام حماية الأجور (WPS)', 'Payroll & WPS')}</h1><span class="sp"></span>${xl('payroll', '?month=' + month)}<input type="month" id="m" value="${month}" style="width:auto">
-    ${final ? '' : `<button class="btn sec" id="gen">${tr('إنشاء كشف الشهر', 'Generate month')}</button>`}</div>
+    ${final ? '' : `<button class="btn sec" id="gen">${tr('إنشاء كشف الشهر', 'Generate month')}</button>${rows.some(r => r.status !== 'final') ? `<button class="btn sec" id="refr" title="${tr('إعادة قراءة الحضور والإضافي والإجازات والسلف في المسودة (المكافآت والخصومات اليدوية تبقى)', 'Re-read attendance, overtime, leave and advances into the draft (bonus and manual deductions are kept)')}">${tr('تحديث من الحضور', 'Refresh from attendance')}</button>` : ''}`}</div>
     <p class="muted">${tr('الراتب اليومي = الراتب الإجمالي ÷ ٣٠. الأوفرتايم: أجر الساعة (الأساسي ÷ ٣٠ ÷ ٨) + ٢٥٪ نهاراً، +٥٠٪ ليلاً (١٠م–٤ص) أو في الراحة/الإجازات الرسمية. يجب دفع الأجور عبر نظام حماية الأجور في موعدها؛ التأخير أكثر من ١٥ يوماً يُعرّض المنشأة لإيقاف التصاريح والغرامات.', 'Daily wage = total wage ÷ 30. Overtime: hourly rate (basic ÷ 30 ÷ 8) + 25% by day, +50% at night (10pm–4am) or on rest days/public holidays. Wages must be paid through WPS on time; delays beyond 15 days risk permit freezes and fines.')}</p>
     ${issues.length ? `<div class="card"><h2 class="neg">${tr('بيانات ناقصة / تنبيهات', 'Missing data / warnings')}</h2>${issues.map(i => `<div style="color:${i.warn ? 'var(--warn)' : 'var(--bad)'}">• <b>${esc(i.who)}</b>: ${esc(i.msg)}</div>`).join('')}</div>` : ''}
     <div class="tw"><table><thead><tr><th>${tr('الموظف', 'Employee')}</th><th class="n">${tr('أيام العمل', 'Days')}</th><th class="n">${tr('أيام إجازة', 'Leave days')}</th><th class="n">${tr('ساعات إضافية عادية', 'OT hrs (+25%)')}</th><th class="n">${tr('ساعات ليلية/راحة', 'OT hrs (+50%)')}</th><th class="n">${tr('مكافآت', 'Bonus')}</th><th class="n">${tr('خصومات', 'Deductions')}</th><th class="n">${tr('الثابت', 'Fixed')}</th><th class="n">${tr('الصافي', 'Net')}</th></tr></thead><tbody>
@@ -622,6 +623,7 @@ PAGES.payroll = async () => {
     <p class="muted">${tr('ملف SIF يُرفع عبر بوابة البنك أو شركة الصرافة المعتمدة لدى وزارة الموارد البشرية والتوطين. تختلف بعض تفاصيل الصيغة واسم الملف من بنك لآخر — اعرضه على البنك للتأكد قبل أول استخدام.', 'Upload the SIF file through your MOHRE-approved bank or exchange house. Small format/file-name details vary by bank — have your bank validate the first file.')}</p>`);
   $('#m').onchange = e => { sessionStorage.pm = e.target.value; render(); };
   if ($('#gen')) $('#gen').onclick = guard(async () => { const r = await api('POST', 'payroll/generate', { month }); toast(`${r.created} ${tr('سجل جديد', 'new rows')}`); render(); });
+  if ($('#refr')) $('#refr').onclick = guard(async () => { const r = await api('POST', 'payroll/refresh', { month }); toast(`${r.updated} ${tr('سجل محدَّث', 'rows updated')}`); render(); });
   document.querySelectorAll('input[data-id]').forEach(i => i.onchange = guard(async () => { await api('PUT', 'payroll/' + i.dataset.id, { [i.dataset.k]: i.value }); render(); }));
   if ($('#fin')) $('#fin').onclick = guard(async () => { if (confirm(tr('بعد الاعتماد لا يمكن تعديل الكشف. متابعة؟', 'Payroll cannot be edited after finalizing. Continue?'))) { await api('POST', 'payroll/finalize', { month }); render(); } });
   if ($('#delpay')) $('#delpay').onclick = guard(async () => { if (confirm(tr(`حذف كشف ${month} غير المعتمد؟ لا يمكن التراجع.`, `Delete the unfinalized ${month} payroll? This cannot be undone.`))) { const r = await api('DELETE', `payroll?month=${month}`); toast(`${r.deleted} ${tr('سجل محذوف', 'rows deleted')}`); render(); } });
@@ -656,6 +658,20 @@ const ALERT = {
   doc_passport: a => `${tr('جواز سفر', 'Passport')} — ${a.who}: ${a.date}`, doc_card: a => `${tr('بطاقة عمل', 'Labour card')} — ${a.who}: ${a.date}`,
   wps_late: a => `${tr('رواتب شهر', 'Salaries for')} ${a.month} ${tr('لم تُدفع بعد ١٥ يوماً من نهاية الشهر — مخالفة محتملة لنظام حماية الأجور', 'unpaid more than 15 days after month-end — possible WPS violation')}`,
   bounced: a => `${a.count} ${tr('شيك مرتجع — تابع التحصيل', 'bounced cheque(s) — follow up')}`,
+  pdc_overdue_in: a => `${a.count} ${tr('شيك وارد فات تاريخه ولم يُحصَّل', 'received cheque(s) past their date, not cleared')} — ${money(a.amount)}`,
+  pdc_overdue_out: a => `${a.count} ${tr('شيك صادر فات تاريخه — تأكد من الرصيد وحدّث حالته', 'issued cheque(s) past their date — check the balance and update the status')} — ${money(a.amount)}`,
+  pdc_soon_in: a => `${a.count} ${tr('شيك وارد يستحق خلال ٧ أيام', 'cheque(s) to collect within 7 days')} — ${money(a.amount)}`,
+  pdc_soon_out: a => `${a.count} ${tr('شيك صادر يستحق خلال ٧ أيام — جهّز الرصيد', 'cheque(s) to pay within 7 days — fund the account')} — ${money(a.amount)}`,
+  backup_stale: a => a.days == null ? tr('لا توجد نسخة احتياطية — تحقق من الإعدادات', 'No backup exists — check Settings') : `${tr('آخر نسخة احتياطية منذ', 'Last backup was')} ${a.days} ${tr('يوم — تحقق من جهاز الخادم', 'days ago — check the server')}`,
+  guarantee_expired: a => `${tr('ضمان بنكي منتهٍ وما زال سارياً في السجل — اطلب الإفراج', 'Bank guarantee past its expiry and still active — get it released')}: ${a.who} (${a.date})`,
+  guarantee_soon: a => `${tr('ضمان بنكي ينتهي خلال ٣٠ يوماً — جدّده أو اطلب الإفراج', 'Bank guarantee expires within 30 days — extend it or get it released')}: ${a.who} (${a.date})`,
+  over_budget: a => `${tr('مشروع متوقع أن يتجاوز ميزانيته', 'Project forecast to exceed its budget')}: ${a.who} — ${money(a.amount)}`,
+  cash_short: a => `${tr('عجز نقدي متوقع في', 'Cash shortfall expected in')} ${a.month}: ${money(a.amount)} — ${tr('راجع توقع التدفق النقدي', 'see the cash-flow forecast')}`,
+  service_overdue: a => `${tr('صيانة معدة متأخرة', 'Equipment service overdue')}: ${a.who}`,
+  service_soon: a => `${tr('صيانة معدة قريبة', 'Equipment service due soon')}: ${a.who}${a.date ? ' (' + a.date + ')' : ''}`,
+  schedule_late: a => `${tr('أنشطة تجاوزت تاريخ انتهائها في الجدول الزمني', 'Programme activities past their finish date')}: ${a.who} (${a.count})`,
+  spend_pending: a => `${a.count} ${tr('طلب اعتماد صرف بانتظار قرارك', 'spend approval request(s) waiting')}`,
+  backup_copy: a => `${tr('تعذّر نسخ النسخة الاحتياطية إلى المجلد الثاني', 'The backup could not be copied to the second folder')}: ${a.who}`,
   customer_trn: a => `${tr('عملاء بدون رقم ضريبي', 'Clients missing TRN')}: ${a.who}`,
 };
 const alertList = al => al.map(a => `<div style="color:var(--${a.level === 'bad' ? 'bad' : 'warn'})">${a.level === 'bad' ? '⛔' : '⚠'} ${esc((ALERT[a.key] || (() => a.key))(a))}</div>`).join('');
@@ -712,12 +728,15 @@ PAGES.settings = async () => {
     ${s.smtp_pass_set ? `<p class="muted">${tr('كلمة المرور محفوظة — اتركها فارغة للإبقاء عليها.', 'Password saved — leave blank to keep it.')}</p>` : ''}</div>
     <button class="btn" id="saveE">${tr('حفظ', 'Save')}</button> <input id="testTo" placeholder="${tr('بريد لإرسال رسالة تجريبية', 'Email for a test message')}" style="width:260px;margin-inline-start:10px"> <button class="btn sec" id="test">${tr('إرسال تجربة', 'Send test')}</button></div>`}
   <div class="card"><div class="bar"><h2 style="margin:0">${tr('المستخدمون والصلاحيات', 'Users & roles')}</h2><span class="sp"></span><button class="btn sm" id="addU">+ ${tr('مستخدم', 'User')}</button></div>
-    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}${u.employee_name ? ` <span class="muted">(${esc(u.employee_name)})</span>` : ''}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${['site_engineer', 'foreman'].includes(u.role) ? `<button class="btn sec sm" data-uproj="${u.id}">${tr('مشاريعه', 'Projects')} (${u.projects.length})</button> ` : ''}${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
+    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}${u.employee_name ? ` <span class="muted">(${esc(u.employee_name)})</span>` : ''}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${u.two_step ? `<button class="btn sec sm" data-u2fa="${u.id}" title="${tr('المستخدم فقد هاتفه: أوقف التحقق بخطوتين عن حسابه', 'The user lost the phone: switch two-step sign-in off for this account')}">🔐 ${tr('إيقاف التحقق بخطوتين', 'Reset two-step')}</button> ` : ''}${['site_engineer', 'foreman'].includes(u.role) ? `<button class="btn sec sm" data-uproj="${u.id}">${tr('مشاريعه', 'Projects')} (${u.projects.length})</button> ` : ''}${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
     <p class="muted">${tr('مدير النظام: كل شيء • محاسب: المالية والمحاسبة دون المستخدمين والإعدادات • مدير مشاريع: المشاريع والمشتريات والحضور دون الرواتب والضرائب • موارد بشرية: الموظفون والإجازات والطلبات والرواتب والخطابات دون الحسابات • عرض فقط: قراءة فقط • موظف: بوابته الخاصة فقط.', 'Admin: everything • Accountant: finance & accounting, no users/settings • Project manager: projects, purchasing, attendance — no payroll or tax • HR: employees, leave, requests, payroll, letters — no finance • Viewer: read-only • Employee: own portal only.')}</p></div>` : ''}
     ${ME.role !== 'employee' ? `<div class="card" id="pf"><h2>${tr('ملفي الشخصي (يظهر في توقيع الإيميل)', 'My profile (shown in my e-mail signature)')}</h2><div class="f2">${field({ k: 'display_name', ar: 'الاسم الكامل', en: 'Full name' }, prof.display_name)}${field({ k: 'job_title', ar: 'المسمى الوظيفي', en: 'Job title' }, prof.job_title)}${field({ k: 'mobile', ar: 'الجوال', en: 'Mobile' }, prof.mobile)}</div><button class="btn sec" id="savepf">${tr('حفظ', 'Save')}</button></div>` : ''}
-    <div class="card"><h2>${tr('تغيير كلمة المرور', 'Change password')}</h2><div class="f"><input type="password" id="np" minlength="6" placeholder="${tr('كلمة مرور جديدة', 'New password')}"></div><button class="btn sec" id="cp">${tr('تغيير', 'Change')}</button></div>
-    ${admin ? `<div class="card"><h2>${tr('نسخة احتياطية', 'Backup')}</h2><p class="muted">${tr('حمّل نسخة من قاعدة البيانات (تشمل المستندات المرفقة والشعار) واحتفظ بها بشكل دوري. السجلات المالية يجب حفظها ٥–٧ سنوات، وتحتوي النسخة على كلمة مرور البريد فاحفظها في مكان آمن.', 'Download a copy of the database (it includes attached documents and your logo) and keep it safe regularly. Financial records must be kept 5–7 years; the copy contains the SMTP password — store it securely.')}</p><a class="btn sec" href="/api/backup" style="text-decoration:none;display:inline-block">${tr('تحميل النسخة الاحتياطية', 'Download backup')}</a></div>` : ''}`);
-  $('#cp').onclick = guard(async () => { await api('POST', 'password', { password: $('#np').value }); $('#np').value = ''; toast(tr('تم التغيير', 'Password changed')); });
+    <div class="card"><h2>${tr('تغيير كلمة المرور', 'Change password')}</h2><div class="f"><input type="password" id="op" autocomplete="current-password" placeholder="${tr('كلمة المرور الحالية', 'Current password')}"></div><div class="f"><input type="password" id="np" minlength="6" autocomplete="new-password" placeholder="${tr('كلمة مرور جديدة', 'New password')}"></div><button class="btn sec" id="cp">${tr('تغيير', 'Change')}</button></div><div id="tfacard"></div>
+    ${admin ? `<div class="card"><h2>${tr('نسخة احتياطية', 'Backup')}</h2><p class="muted">${tr('حمّل نسخة من قاعدة البيانات (تشمل المستندات المرفقة والشعار) واحتفظ بها بشكل دوري. السجلات المالية يجب حفظها ٥–٧ سنوات، وتحتوي النسخة على كلمة مرور البريد فاحفظها في مكان آمن.', 'Download a copy of the database (it includes attached documents and your logo) and keep it safe regularly. Financial records must be kept 5–7 years; the copy contains the SMTP password — store it securely.')}</p><a class="btn sec" href="/api/backup" style="text-decoration:none;display:inline-block">${tr('تحميل النسخة الاحتياطية', 'Download backup')}</a></div><div id="spendcard"></div><div id="ctlcards"></div>` : ''}`);
+  if ($('#ctlcards') && window.controlsCards) controlsCards($('#ctlcards')).catch(() => {});
+  if ($('#spendcard') && window.spendCard) spendCard($('#spendcard'));
+  if ($('#tfacard') && window.twoStepCard) twoStepCard($('#tfacard')).catch(() => {});
+  $('#cp').onclick = guard(async () => { await api('POST', 'password', { current: $('#op').value, password: $('#np').value }); $('#np').value = ''; $('#op').value = ''; toast(tr('تم التغيير', 'Password changed')); });
   if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
   $('#pack').onclick = guard(async () => { if (!confirm(tr('سيُركَّب الشعار والختم وتُحدَّث بيانات الشركة القانونية (الاسم، الرخصة، العنوان، ص.ب). متابعة؟', 'This installs the logos and stamp and sets the legal company details (name, licence, address, P.O. Box). Continue?'))) return; await api('POST', 'brand/pack'); S = { ...S, ...(await api('GET', 'settings')) }; toast(tr('تم تركيب الهوية', 'Brand pack installed')); boot(); });
@@ -743,6 +762,7 @@ PAGES.settings = async () => {
     $('#save', m).onclick = guard(async () => { await api('POST', 'users', { username: val(m, 'username'), password: val(m, 'password'), role: val(m, 'role'), employee_id: val(m, 'employee_id') }); closeModal(); render(); });
   });
   document.querySelectorAll('[data-pw]').forEach(b => b.onclick = guard(async () => { const p = prompt(tr('كلمة المرور الجديدة:', 'New password:')); if (p) { await api('PUT', 'users/' + b.dataset.pw, { password: p }); toast(tr('تم', 'Done')); } }));
+  document.querySelectorAll('[data-u2fa]').forEach(b => b.onclick = guard(async () => { if (!confirm(tr('إيقاف التحقق بخطوتين عن هذا الحساب؟', 'Switch two-step sign-in off for this account?'))) return; await api('POST', '2fa/reset', { user_id: +b.dataset.u2fa }); toast(tr('تم', 'Done')); render(); }));
   document.querySelectorAll('[data-urole]').forEach(b => b.onclick = guard(async () => { const r = prompt(tr('الدور:\n', 'Role:\n') + Object.keys(ROLE).join(' / ')); if (r) { await api('PUT', 'users/' + b.dataset.urole, { role: r }); render(); } }));
   document.querySelectorAll('[data-uproj]').forEach(b => b.onclick = guard(async () => {
     const u = users.find(x => x.id === +b.dataset.uproj), projects = await api('GET', 'projects');
