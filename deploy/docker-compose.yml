@@ -7,10 +7,17 @@ services:
       TRUST_PROXY: "1"
       SECURE_COOKIES: "1"
       SETUP_TOKEN: ${SETUP_TOKEN}
+      GITHUB_REPORT_TOKEN: ${GITHUB_REPORT_TOKEN:-}     # optional: daily-check failures → GitHub issue for the maintenance agent (OPS.md)
+      GITHUB_REPORT_REPO: ${GITHUB_REPORT_REPO:-}
     volumes:
       - erp-data:/data
     expose:
       - "3000"
+    healthcheck:                       # Docker restarts nothing by itself on "unhealthy", but `docker ps` shows it and monitors can alert on it
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
   caddy:
     image: caddy:2
     restart: always

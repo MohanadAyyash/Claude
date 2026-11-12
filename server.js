@@ -395,13 +395,14 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean).slice(1); // after /api
   const [a, b, c] = parts, method = req.method;
 
+  if (a === 'health' && method === 'GET') { const h = ctx.health(); return send(res, h.ok ? 200 : 503, h, { 'Cache-Control': 'no-store' }); }   // uptime monitors (no login, no data)
   if (a === 'status') return send(res, 200, { setup: db.prepare('SELECT COUNT(*) n FROM users').get().n === 0, token_required: !!process.env.SETUP_TOKEN, user: sessionUser(req) });
   if (a === 'setup' && method === 'POST') {
     if (db.prepare('SELECT COUNT(*) n FROM users').get().n) return send(res, 403, { error: 'already set up' });
@@ -915,10 +916,11 @@ const server = http.createServer(async (req, res) => {
     if (!file.startsWith(PUB) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, 'Not found');
     serveStatic(req, res, file);
   } catch (e) {
-    if (!e.status) console.error(e); send(res, e.upstream ? 502 : e.status || 500, { error: String(e.message || e) });
+    if (!e.status) { console.error(e); ctx.logError && ctx.logError(e, req); }
+    send(res, e.upstream ? 502 : e.status || 500, { error: String(e.message || e) });
   }
 });
 // one failed background callback (e.g. a locked temp file while a PDF is cleaned up on Windows) must not take the office server down
 if (require.main === module) for (const ev of ['uncaughtException', 'unhandledRejection']) process.on(ev, e => console.error(new Date().toISOString(), ev, e));
 if (require.main === module) server.listen(PORT, process.env.HOST || '0.0.0.0', () => { console.log(`Contractor ERP running → http://localhost:${PORT}`); if (ctx.startBackups) ctx.startBackups(); });
-module.exports = { server };
+module.exports = { server, ctx };
