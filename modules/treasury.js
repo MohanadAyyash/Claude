@@ -57,11 +57,20 @@ module.exports = ctx => {
       const done = new Set(db.prepare("SELECT DISTINCT month FROM payroll WHERE status='final'").all().map(r => r.month));
       for (let m = ym(t); next(m) <= last; m = next(m)) if (!done.has(m)) put('out', 'payroll_est', `${next(m)}-01`, lastPay.net, `Salaries ${m} (estimate from ${lastPay.month})`, { estimate: true });
     }
+    // VAT: the last quarter if its payment date (28 days after the quarter) has not passed, and the current quarter so far as an estimate
+    const vq = Math.min(3, Math.max(1, Math.round(+S.vat_quarter_start) || 1));
+    if (S.vat_registered !== '0' && ctx.vatReport) {
+      const y = +t.slice(0, 4), mth = +t.slice(5, 7), back = ((mth - vq) % 3 + 3) % 3, pad = n => String(n).padStart(2, '0');
+      const period = k => { let a = mth - back + 3 * k, ya = y; while (a < 1) { a += 12; ya--; } while (a > 12) { a -= 12; ya++; } let z = a + 2, yz = ya; if (z > 12) { z -= 12; yz++; } const to = `${yz}-${pad(z)}-${pad(C.daysInMonth(`${yz}-${pad(z)}`))}`; return { from: `${ya}-${pad(a)}-01`, to, due: addDays(to, 28) }; };
+      const prev = period(-1), cur = period(0);
+      if (prev.due >= t) put('out', 'vat', prev.due, ctx.vatReport(prev.from, prev.to).net_vat, `VAT return ${prev.from.slice(0, 7)} → ${prev.to.slice(0, 7)}`);
+      put('out', 'vat_est', cur.due, ctx.vatReport(cur.from, t).net_vat, `VAT return ${cur.from.slice(0, 7)} → ${cur.to.slice(0, 7)} (so far)`, { estimate: true });
+    }
     let bal = opening, low = { balance: opening, month: null };
     for (const b of buckets) { b.in = round(b.in); b.out = round(b.out); b.net = round(b.in - b.out); bal = round(bal + b.net); b.closing = bal; if (bal < low.balance) low = { balance: bal, month: b.month }; }
     items.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.dir === y.dir ? 0 : x.dir === 'in' ? -1 : 1));
     const sum = f => round(items.filter(f).reduce((s, i) => s + i.amount, 0));
-    return { as_of: t, months, opening, buckets, items, lowest: low, ap_terms_days: apDays,
+    return { as_of: t, months, opening, buckets, items, lowest: low, ap_terms_days: apDays, vat_quarter_start: vq, vat_registered: S.vat_registered !== '0',
       totals: { in: sum(i => i.dir === 'in'), out: sum(i => i.dir === 'out'), late_in: sum(i => i.dir === 'in' && i.late), late_out: sum(i => i.dir === 'out' && i.late) } };
   }
   ctx.cashForecast = forecast;

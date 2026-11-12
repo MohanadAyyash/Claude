@@ -1,0 +1,22 @@
+# Runs the test suite on every pull request (the "tests" check required before merging into the main branch).
+name: tests
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+        env:
+          SKIP_PDF: '1'          # no headless-browser PDF rendering in CI
+          TZ: Asia/Dubai
+      - run: npm run build:standalone
