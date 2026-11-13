@@ -1,6 +1,6 @@
 // Aged receivables / payables (as of any date, buckets by days past due, retention shown apart) and the statement of account
 // per customer or supplier (opening balance, running balance, closing) — printable on the letterhead, as PDF, or e-mailed.
-const { esc, money } = require('../lib/render');
+const { esc, money, bi } = require('../lib/render');
 
 module.exports = ctx => {
   const { send, bad, audit, readBody, getSettings, today, round, enrich, countable, sendMail, validEmail, toText } = ctx;
@@ -74,17 +74,17 @@ module.exports = ctx => {
   }
 
   ctx.renderers.statement = (id, me, q) => {
-    const to = q && q.get && dateOk(q.get('to')) ? q.get('to') : today(), from = q && q.get && dateOk(q.get('from')) ? q.get('from') : null, s = statement(id, from, to);
-    const head = `<h1 style="font-size:16pt;margin:0 0 2mm">Statement of account / كشف حساب</h1>
+    const to = q && q.get && dateOk(q.get('to')) ? q.get('to') : today(), from = q && q.get && dateOk(q.get('from')) ? q.get('from') : null, s = statement(id, from, to), S = ctx.getSettings();
+    const head = `<h1 style="font-size:16pt;margin:0 0 2mm">${bi(S, 'Statement of account', 'كشف حساب')}</h1>
       <p><b>${esc(s.party.name)}</b>${s.party.trn ? ` · TRN ${esc(s.party.trn)}` : ''}${s.party.address ? `<br>${esc(s.party.address)}` : ''}<br>${from ? `${esc(from)} → ` : 'Up to '}${esc(to)} · AED</p>`;
     const rows = s.lines.map(l => `<tr><td>${esc(l.date)}</td><td>${esc(l.ref)}</td><td>${esc(l.description)}</td><td class="n">${l.debit ? money(l.debit) : ''}</td><td class="n">${l.credit ? money(l.credit) : ''}</td><td class="n">${money(l.balance)}</td></tr>`).join('');
-    const ag = s.aging ? `<h2 style="font-size:11pt;margin-top:6mm">Ageing / أعمار الأرصدة (${esc(to)})</h2><table class="items"><thead><tr><th>Not due</th><th>1–30</th><th>31–60</th><th>61–90</th><th>90+</th>${s.supplier ? '' : '<th>Retention (not yet due)</th>'}</tr></thead>
+    const ag = s.aging ? `<h2 style="font-size:11pt;margin-top:6mm">${bi(S, 'Ageing', 'أعمار الأرصدة')} (${esc(to)})</h2><table class="items"><thead><tr><th>Not due</th><th>1–30</th><th>31–60</th><th>61–90</th><th>90+</th>${s.supplier ? '' : '<th>Retention (not yet due)</th>'}</tr></thead>
       <tbody><tr>${BUCKETS.map(k => `<td class="n">${money(s.aging[k])}</td>`).join('')}${s.supplier ? '' : `<td class="n">${money(s.aging.retention)}</td>`}</tr></tbody></table>` : '';
     const body = `${head}<table class="items"><thead><tr><th>Date</th><th>Ref</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>
-      ${from ? `<tr><td>${esc(from)}</td><td></td><td>Opening balance / رصيد افتتاحي</td><td></td><td></td><td class="n">${money(s.opening)}</td></tr>` : ''}${rows}
-      <tr><td colspan="5"><b>${s.supplier ? 'Balance we owe / الرصيد المستحق لكم' : 'Balance due / الرصيد المستحق'}</b></td><td class="n"><b>${money(s.closing)}</b></td></tr></tbody></table>${ag}
-      <p style="font-size:8pt;color:#8A8578;margin-top:4mm">Please advise us within 15 days of any difference. / يرجى إبلاغنا خلال ١٥ يوماً بأي فروقات.</p>`;
-    return { title: `Statement — ${s.party.name}`, filename: `statement-${s.party.name.replace(/\s+/g, '-')}-${to}`, body, date: to, label: 'Accounts / الحسابات', stamp: true };
+      ${from ? `<tr><td>${esc(from)}</td><td></td><td>${bi(S, 'Opening balance', 'رصيد افتتاحي')}</td><td></td><td></td><td class="n">${money(s.opening)}</td></tr>` : ''}${rows}
+      <tr><td colspan="5"><b>${s.supplier ? bi(S, 'Balance we owe', 'الرصيد المستحق لكم') : bi(S, 'Balance due', 'الرصيد المستحق')}</b></td><td class="n"><b>${money(s.closing)}</b></td></tr></tbody></table>${ag}
+      <p style="font-size:8pt;color:#8A8578;margin-top:4mm">${bi(S, 'Please advise us within 15 days of any difference.', 'يرجى إبلاغنا خلال ١٥ يوماً بأي فروقات.')}</p>`;
+    return { title: `Statement — ${s.party.name}`, filename: `statement-${s.party.name.replace(/\s+/g, '-')}-${to}`, body, date: to, label: bi(S, 'Accounts', 'الحسابات'), stamp: true };
   };
 
   return {

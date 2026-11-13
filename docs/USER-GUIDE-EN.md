@@ -144,6 +144,7 @@ Menu: **Settings** → first card.
    - **MOHRE establishment ID (13 digits)**, **Company bank**, **Company bank routing code (9 digits)**, **Company IBAN** — all needed for the WPS salary file
    - **Document footer text**
 2. **VAT registered?** — choose **No** if the company is not registered yet: invoices then default to 0% VAT and are titled "Invoice" instead of "Tax invoice".
+   - **Arabic labels on printed documents** — default **No — English only**: invoices, quotations and statements print in English only. Choose **Yes** to print the titles in both languages (e.g. `Quotation / عرض سعر`) and the Arabic title on the quotation cover. Official letters stay on the bilingual letterhead.
 3. **Bank details (shown on invoices)** — the text printed on every invoice for clients to pay you.
 4. **Default quotation terms** — pre-filled into every new quotation.
 5. Press **Save**.
@@ -419,11 +420,18 @@ Menu: **Quotations**.
 7. Terms come from Settings and can be edited for this quotation.
 8. Save stores the quotation in the list.
 
+**Cover fields (optional):** attention, project location, plot no., NOC reference, scope of work, contract basis. Whatever is left empty is not printed. **Payment terms on the cover**: one stage per line, written as `25% - Upon signing of the agreement`.
+
+**Bill of quantities:**
+- **Section** — type the section name on each line (e.g. `Phase 1 — Pre-construction`). Lines with the same name are grouped in the print, numbered A1, A2, B1… with a sub-total per section. With no section on any line they print numbered 1, 2, 3 without sections.
+- **Prov.** — tick a line that is payable only if executed. It prints in its own table (P1, P2…) and is **not part of the quotation total**, nor of the contract value when the quotation is converted to a project.
+- **Terms** and **Notes** print under the table as a numbered NOTES list, one note per line.
+
 <!--/img-->
 
 ### 6.2 Send it to the client
 Open the quotation, then:
-- **Print** or **PDF** — prints with the cover page and letterhead. (Add `?cover=0` to the print link to print without the cover.)
+- **Print** or **PDF** — prints with a cover sheet on the letterhead — reference and date, client, project summary, total excluding and including VAT, and the signature and stamp with the name and title of the person issuing it (from **Settings → My profile**) — followed by the items page. (Add `?cover=0` to the print link to print without the cover.)
 - **Email** — type the client's email; the PDF is attached.
 - **🔗 Client acceptance link** — gives a link the client opens without signing in. They review the quotation and either **accept** with their name and signature or **decline** with a comment. You are notified at once and the result shows on the quotation. Use **Copy**, **Email with the quotation** or **Preview**.
 - Change **Status** to **Sent**, then **Accepted** or **Rejected** if you follow up by hand.
@@ -1710,7 +1718,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 ---
 
-**Letterhead on every page:** printed documents repeat the letterhead at the top of every page and keep room for the footer, so text never runs under them. Tax invoices, credit notes and subcontractor certificates show the **legal name** and TRN at the top; proformas show no TRN.
+**Letterhead on every page:** printed documents repeat the letterhead at the top of every page and keep room for the footer, so text never runs under them, and every page is numbered at the bottom (`Page 1 of 2`). Tax invoices, credit notes and subcontractor certificates show the TRN at the top and the **legal name** in the footer of every page; proformas and quotations show no TRN.
 
 ---
 

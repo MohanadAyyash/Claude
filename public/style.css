@@ -63,7 +63,7 @@ body[data-role=viewer] #prt{display:inline-block}
 .pill{display:inline-block;padding:1px 8px;border-radius:10px;background:#eef2f6;font-size:11px;margin-inline-end:4px}
 
 .login .logo{width:210px;display:block;margin:0 auto 18px}
-.rules{margin:8px 0}.rules i{display:block;border-top:1px solid #1F3A5F;margin-bottom:3px}.rules i:nth-child(1){width:30%}.rules i:nth-child(2){width:60%}.rules i:nth-child(3){width:100%;margin:0}
+.lhr{border-top:.5pt solid #D6D2C8;margin:8mm 0 3mm}
 .doc.rep{font-family:"Archivo","IBM Plex Sans Arabic",Arial,sans-serif;color:#1F3A5F}.doc.rep .hd{border:0;padding:0;margin-bottom:6px}
 .doc.rep table{border:0}.doc.rep th{background:none;border:0;border-bottom:1.2px solid #1F3A5F;color:#8A8578;font-weight:600}.doc.rep td{border:0;border-bottom:.6px solid #D6D2C8}
 

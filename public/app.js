@@ -142,12 +142,12 @@ function printReport() {
   const el = $('#main').cloneNode(true);
   el.querySelectorAll('input,select,textarea').forEach(i => i.replaceWith(document.createTextNode(i.tagName === 'SELECT' ? (i.selectedOptions[0]?.text || '') : i.value)));
   el.querySelectorAll('.noprint,button,a.btn,.sp').forEach(x => x.remove());
-  const contact = [S.phone, S.email, S.website].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+  const contact = [S.phone, S.email, S.website].filter(Boolean).map(x => `<div>${esc(x)}</div>`).join('');
   $('#print-area').innerHTML = `<div class="doc rep"><div class="hd" style="display:flex;justify-content:space-between;align-items:flex-start"><div><img src="/api/brand/logo" style="width:60mm" alt="${esc(S.company_name || '')}" onerror="this.replaceWith(Object.assign(document.createElement('b'),{textContent:'${esc(S.company_name || '')}'}))"></div>
-    <div style="text-align:end;font:7.5pt 'IBM Plex Mono',monospace;color:#8A8578;line-height:1.7"><div>${contact}</div>${S.trn ? `<div>TRN ${esc(S.trn)}</div>` : ''}</div></div><div class="rules"><i></i><i></i><i></i></div>
+    <div style="text-align:end;font-size:8.5pt;line-height:13pt;white-space:nowrap">${contact}${S.trn ? `<div>TRN ${esc(S.trn)}</div>` : ''}</div></div><div class="lhr"></div>
     <div style="font:8pt 'IBM Plex Mono',monospace;color:#8A8578;margin:2mm 0 4mm;display:flex;justify-content:space-between"><span>${esc(location.hash.slice(1) || '')}</span><span>${tr('طُبع بتاريخ', 'Printed')} ${today()} · ${esc(ME.username)}</span></div>${el.innerHTML}
     <div class="sign"><div></div><div style="border:0;position:relative;min-height:26mm"><img src="/api/brand/stamp" style="height:25mm" onerror="this.remove()"><img src="/api/brand/signature" style="height:17mm;position:absolute;inset-inline-start:18mm;top:5mm" onerror="this.remove()"></div></div>
-    <div style="font:6.5pt 'IBM Plex Mono',monospace;color:#8A8578;border-top:.5pt solid #D6D2C8;padding-top:2mm;margin-top:6mm">${esc(S.company_name || '')}${S.address ? ' · ' + esc(S.address) : ''}${S.po_box ? ' · P.O. Box ' + esc(S.po_box) : ''}${S.license_no ? ' · Lic. ' + esc(S.license_no) : ''}</div></div>`;
+    <div style="font-size:7pt;border-top:.5pt solid #D6D2C8;padding-top:3mm;margin-top:6mm;display:flex;justify-content:space-between;gap:8mm"><div>${esc([S.company_name, S.address, S.po_box && 'P.O. Box ' + S.po_box].filter(Boolean).join(' · '))}</div><div style="white-space:nowrap">${S.license_no ? 'Lic. ' + esc(S.license_no) : ''}</div></div></div>`;
   setTimeout(() => window.print(), 450);                                  // let the logo load first
 }
 
@@ -351,39 +351,44 @@ async function projectDetail(id) {
 }
 
 // ---- documents (quotes & invoices) ------------------------------------------
-function itemsEditor(items) {
-  const row = (i = {}) => `<tr><td><input data-k="description" placeholder="${tr('الوصف', 'Description')}" value="${esc(i.description || '')}"></td><td style="width:70px"><input data-k="unit" placeholder="${tr('الوحدة', 'Unit')}" value="${esc(i.unit || '')}"></td>
+function itemsEditor(items, boq = false) {                              // boq (quotations): a section per line and a 'provisional' tick (listed apart, outside the total)
+  const row = (i = {}) => `<tr>${boq ? `<td style="width:130px"><input data-k="section" list="secs" placeholder="${tr('القسم', 'Section')}" value="${esc(i.section || '')}"></td>` : ''}<td><input data-k="description" placeholder="${tr('الوصف', 'Description')}" value="${esc(i.description || '')}"></td><td style="width:70px"><input data-k="unit" placeholder="${tr('الوحدة', 'Unit')}" value="${esc(i.unit || '')}"></td>
     <td style="width:90px"><input data-k="qty" type="number" step="any" inputmode="decimal" placeholder="${tr('الكمية', 'Qty')}" value="${i.qty ?? 1}"></td><td style="width:110px"><input data-k="rate" type="number" step="any" inputmode="decimal" placeholder="${tr('السعر', 'Rate')}" value="${i.rate ?? 0}"></td>
-    <td style="width:105px"><select data-k="vat">${Object.entries(VATC).map(([k, v]) => `<option value="${k}" ${(i.vat || 'std') === k ? 'selected' : ''}>${tr(...v)}</option>`).join('')}</select></td><td class="n" style="width:110px" data-amt></td><td style="width:30px"><button type="button" class="x">×</button></td></tr>`;
-  return { html: `<div class="tw items docitems"><table><thead><tr><th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('السعر', 'Rate')}</th><th>${tr('الضريبة', 'VAT')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th></th></tr></thead><tbody id="items">${(items.length ? items : [{}]).map(row).join('')}</tbody></table></div>
+    <td style="width:105px"><select data-k="vat">${Object.entries(VATC).map(([k, v]) => `<option value="${k}" ${(i.vat || 'std') === k ? 'selected' : ''}>${tr(...v)}</option>`).join('')}</select></td>${boq ? `<td style="width:60px;text-align:center"><input data-k="provisional" type="checkbox" style="width:auto" title="${tr('بند احتياطي: يُدفع فقط إذا نُفّذ، ولا يدخل في الإجمالي', 'Provisional: payable only if executed, not in the total')}" ${i.provisional ? 'checked' : ''}></td>` : ''}<td class="n" style="width:110px" data-amt></td><td style="width:30px"><button type="button" class="x">×</button></td></tr>`;
+  return { html: `<div class="tw items docitems"><table><thead><tr>${boq ? `<th>${tr('القسم', 'Section')}</th>` : ''}<th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('السعر', 'Rate')}</th><th>${tr('الضريبة', 'VAT')}</th>${boq ? `<th>${tr('احتياطي', 'Prov.')}</th>` : ''}<th class="n">${tr('المبلغ', 'Amount')}</th><th></th></tr></thead><tbody id="items">${(items.length ? items : [{}]).map(row).join('')}</tbody></table></div>${boq ? `<datalist id="secs">${[...new Set(items.map(i => i.section).filter(Boolean))].map(x => `<option value="${esc(x)}">`).join('')}</datalist>` : ''}
     <button type="button" class="btn sec sm" id="addrow" style="margin-top:6px">+ ${tr('بند', 'Line')}</button>`, row };
 }
 function bindDoc(m, rowFn, vatEl, retEl) {
   const calc = () => {
-    let sub = 0; m.querySelectorAll('#items tr').forEach(tr_ => {
-      const a = (+$('[data-k=qty]', tr_).value || 0) * (+$('[data-k=rate]', tr_).value || 0); sub += a; $('[data-amt]', tr_).textContent = money(a);
+    let sub = 0, prov = 0, std = 0; const isProv = tr_ => !!$('[data-k=provisional]', tr_)?.checked;            // provisional lines (quotations): outside the total
+    m.querySelectorAll('#items tr').forEach(tr_ => {
+      const a = (+$('[data-k=qty]', tr_).value || 0) * (+$('[data-k=rate]', tr_).value || 0); $('[data-amt]', tr_).textContent = money(a);
+      if (isProv(tr_)) { prov += a; return; }
+      sub += a; if ($('[data-k=vat]', tr_).value === 'std') std += a;
     });
-    let std = 0; m.querySelectorAll('#items tr').forEach(tr_ => { if ($('[data-k=vat]', tr_).value === 'std') std += (+$('[data-k=qty]', tr_).value || 0) * (+$('[data-k=rate]', tr_).value || 0); });
     const vat = std * (+val(m, 'vat_pct') || 0) / 100, ret = retEl ? sub * (+val(m, 'retention_pct') || 0) / 100 : 0;
     $('#tot', m).innerHTML = `<div><span>${tr('الإجمالي قبل الضريبة', 'Subtotal')}</span><span>${money(sub)}</span></div><div><span>${tr('ضريبة القيمة المضافة', 'VAT')}</span><span>${money(vat)}</span></div>
-      <div class="t"><span>${tr('الإجمالي', 'Total')}</span><span>${money(sub + vat)}</span></div>${retEl ? `<div class="muted"><span>${tr('محتجزات', 'Retention')}</span><span>${money(ret)}</span></div>` : ''}`;
+      <div class="t"><span>${tr('الإجمالي', 'Total')}</span><span>${money(sub + vat)}</span></div>${retEl ? `<div class="muted"><span>${tr('محتجزات', 'Retention')}</span><span>${money(ret)}</span></div>` : ''}${prov ? `<div class="muted"><span>${tr('بنود احتياطية (خارج الإجمالي)', 'Provisional items (not in the total)')}</span><span>${money(prov)}</span></div>` : ''}`;
   };
-  m.addEventListener('input', calc);
+  m.addEventListener('input', calc); m.addEventListener('change', calc);
   m.addEventListener('click', e => { if (e.target.classList.contains('x')) { e.target.closest('tr').remove(); calc(); } });
   $('#addrow', m).onclick = () => { $('#items', m).insertAdjacentHTML('beforeend', rowFn()); calc(); };
   calc();
 }
-const readItems = m => [...m.querySelectorAll('#items tr')].map(r => ({ description: $('[data-k=description]', r).value, unit: $('[data-k=unit]', r).value, qty: +$('[data-k=qty]', r).value || 0, rate: +$('[data-k=rate]', r).value || 0, vat: $('[data-k=vat]', r).value })).filter(i => i.description || i.rate);
+const readItems = m => [...m.querySelectorAll('#items tr')].map(r => ({ description: $('[data-k=description]', r).value, unit: $('[data-k=unit]', r).value, qty: +$('[data-k=qty]', r).value || 0, rate: +$('[data-k=rate]', r).value || 0, vat: $('[data-k=vat]', r).value,
+  ...($('[data-k=section]', r) ? { section: $('[data-k=section]', r).value.trim(), ...($('[data-k=provisional]', r).checked ? { provisional: true } : {}) } : {}) })).filter(i => i.description || i.rate);
 
 async function docModal(kind, row, preset = {}) {
-  const isQ = kind === 'quotes', e = itemsEditor(row?.items || []);
+  const isQ = kind === 'quotes', e = itemsEditor(row?.items || [], isQ);
   const parties = await api('GET', 'parties'), projects = isQ ? [] : await api('GET', 'projects');
   const r = row || { date: today(), vat_pct: S.vat_registered === '0' ? 0 : S.vat_pct || 5, retention_pct: 0, validity_days: 30, status: 'draft', terms: S.terms, ...preset };
   const head = isQ ? [
     { k: 'number', ar: 'رقم العرض', en: 'Quote no.', def: '' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' },
     { k: 'client_id', ar: 'العميل', en: 'Client', type: 'select', options: refOpts(parties.filter(p => p.type === 'client'), p => p.name) },
     { k: 'project_name', ar: 'اسم المشروع', en: 'Project name' }, { k: 'validity_days', ar: 'صلاحية العرض (يوم)', en: 'Validity (days)', type: 'number' },
-    { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: ['draft', 'sent', 'accepted', 'rejected'].map(k => [k, tr(...STATUS[k])]) }, { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' }
+    { k: 'status', ar: 'الحالة', en: 'Status', type: 'select', options: ['draft', 'sent', 'accepted', 'rejected'].map(k => [k, tr(...STATUS[k])]) }, { k: 'vat_pct', ar: 'نسبة الضريبة %', en: 'VAT %', type: 'number' },
+    { k: 'attention', ar: 'عناية (اسم الشخص)', en: 'Attention (person)' }, { k: 'location', ar: 'موقع المشروع', en: 'Project location' }, { k: 'plot_no', ar: 'رقم القطعة', en: 'Plot no.' }, { k: 'noc_ref', ar: 'مرجع شهادة عدم الممانعة (NOC)', en: 'NOC reference' },
+    { k: 'scope', ar: 'نطاق العمل (يظهر في الغلاف)', en: 'Scope of work (on the cover)' }, { k: 'contract_basis', ar: 'أساس العقد (مثل: إعادة قياس)', en: 'Contract basis (e.g. re-measurable)' }
   ] : [
     { k: 'number', ar: 'رقم الفاتورة', en: 'Invoice no.' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' },
     { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`, false) },
@@ -397,7 +402,7 @@ async function docModal(kind, row, preset = {}) {
     ${isQ && r.accepted_at ? `<p class="ok">✔ ${tr('قبله العميل إلكترونياً', 'Accepted online by the client')}: <b>${esc(r.accepted_by)}</b> — ${esc(r.accepted_at)}${/^data:image\/png;base64,/.test(r.signature || '') ? `<br><img src="${r.signature}" alt="" style="height:60px;background:#fff;border:1px solid #ddd">` : ''}</p>` : ''}
     ${isQ && r.rejected_at ? `<p class="err">${tr('رفضه العميل', 'Declined by the client')} — ${esc(r.rejected_at)}${r.client_comment ? `: ${esc(r.client_comment)}` : ''}</p>` : ''}${(r.warnings || []).map(w => `<p class="err" style="color:var(--warn)">⚠ ${W[w] || w}</p>`).join('')}<div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>
     ${e.html}<div class="totals" id="tot"></div>
-    <div class="f2" style="margin-top:10px">${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}${isQ ? field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms) : ''}</div>
+    <div class="f2" style="margin-top:10px">${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}${isQ ? field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms) + field({ k: 'payment_terms', ar: 'شروط الدفع في الغلاف — دفعة في كل سطر، مثل: 25% - Upon signing of the agreement', en: 'Payment terms on the cover — one stage per line, e.g. 25% - Upon signing of the agreement', type: 'textarea' }, r.payment_terms) : ''}</div>
     <div class="acts">${dead ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}
     ${row && !dead ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}${row && !dead && row.ipc ? `<button class="btn sec" id="ipc">${tr('شهادة الدفع (المستخلص)', 'Payment certificate')}</button><button class="btn sec" id="ipcpdf">${tr('المستخلص PDF', 'Certificate PDF')}</button>` : ''}
     ${row && !dead ? `<button class="btn sec" id="mail">${tr('إرسال بالإيميل', 'Email')}</button>` : ''}${row && !isQ && !isCN && !dead && row.balance > 0 && row.status === 'overdue' ? `<button class="btn sec" id="remind">${tr('تذكير بالسداد', 'Payment reminder')}</button>` : ''}
@@ -415,7 +420,7 @@ async function docModal(kind, row, preset = {}) {
   }
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
-    const body = { items: readItems(m) }; head.forEach(f => body[f.k] = val(m, f.k)); body.notes = val(m, 'notes'); if (isQ) body.terms = val(m, 'terms');
+    const body = { items: readItems(m) }; head.forEach(f => body[f.k] = val(m, f.k)); body.notes = val(m, 'notes'); if (isQ) { body.terms = val(m, 'terms'); body.payment_terms = val(m, 'payment_terms'); }
     if (row && row.pc_id) { body.items = row.items; body.vat_pct = row.vat_pct; body.retention_pct = row.retention_pct; body.project_id = row.project_id; }
     if (!isQ && !body.project_id) throw new Error(tr('اختر المشروع', 'Select a project'));
     if (!row) body.number = body.number || undefined;
@@ -713,6 +718,7 @@ PAGES.settings = async () => {
   main(`<h1>${tr('الإعدادات', 'Settings')}</h1>
   ${admin ? `<div class="card" id="sf"><div class="f2">${F.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, s[k])).join('')}
     ${field({ k: 'vat_registered', ar: 'مسجّل في ضريبة القيمة المضافة؟', en: 'VAT registered?', type: 'select', options: [['1', tr('نعم', 'Yes')], ['0', tr('لا', 'No')]] }, s.vat_registered ?? '1')}
+    ${field({ k: 'print_arabic', ar: 'العناوين العربية في المستندات المطبوعة (مثل: Quotation / عرض سعر)', en: 'Arabic labels on printed documents (e.g. Quotation / عرض سعر)', type: 'select', options: [['0', tr('لا — إنجليزي فقط', 'No — English only')], ['1', tr('نعم — إنجليزي وعربي', 'Yes — English and Arabic')]] }, s.print_arabic ?? '0')}
     ${field({ k: 'bank_details', ar: 'بيانات البنك (تظهر في الفاتورة)', en: 'Bank details (shown on invoices)', type: 'textarea', full: 1 }, s.bank_details)}${field({ k: 'terms', ar: 'الشروط الافتراضية لعروض الأسعار', en: 'Default quotation terms', type: 'textarea', full: 1 }, s.terms)}
     ${field({ k: 'po_notes', ar: 'ملاحظات ثابتة على أوامر الشراء (سطر لكل ملاحظة)', en: 'Standard notes on purchase orders (one per line)', type: 'textarea', full: 1 }, s.po_notes ?? poDef.notes)}${field({ k: 'sc_template', ar: 'نص اتفاقية عقد الباطن القياسي ({{ }} خانات تُعبّأ تلقائياً)', en: 'Standard sub-contract agreement wording ({{ }} fields fill in)', type: 'textarea', full: 1 }, s.sc_template ?? scDef.text)}${field({ k: 'po_conditions', ar: 'الشروط العامة لأوامر الشراء (صفحة ثانية — اتركها فارغة لعدم طباعتها)', en: 'General conditions of purchase (second page — leave empty for none)', type: 'textarea', full: 1 }, s.po_conditions ?? poDef.conditions)}</div>
     <button class="btn" id="save">${tr('حفظ', 'Save')}</button></div>
@@ -742,7 +748,7 @@ PAGES.settings = async () => {
   if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
   $('#pack').onclick = guard(async () => { if (!confirm(tr('سيُركَّب الشعار والختم وتُحدَّث بيانات الشركة القانونية (الاسم، الرخصة، العنوان، ص.ب). متابعة؟', 'This installs the logos and stamp and sets the legal company details (name, licence, address, P.O. Box). Continue?'))) return; await api('POST', 'brand/pack'); S = { ...S, ...(await api('GET', 'settings')) }; toast(tr('تم تركيب الهوية', 'Brand pack installed')); boot(); });
-  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
+  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'print_arabic', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
   if ($('#saveE')) $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure', 'mail_method', 'graph_tenant', 'graph_client', 'graph_secret'].forEach(k => b[k] = val($('#ef'), k)); if (!b.graph_secret) delete b.graph_secret; if (!b.smtp_pass) delete b.smtp_pass; await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
   if ($('#ef')) { const mm = $('#ef [name=mail_method]'), sync = () => $('#ef').querySelectorAll('[data-mm]').forEach(d => { d.style.display = d.dataset.mm === mm.value ? '' : 'none'; }); mm.onchange = sync; sync(); }
   if ($('#test')) $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });

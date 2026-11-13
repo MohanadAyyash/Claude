@@ -1,5 +1,5 @@
 // Printable documents with letterhead: HTML (browser print) and PDF (headless Chrome/Edge).
-const { page, cover, CSP, esc } = require('../lib/render');
+const { page, cover, bi, money, CSP, esc } = require('../lib/render');
 const { htmlToPdf } = require('../lib/pdf');
 
 module.exports = ctx => {
@@ -13,11 +13,21 @@ module.exports = ctx => {
     if (doc.voided) bad('Voided documents cannot be printed');
     const S = getSettings(), isCN = doc.kind === 'credit_note', isQ = kind === 'quotes';
     const body = docHtml({ kind, doc: { ...doc, client_trn: e.parties[doc.client_id]?.trn, client_address: e.parties[doc.client_id]?.address }, settings: S, bare: true, mode: 'print' });
-    const accepted = isQ && doc.accepted_at ? `<div style="margin-top:6mm;padding:3mm;border:.5pt solid #2e7d4f;font-size:9pt"><b>Accepted online by the client / قبول العميل إلكترونياً:</b> ${esc(doc.accepted_by)} — ${esc(doc.accepted_at)}${/^data:image\/png;base64,/.test(doc.signature || '') ? `<br><img src="${doc.signature}" style="height:22mm" alt="signature">` : ''}</div>` : '';
-    const out = { title: `${isQ ? 'Quotation' : isCN ? 'Credit note' : 'Tax invoice'} ${doc.number}`, filename: doc.number.replace(/[\/]/g, '-'), body: body + accepted, ref: doc.number, date: doc.date, label: 'Authorised signatory / المفوّض بالتوقيع', ...(isQ ? {} : { stamp: false, signature: false, legal: true })   /* invoices and credit notes: no signature lines */ };
+    const accepted = isQ && doc.accepted_at ? `<div style="margin-top:6mm;padding:3mm;border:.5pt solid #2e7d4f;font-size:9pt"><b>${bi(S, 'Accepted online by the client', 'قبول العميل إلكترونياً')}:</b> ${esc(doc.accepted_by)} — ${esc(doc.accepted_at)}${/^data:image\/png;base64,/.test(doc.signature || '') ? `<br><img src="${doc.signature}" style="height:22mm" alt="signature">` : ''}</div>` : '';
+    const out = { title: `${isQ ? 'Quotation' : isCN ? 'Credit note' : 'Tax invoice'} ${doc.number}`, filename: doc.number.replace(/[\/]/g, '-'), body: body + accepted, ref: doc.number, date: doc.date, label: bi(S, 'Authorised signatory', 'المفوّض بالتوقيع'), ...(isQ ? {} : { stamp: false, signature: false, legal: true })   /* invoices and credit notes: no signature lines */ };
     if (isQ && !(q && q.get && q.get('cover') === '0')) {          // quotations open with the brand cover page
-      out.cover = cover(S, ctx.brand, { ref: doc.number, title: `Quotation for ${doc.project_name || 'Works'}`, title_ar: `عرض سعر لـ ${doc.project_name || 'الأعمال'}`,
-        rows: [['Project', doc.project_name], ['Submitted to', doc.client_name], ['Scope', (doc.items[0] || {}).description], ['Date', doc.date], ['Validity', `${doc.validity_days} days`]] });
+      const cur = S.currency || 'AED', u = me && me.id ? ctx.db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(me.id) : null;   // signed by the person who issues it (profile)
+      out.cover = cover(S, ctx.brand, { ref: doc.number, date: doc.date, to: doc.client_name, subtitle: doc.project_name, title_ar: S.print_arabic === '1' ? 'عرض سعر' : '',
+        attention: doc.attention, rows: [['Project', doc.project_name], ['Location', doc.location], ['Plot No.', doc.plot_no], ['NOC Reference', doc.noc_ref], ['Scope of Work', doc.scope || (doc.items[0] || {}).description], ['Contract Basis', doc.contract_basis], ['Validity', `${doc.validity_days} days from date of issue`]],
+        payment: String(doc.payment_terms || '').split(/\r?\n/).map(l => /^\s*([^\s:|–—-]+)\s*[:|–—-]\s*(.+)$/.exec(l)).filter(Boolean).map(m => [m[1], m[2].trim()]).slice(0, 6),   // one stage per line: "25% - Upon signing of the agreement"
+        totals: doc.vat_pct > 0 ? [[`TOTAL AMOUNT (Excl. VAT ${doc.vat_pct}%)`, `${cur} ${money(doc.subtotal)}`], [`TOTAL INCLUSIVE OF VAT ${doc.vat_pct}%`, `${cur} ${money(doc.total)}`]] : [['TOTAL AMOUNT', `${cur} ${money(doc.total)}`]],
+        intro: 'We are pleased to submit our quotation for the above-mentioned works. The detailed Bill of Quantities is attached herewith. We trust our offer meets your requirements and remain at your disposal for any clarification.',
+        signer: u ? { name: u.display_name || u.username, title: u.job_title, contact: [u.mobile, S.email].filter(Boolean).join(' · ') } : {} });
+      out.stamp = false; out.signature = false;                    // signed and stamped once, on the cover
+    }
+    if (isQ) {
+      out.ref = out.date = undefined;                               // the bill of quantities carries its own reference line
+      out.trn = false;                                              // a quotation is not a tax document: the letterhead as designed, without the TRN line
     }
     return out;
   };

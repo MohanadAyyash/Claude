@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS site_reports(id INTEGER PRIMARY KEY, project_id INTEG
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, ts TEXT, user TEXT, action TEXT, tbl TEXT, rec INTEGER, detail TEXT);
 `);
 const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
-[['users','totp_secret','TEXT'],['users','totp_on','INTEGER DEFAULT 0'],['users','totp_last','INTEGER DEFAULT 0'],['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
+[['quotes','attention','TEXT'],['quotes','location','TEXT'],['quotes','plot_no','TEXT'],['quotes','noc_ref','TEXT'],['quotes','scope','TEXT'],['quotes','contract_basis','TEXT'],['quotes','payment_terms','TEXT'],['users','totp_secret','TEXT'],['users','totp_on','INTEGER DEFAULT 0'],['users','totp_last','INTEGER DEFAULT 0'],['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
 
 // Editable columns per table (whitelist) and numeric columns
 const bad = m => { const e = new Error(m); e.status = 400; throw e; };
@@ -50,7 +50,7 @@ const TABLES = {
   boq_items: { cols: ['project_id','section','description','unit','qty','rate','cost_rate','done_pct'], num: ['qty','rate','cost_rate','done_pct'], check: r => { if (r.done_pct !== undefined && (r.done_pct < 0 || r.done_pct > 100)) bad('Completion % must be between 0 and 100'); } },
   variations: { cols: ['project_id','number','date','description','amount','status'], num: ['amount'] },
   site_reports: { cols: ['project_id','date','weather','labour_count','work_done','issues','notes'], num: ['labour_count'] },
-  quotes:   { cols: ['number','date','client_id','project_name','validity_days','status','items','vat_pct','notes','terms'], num: ['validity_days','vat_pct'], json: ['items'], prefix: 'QT' },
+  quotes:   { cols: ['number','date','client_id','project_name','validity_days','status','items','vat_pct','notes','terms','attention','location','plot_no','noc_ref','scope','contract_basis','payment_terms'], num: ['validity_days','vat_pct'], json: ['items'], prefix: 'QT' },
   invoices: { cols: ['number','date','due_date','project_id','items','vat_pct','retention_pct','notes'], num: ['vat_pct','retention_pct'], json: ['items'], prefix: 'INV' },
   bills:    { cols: ['date','party_id','project_id','category','description','amount','vat_amount','reference'], num: ['amount','vat_amount'] },
   payments: { cols: ['kind','date','amount','method','reference','invoice_id','bill_id','is_retention','notes','cheque_date','cheque_status','bank_account_id'], num: ['amount'] },
@@ -134,8 +134,9 @@ function enrich() {
       party_name: party?.name, party_trn: party?.trn, project_name: projects[r.project_id]?.name };
   });
   const quotes = all('quotes').map(r => {
-    const items = parseItems(r);
-    return { ...r, items, ...docTotals(items, r.vat_pct), client_name: parties[r.client_id]?.name, client_email: parties[r.client_id]?.email };
+    const items = parseItems(r), prov = items.filter(i => i.provisional);
+    // provisional items are priced but payable only if instructed: they are listed apart and are not part of the quotation total
+    return { ...r, items, ...docTotals(items.filter(i => !i.provisional), r.vat_pct), provisional_total: round(prov.reduce((x, i) => x + (+i.qty || 0) * (+i.rate || 0), 0)), client_name: parties[r.client_id]?.name, client_email: parties[r.client_id]?.email };
   });
   const payments = all('payments').map(p => {
     const inv = invoices.find(i => i.id === p.invoice_id), bill = bills.find(b => b.id === p.bill_id);
@@ -353,7 +354,7 @@ function clean(table, body) {
 
 const { ROLES } = ACLX, can = ACLX.can;
 const { money } = require('./lib/render');
-const SETTING_KEYS = ['sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
+const SETTING_KEYS = ['print_arabic','sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
 }
@@ -751,7 +752,7 @@ async function api(req, res, url) {
     const r = db.prepare('INSERT INTO projects(code,name,client_id,contract_value,start_date,status) VALUES(?,?,?,?,?,?)')
       .run(code, q.project_name || q.number, q.client_id, q.subtotal, today(), 'active');
     const ins = db.prepare('INSERT INTO boq_items(project_id,section,description,unit,qty,rate) VALUES(?,?,?,?,?,?)');
-    for (const i of q.items) ins.run(r.lastInsertRowid, '', i.description, i.unit || '', +i.qty || 0, +i.rate || 0);
+    for (const i of q.items) ins.run(r.lastInsertRowid, i.provisional ? 'Provisional items' : String(i.section || ''), i.description, i.unit || '', +i.qty || 0, +i.rate || 0);
     db.prepare("UPDATE quotes SET status='accepted', project_id=? WHERE id=?").run(r.lastInsertRowid, q.id);
     return send(res, 200, { project_id: Number(r.lastInsertRowid) });
   }

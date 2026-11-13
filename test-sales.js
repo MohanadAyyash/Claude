@@ -65,6 +65,29 @@ server.listen(0, async () => {
     assert.equal((await pub('POST', `/pub${s4.path}/accept`, { name: 'Ahmed Saeed', signature: SIG })).s, 410);
     assert.match((await pub('GET', s4.path)).t, /expired/);
 
+    // ---- quotation as a bill of quantities: sections, sub-totals, provisional items outside the total, cover fields
+    const bq = ok(await call('POST', 'quotes', { client_id: cl, project_name: 'Sample Paving Works', validity_days: 30, date: '2026-11-11', attention: 'Mr. Sample', location: 'Business Bay, Dubai, UAE', plot_no: '000-0000', noc_ref: 'NOC-TEST-0001',
+      scope: 'External paving works — complete', contract_basis: 'Re-measurable', payment_terms: '50% - Upon signing of the agreement\n50%: Upon completion of the works', terms: '1. All items are all-inclusive.\nQuantities are approximate.', notes: 'Prices exclude VAT.',
+      items: [{ section: 'Pre-construction', description: 'Approvals', unit: 'LS', qty: 1, rate: 1000 }, { section: 'Paving works', description: 'Sub base', unit: 'm2', qty: 10, rate: 100 }, { section: 'Paving works', description: 'Block paving', unit: 'm2', qty: 10, rate: 200 },
+        { section: 'Pre-construction', description: 'Surveys', unit: 'LS', qty: 1, rate: 500 }, { description: 'Road markings', unit: 'LS', qty: 1, rate: 700, provisional: true }] })).id;
+    let bqd = ok(await call('GET', 'quotes/' + bq));
+    assert.equal(bqd.subtotal, 4500, 'provisional items are not part of the total'); assert.equal(bqd.vat, 225); assert.equal(bqd.total, 4725); assert.equal(bqd.provisional_total, 700);
+    assert.equal(bqd.attention, 'Mr. Sample'); assert.equal(bqd.plot_no, '000-0000'); assert.equal(bqd.contract_basis, 'Re-measurable');
+    const bh = await fetch(`${base}doc/quotes/${bq}`, { headers: { cookie } }).then(r => r.text());
+    for (const re of [/<td>ATTENTION<\/td><td>Mr\. Sample<\/td>/, /<td>Location<\/td><td>Business Bay, Dubai, UAE<\/td>/, /<td>Plot No\.<\/td><td>000-0000<\/td>/, /<td>NOC Reference<\/td><td>NOC-TEST-0001<\/td>/, /<td>Scope of Work<\/td><td>External paving works — complete<\/td>/, /<td>Contract Basis<\/td><td>Re-measurable<\/td>/,
+      /class="cv-pay"><div><b>50%<\/b><span>Upon signing of the agreement<\/span><\/div><div><b>50%<\/b><span>Upon completion of the works<\/span><\/div>/, /<span>TOTAL AMOUNT \(Excl\. VAT 5%\)<\/span><b class="mono">AED 4,500\.00<\/b>/, /<span>TOTAL INCLUSIVE OF VAT 5%<\/span><b class="mono">AED 4,725\.00<\/b>/]) assert.match(bh, re);
+    for (const re of [/BILL OF QUANTITIES — SAMPLE PAVING WORKS/, /Client: Al Waha Developments \| Sample Paving Works \| Business Bay, Dubai, UAE \| Plot 000-0000/, /Ref: [^|]+ \| Date: 11 November 2026 \| Currency: AED \| Valid: 30 Days \| Prices Exclude VAT 5%/,
+      /<tr class="sec"><td colspan="6">PRE-CONSTRUCTION<\/td><\/tr><tr><td>A1<\/td><td>Approvals<\/td>.*<tr><td>A2<\/td><td>Surveys<\/td>.*SUB-TOTAL — PRE-CONSTRUCTION<\/td><td class="n">1,500\.00<\/td>/s, /<tr class="sec"><td colspan="6">PAVING WORKS<\/td><\/tr><tr><td>B1<\/td><td>Sub base<\/td>.*<td>B2<\/td><td>Block paving<\/td>.*SUB-TOTAL — PAVING WORKS<\/td><td class="n">3,000\.00<\/td>/s,
+      /GRAND TOTAL \(Excl\. VAT 5%\)<\/td><td class="n">4,500\.00<\/td>/, /VAT 5% \(added at invoice stage\)<\/td><td class="n">225\.00<\/td>/, /TOTAL INCLUSIVE OF VAT 5%<\/td><td class="n">4,725\.00<\/td>/,
+      /PROVISIONAL ITEMS — Payable only if executed \/ instructed \(NOT included in Grand Total\)/, /<td>P1<\/td><td>Road markings<\/td>/, /TOTAL PROVISIONAL \(if all executed\)<\/td><td class="n">700\.00<\/td>/,
+      /<h4>NOTES<\/h4><ol><li>All items are all-inclusive\.<\/li><li>Quantities are approximate\.<\/li><li>Prices exclude VAT\.<\/li><\/ol>/]) assert.match(bh, re);
+    const plain = await fetch(`${base}doc/quotes/${qid}?cover=0`, { headers: { cookie } }).then(r => r.text());              // no sections: plain numbering, no sub-totals
+    assert.match(plain, /<tr><td>1<\/td><td>Asphalt<\/td>/); assert.ok(!/SUB-TOTAL/.test(plain) && !/PROVISIONAL ITEMS/.test(plain)); assert.match(plain, /GRAND TOTAL/);
+    const bp = ok(await call('POST', `quotes/${bq}/convert`)).project_id, bproj = ok(await call('GET', 'projects/' + bp));
+    assert.equal(bproj.contract_value, 4500, 'contract value = the quotation total without the provisional items');
+    const bboq = ok(await call('GET', 'boq_items?project_id=' + bp)).filter(x => x.project_id === bp);
+    assert.deepEqual(bboq.map(x => x.section), ['Pre-construction', 'Paving works', 'Paving works', 'Pre-construction', 'Provisional items']);
+
     // ---- roles
     ok(await call('POST', 'users', { username: 'viewer1', password: 'pass1234', role: 'viewer' }));
     cookie = ''; ok(await call('POST', 'login', { username: 'viewer1', password: 'pass1234' }));
