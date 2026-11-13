@@ -11,10 +11,11 @@
      -AppDir "C:\erp"                      project folder (default C:\erp)
      -BackupCopyTo "D:\ERP-Backups"        also copy every backup here (external disk / network share / OneDrive folder)
      -Tunnel                               use when the system is published through Cloudflare Tunnel (trusts proxy headers)
+     -RunAs "PC-NAME\user"                 Windows account that runs the server (default: the user signed in now). Not SYSTEM: Edge cannot make PDFs there
  Close any window where you started the ERP by hand (npm.cmd start) before running this.
 #>
 #Requires -RunAsAdministrator
-param([string]$AppDir = "C:\erp", [string]$BackupCopyTo = "", [switch]$Tunnel)
+param([string]$AppDir = "C:\erp", [string]$BackupCopyTo = "", [switch]$Tunnel, [string]$RunAs = "")
 $ErrorActionPreference = "Stop"
 
 if (-not (Test-Path (Join-Path $AppDir "server.js"))) { throw "server.js was not found in $AppDir. Pass -AppDir with the project folder." }
@@ -60,12 +61,27 @@ cd /d "$AppDir"
 "@
 Set-Content -Path (Join-Path $AppDir "run-check.cmd") -Value $chk -Encoding ASCII
 
-# --- scheduled tasks (run as SYSTEM at boot / daily)
+# --- scheduled tasks (at boot / daily)
+# Backup and daily check run as SYSTEM. The server itself runs as the signed-in Windows user (S4U: still starts at boot with nobody signed in,
+# no password is stored): Microsoft Edge does not run under the SYSTEM account, so every PDF timed out when the server ran as SYSTEM.
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+if (-not $RunAs) { $RunAs = (Get-CimInstance Win32_ComputerSystem).UserName }
+if (-not $RunAs) { $RunAs = "$env:USERDOMAIN\$env:USERNAME" }
+$serverPrincipal = New-ScheduledTaskPrincipal -UserId $RunAs -LogonType S4U -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+# re-run on an installed PC: stop the running server first, otherwise the old process (old account) keeps the port and the new task cannot start
+Stop-ScheduledTask -TaskName "TrigonERP" -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*server.js*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Unregister-ScheduledTask -TaskName "TrigonERP" -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName "TrigonERP" -Principal $principal -Settings $settings `
-  -Action (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$AppDir\run-server.cmd`"" -WorkingDirectory $AppDir) -Trigger (New-ScheduledTaskTrigger -AtStartup) | Out-Null
+$serverAction = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$AppDir\run-server.cmd`"" -WorkingDirectory $AppDir
+$pdfNote = ""
+try {
+  Register-ScheduledTask -TaskName "TrigonERP" -Principal $serverPrincipal -Settings $settings -Action $serverAction -Trigger (New-ScheduledTaskTrigger -AtStartup) | Out-Null
+} catch {
+  Write-Warning "Could not register the server task for user $RunAs ($($_.Exception.Message)). Falling back to the SYSTEM account."
+  Register-ScheduledTask -TaskName "TrigonERP" -Principal $principal -Settings $settings -Action $serverAction -Trigger (New-ScheduledTaskTrigger -AtStartup) | Out-Null
+  $RunAs = "SYSTEM"; $pdfNote = " WARNING: PDF export does not work under SYSTEM with Microsoft Edge. Re-run with -RunAs `"PC-NAME\user`"."
+}
 Unregister-ScheduledTask -TaskName "TrigonERP-Backup" -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName "TrigonERP-Backup" -Principal $principal -Settings $settings `
   -Action (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$AppDir\run-backup.cmd`"" -WorkingDirectory $AppDir) -Trigger (New-ScheduledTaskTrigger -Daily -At 2:30am) | Out-Null
@@ -91,5 +107,6 @@ Write-Host " Done. The ERP now starts with Windows and restarts if it stops."
 Write-Host " Office address(es):"; $ips | ForEach-Object { Write-Host "     http://${_}:3000" }
 Write-Host " First-time admin setup token (only needed once, on a brand-new database):"
 Write-Host "     $token"
+Write-Host " The server runs as: $RunAs.$pdfNote"
 Write-Host " Logs: $AppDir\data\server.log   Backups: $AppDir\data\backups   Daily check: $AppDir\data\daily-check.log"
 Write-Host "=============================================================="
