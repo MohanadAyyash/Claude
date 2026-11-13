@@ -32,7 +32,7 @@ module.exports = ctx => {
       const chequeOnly = a === 'payments' && method === 'PUT' && body && Object.keys(body).every(k => ['cheque_status', 'bank_account_id'].includes(k));
       if (cur && closed(cur[DATED[a]]) && !chequeOnly) refuse('a document', cur[DATED[a]]);
     }
-    if ((DATED[a] || ['projects', 'claims', 'client_pcs', 'pay_apps', 'bank', 'purchase_orders'].includes(a)) && body && isDate(body.date) && closed(body.date) && !(a === 'purchase_orders' && c !== 'receive')) refuse('a document', body.date);
+    if ((DATED[a] || ['projects', 'claims', 'client_pcs', 'pay_apps', 'bank', 'purchase_orders', 'hire'].includes(a)) && body && isDate(body.date) && closed(body.date) && !(a === 'purchase_orders' && c !== 'receive')) refuse('a document', body.date);
   };
 
   // ======================= backups =======================

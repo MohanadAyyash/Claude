@@ -26,6 +26,14 @@ const BASE = process.env.BASE || 'http://localhost:3999', OUT = path.join(__dirn
       await j('POST', 'equipment/logs', { asset_id: a1, kind: 'fuel', date: d(-2), project_id: P.id, litres: 620, cost: 1800 });
       await j('POST', 'equipment/logs', { asset_id: a1, kind: 'maintenance', date: d(-20), cost: 1450, description: 'Oil and filters changed', next_due_date: d(9) });
       await j('POST', 'equipment/logs', { asset_id: a2, kind: 'maintenance', date: d(-70), cost: 900, description: 'Periodic service', next_due_date: d(-4) });
+      const sup = (await j('GET', 'parties')).filter(x => x.type === 'supplier');
+      const h1 = (await j('POST', 'hire/items', { type: 'equipment', name: 'Excavator 20 t', ref: 'RNT-4471', party_id: sup[0].id, project_id: P.id, basis: 'month', rate: 13000, base_hours: 260, start_date: d(-20), end_date: d(40) })).id;
+      const h2 = (await j('POST', 'hire/items', { type: 'equipment', name: 'Forklift 5 t', ref: 'RNT-1120', party_id: sup[0].id, project_id: P.id, basis: 'day', rate: 800, base_hours: 10, start_date: d(-12), end_date: d(-2) })).id;
+      for (let i = 1; i <= 6; i++) await j('POST', 'hire/logs', { item_id: h1, date: d(-i), hours: i % 2 ? 10 : 12 });
+      for (let i = 3; i <= 5; i++) await j('POST', 'hire/logs', { item_id: h2, date: d(-i), hours: 7 });
+      const h3 = (await j('POST', 'hire/items', { type: 'labour', source: 'supplier', name: 'Helpers', party_id: sup[1 % sup.length].id, project_id: P.id, basis: 'hour', rate: 12, start_date: d(-15) })).id;
+      const h4 = (await j('POST', 'hire/items', { type: 'labour', source: 'daily', name: 'Carpenter (daily)', project_id: P.id, basis: 'day', rate: 150, base_hours: 10, start_date: d(-15) })).id;
+      for (let i = 1; i <= 5; i++) { await j('POST', 'hire/logs', { item_id: h3, date: d(-i), qty: 6, hours: 10 }); await j('POST', 'hire/logs', { item_id: h4, date: d(-i), qty: 2, hours: i === 3 ? 5 : 10 }); }
       await j('POST', 'backup/run'); await j('PUT', 'period', { lock_date: d(-45) });
     }
     sessionStorage.schP = P.id;
@@ -36,6 +44,7 @@ const BASE = process.env.BASE || 'http://localhost:3999', OUT = path.join(__dirn
     for (const [route, name] of [['cheques', 'n1-cheques.jpg'], ['cashflow', 'n2-cashflow.jpg'], ['guarantees', 'n3-guarantees.jpg'], ['spend', 'n4-spend-approvals.jpg'], ['equipment', 'n7-equipment.jpg'], ['schedule', 'n8-programme.jpg']]) {
       await p.goto(BASE + '/#' + route); await p.reload(); await shot(lang, name);
     }
+    for (const [t, name] of [['equipment', 'n9-hired-equipment.jpg'], ['labour', 'n10-hired-labour.jpg']]) { await p.evaluate(t => { sessionStorage.hireType = t; }, t); await p.goto(BASE + '/#hired'); await p.reload(); await shot(lang, name); }
     await p.goto(BASE + '/#settings'); await p.reload(); await p.waitForSelector('#locksave');
     await p.evaluate(() => { const x = document.querySelector('#ctlcards span[dir=ltr]'); if (x) x.textContent = 'C:\\erp\\data\\backups'; });   // the demo server's temp folder → the office path
     await shot(lang, 'n5-period-backup.jpg', '#ctlcards');

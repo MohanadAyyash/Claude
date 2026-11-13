@@ -1,0 +1,76 @@
+// Hired labour (supplier / daily workers) and rented equipment: agreements, daily hours, supplier invoice matching, daily pay.
+PAGES.hired = async () => {
+  const type = sessionStorage.hireType === 'equipment' ? 'equipment' : 'labour', eq = type === 'equipment';
+  const money_ = ['admin', 'accountant', 'manager', 'viewer', 'qs'].includes(ME.role), office = ['admin', 'accountant', 'manager', 'procurement'].includes(ME.role), fin = ['admin', 'accountant'].includes(ME.role), canLog = !['viewer', 'qs', 'storekeeper'].includes(ME.role);
+  const [rows, logs, projects, parties, acc] = await Promise.all([api('GET', 'hire?type=' + type), api('GET', 'hire/logs?type=' + type), api('GET', 'projects').catch(() => []), api('GET', 'parties').catch(() => []), money_ ? api('GET', 'hire/accrued').catch(() => []) : []]);
+  const active = rows.filter(r => r.status === 'active'), mine = acc.filter(a => a.type === type), kpi = (l, v, cls = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${cls}">${typeof v === 'number' ? money(v) : v}</div></div>`;
+  const BAS = { month: tr('شهر', 'month'), day: tr('يوم', 'day'), hour: tr('ساعة', 'hour') };
+  const rateTxt = r => r.rate == null ? '' : r.basis === 'hour' ? `${money(r.rate)} / ${BAS.hour}` : `${money(r.rate)} / ${BAS[r.basis]} ÷ ${r.base_hours} ${tr('س', 'h')} = <b>${money(r.hourly_rate)}</b> / ${BAS.hour}`;
+  const src = r => r.source === 'daily' ? `<span class="muted">${tr('يومية — نقداً', 'Daily — cash')}</span>` : esc(r.party_name);
+  const flag = r => r.overdue ? `<div class="neg">⛔ ${tr('تجاوز تاريخ الانتهاء', 'Past its end date')} ${esc(r.end_date)}</div>` : r.idle ? `<div style="color:var(--warn)">⚠ ${tr('بلا ساعات منذ 5 أيام', 'No hours for 5 days')}</div>` : '';
+  main(`<div class="bar"><h1>${tr('العمالة والمعدات المستأجرة', 'Hired labour & rented equipment')}</h1><span class="sp"></span>
+    <select id="hty" style="width:auto"><option value="labour" ${eq ? '' : 'selected'}>${tr('عمالة (توريد / يومية)', 'Labour (supplier / daily)')}</option><option value="equipment" ${eq ? 'selected' : ''}>${tr('معدات مستأجرة', 'Rented equipment')}</option></select>
+    ${canLog ? `<button class="btn" id="hlog">+ ${tr('تسجيل ساعات', 'Log hours')}</button>` : ''}${office ? `<button class="btn sec" id="hadd">+ ${eq ? tr('عقد إيجار', 'Rental agreement') : tr('مصدر عمالة', 'Labour source')}</button>` : ''}</div>
+  <p class="muted">${eq ? tr('لكل معدة مستأجرة: المؤجّر والسعر (شهري أو يومي أو بالساعة) وعدد الساعات التي يغطيها السعر، فيُحسب كل شيء بالساعة. سجّل ساعات التشغيل يومياً؛ الساعات غير المفوترة هي المستحق للمؤجّر حتى تطابقها مع فاتورته.', 'For each rented machine: the rental company, the rate (per month, day or hour) and the hours that rate covers — so everything is worked out by the hour. Log the working hours every day; unbilled hours are what you owe the rental company until you match them with its invoice.')
+    : tr('عمال ليسوا على كشف الرواتب: من شركة توريد عمالة، أو عمال يومية يُدفع لهم نقداً. لكل مصدر سعر (شهري أو يومي أو بالساعة) وعدد الساعات التي يغطيها، فيُحسب كل شيء بالساعة. سجّل العدد والساعات يومياً لكل مشروع.', 'Workers who are not on the payroll: from a labour-supply company, or daily workers paid in cash. Each source has a rate (per month, day or hour) and the hours it covers — so everything is worked out by the hour. Log the number of workers and hours every day for each project.')}</p>
+  ${money_ ? `<div class="grid">${kpi(eq ? tr('معدات مستأجرة حالياً', 'Machines on hire') : tr('مصادر عمالة نشطة', 'Active labour sources'), String(active.length))}${kpi(tr('ساعات هذا الشهر', 'Hours this month'), money(rows.reduce((s, r) => s + r.hours_month, 0)))}${kpi(tr('مستحق غير مفوتر', 'Accrued, not invoiced'), mine.reduce((s, a) => s + a.amount, 0), mine.length ? 'neg' : '')}${kpi(eq ? tr('تجاوزت موعد الإرجاع / متوقفة', 'Past return date / idle') : tr('تجاوزت تاريخ الانتهاء', 'Past their end date'), String(active.filter(r => r.overdue || r.idle).length), active.some(r => r.overdue || r.idle) ? 'bad' : '')}</div>` : ''}
+  <div class="tw"><table><thead><tr><th>${eq ? tr('المعدة', 'Equipment') : tr('المهنة / العامل', 'Trade / worker')}</th><th>${eq ? tr('المؤجّر', 'Rental company') : tr('المصدر', 'Source')}</th><th>${tr('المشروع', 'Project')}</th>${money_ ? `<th>${tr('السعر', 'Rate')}</th>` : ''}<th class="n">${tr('ساعات الشهر', 'Hours (month)')}</th><th class="n">${tr('ساعات غير مفوترة', 'Unbilled hours')}</th>${money_ ? `<th class="n">${tr('المستحق', 'Accrued')}</th>` : ''}<th>${tr('الفترة', 'Period')}</th></tr></thead><tbody>
+  ${rows.map(r => `<tr class="${office ? 'click' : ''}" data-hi="${r.id}" style="${r.status === 'active' ? '' : 'opacity:.55'}"><td><b>${esc(r.name)}</b>${r.ref ? `<div class="muted">${esc(r.ref)}</div>` : ''}</td><td>${src(r)}</td><td>${esc(r.project_name)}</td>${money_ ? `<td>${rateTxt(r)}</td>` : ''}<td class="n">${money(r.hours_month)}</td><td class="n">${money(r.hours_open)}</td>${money_ ? `<td class="n">${money(r.accrued)}</td>` : ''}<td><span style="white-space:nowrap">${esc(r.start_date || '')}</span>${r.end_date ? ` → <span style="white-space:nowrap">${esc(r.end_date)}</span>` : ''}${r.status !== 'active' ? ` <span class="muted">(${tr('منتهٍ', 'closed')})</span>` : ''}${flag(r)}</td></tr>`).join('') || `<tr><td colspan="8" class="muted">${tr('لا توجد بيانات بعد', 'Nothing yet')}</td></tr>`}
+  </tbody></table></div>
+  ${money_ && mine.length ? `<h2 style="margin-top:16px">${tr('مستحقات غير مفوترة', 'Accrued, not invoiced')}</h2><div class="tw"><table><thead><tr><th>${tr('الجهة', 'Owed to')}</th><th>${tr('المشروع', 'Project')}</th><th>${tr('الفترة', 'Period')}</th><th class="n">${tr('ساعات', 'Hours')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th></th></tr></thead><tbody>
+    ${mine.map((a, i) => `<tr><td>${a.source === 'daily' ? tr('عمال يومية (نقداً)', 'Daily workers (cash)') : esc(a.party_name)}</td><td>${esc(a.project_name || tr('بدون مشروع', 'No project'))}</td><td>${esc(a.from)} → ${esc(a.to)}</td><td class="n">${money(a.hours)}</td><td class="n">${money(a.amount)}</td><td>${fin ? `<button class="btn sec sm" data-set="${i}">${a.source === 'daily' ? tr('صرف اليوميات', 'Pay daily workers') : tr('مطابقة فاتورة المورد', 'Match supplier invoice')}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
+  <h2 style="margin-top:16px">${tr('سجل الساعات', 'Hours log')}</h2><div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${eq ? tr('المعدة', 'Equipment') : tr('المهنة / العامل', 'Trade / worker')}</th><th>${tr('المشروع', 'Project')}</th>${eq ? '' : `<th class="n">${tr('العدد', 'Workers')}</th>`}<th class="n">${tr('ساعات', 'Hours')}</th>${money_ ? `<th class="n">${tr('المبلغ', 'Amount')}</th>` : ''}<th>${tr('ملاحظة', 'Note')}</th><th></th></tr></thead><tbody>
+  ${logs.slice(0, 200).map(l => `<tr><td>${esc(l.date)}</td><td>${esc(l.item_name)}</td><td>${esc(l.project_name)}</td>${eq ? '' : `<td class="n">${l.qty}</td>`}<td class="n">${money(l.hours)}</td>${money_ ? `<td class="n">${money(l.amount)}</td>` : ''}<td>${esc(l.note || '')}</td><td>${l.billed ? `<span class="ok">✔ ${tr('مفوتر', 'Invoiced')}</span>` : canLog ? `<button class="btn sec sm" data-dl="${l.id}">×</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="8" class="muted">${tr('لا توجد ساعات مسجلة', 'No hours logged')}</td></tr>`}
+  </tbody></table></div>`);
+  $('#hty').onchange = e => { sessionStorage.hireType = e.target.value; render(); };
+  document.querySelectorAll('[data-dl]').forEach(b => b.onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'hire/logs/' + b.dataset.dl); render(); } }));
+  const form = (title, f, row, save, del) => {
+    const m = modal(`<h2>${title}</h2><div class="f2">${f.map(x => field(x, row ? row[x.k] ?? x.def : x.def)).join('')}</div><div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button><span class="sp"></span>${del ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}</div>`);
+    $('#cancel', m).onclick = closeModal;
+    $('#save', m).onclick = guard(async () => { const body = {}; f.forEach(x => body[x.k] = val(m, x.k)); await save(body); closeModal(); render(); });
+    if (del) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await del(); closeModal(); render(); } });
+    return m;
+  };
+  const edit = row => {
+    const sup = parties.filter(p => ['supplier', 'subcontractor'].includes(p.type));
+    const m = form(row ? esc(row.name) : eq ? tr('عقد إيجار معدة', 'Equipment rental agreement') : tr('مصدر عمالة', 'Labour source'), [
+      ...(eq ? [] : [{ k: 'source', ar: 'النوع', en: 'Kind', type: 'select', options: [['supplier', tr('شركة توريد عمالة (بفاتورة)', 'Labour-supply company (invoiced)')], ['daily', tr('عامل يومية (يُدفع له نقداً)', 'Daily worker (paid in cash)')]], def: 'supplier' }]),
+      { k: 'name', ar: eq ? 'المعدة (مثال: حفار 20 طن)' : 'المهنة أو اسم العامل (مثال: نجار، عمال عاديون)', en: eq ? 'Equipment (e.g. 20 t excavator)' : 'Trade or worker name (e.g. carpenter, helpers)', req: 1 },
+      { k: 'party_id', ar: eq ? 'المؤجّر' : 'شركة التوريد (اتركه لعامل اليومية)', en: eq ? 'Rental company' : 'Supply company (leave empty for a daily worker)', type: 'select', options: refOpts(sup, p => p.name) },
+      { k: 'ref', ar: eq ? 'رقم اللوحة / المعدة' : 'مرجع العقد', en: eq ? 'Plate / unit no.' : 'Agreement reference' }, { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => p.name) },
+      { k: 'basis', ar: 'السعر لكل', en: 'Rate per', type: 'select', options: [['month', BAS.month], ['day', BAS.day], ['hour', BAS.hour]], def: eq ? 'month' : 'day' }, { k: 'rate', ar: 'السعر (بدون ضريبة)', en: 'Rate (ex VAT)', type: 'number', req: 1 },
+      { k: 'base_hours', ar: 'عدد الساعات التي يغطيها السعر (شهر: 260، يوم: 10)', en: 'Hours the rate covers (month: 260, day: 10)', type: 'number', def: eq ? 260 : 10 },
+      { k: 'start_date', ar: 'تاريخ البدء', en: 'Start date', type: 'date', def: today() }, { k: 'end_date', ar: eq ? 'تاريخ الإرجاع المتوقع' : 'تاريخ الانتهاء المتوقع', en: eq ? 'Expected return date' : 'Expected end date', type: 'date' },
+      { k: 'returned_date', ar: eq ? 'تاريخ الإرجاع الفعلي (يُنهي العقد)' : 'تاريخ الانتهاء الفعلي (يُنهي المصدر)', en: eq ? 'Actual return date (closes it)' : 'Actual end date (closes it)', type: 'date' }, { k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea', full: 1 }],
+      row, b => row ? api('PUT', 'hire/items/' + row.id, { ...b, type }) : api('POST', 'hire/items', { ...b, type }), row ? () => api('DELETE', 'hire/items/' + row.id) : null);
+    const bs = $('[name=basis]', m), bh = $('[name=base_hours]', m); if (bs && bh) bs.onchange = () => { bh.value = { month: 260, day: 10, hour: 1 }[bs.value]; };
+  };
+  if ($('#hadd')) $('#hadd').onclick = () => edit(null);
+  if (office) document.querySelectorAll('[data-hi]').forEach(r => r.onclick = () => edit(rows.find(x => x.id === +r.dataset.hi)));
+  if ($('#hlog')) $('#hlog').onclick = () => {
+    if (!active.length) return toast(eq ? tr('أضف عقد إيجار أولاً', 'Add a rental agreement first') : tr('أضف مصدر عمالة أولاً', 'Add a labour source first'));
+    const m = form(tr('تسجيل ساعات', 'Log hours'), [{ k: 'item_id', ar: eq ? 'المعدة' : 'المهنة / العامل', en: eq ? 'Equipment' : 'Trade / worker', type: 'select', options: refOpts(active, r => r.name + (r.party_name ? ' — ' + r.party_name : ''), false), def: active[0].id },
+      { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date', def: today() }, { k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => p.name), def: active[0].project_id || '' },
+      ...(eq ? [] : [{ k: 'qty', ar: 'عدد العمال', en: 'Number of workers', type: 'number', def: 1 }]), { k: 'hours', ar: eq ? 'ساعات التشغيل' : 'ساعات العمل لكل عامل', en: eq ? 'Working hours' : 'Hours per worker', type: 'number', def: 10 }, { k: 'note', ar: 'ملاحظة', en: 'Note', full: 1 }],
+      null, b => api('POST', 'hire/logs', b));
+    const it = $('[name=item_id]', m), pj = $('[name=project_id]', m); it.onchange = () => { const r = active.find(x => x.id === +it.value); if (r && r.project_id) pj.value = r.project_id; };
+  };
+  document.querySelectorAll('[data-set]').forEach(b => b.onclick = () => {
+    const a = mine[+b.dataset.set], daily = a.source === 'daily', sel = { type, party_id: a.party_id, project_id: a.project_id, from: a.from, to: a.to };
+    const m = modal(`<h2>${daily ? tr('صرف يوميات العمال', 'Pay daily workers') : tr('مطابقة فاتورة المورد', 'Match the supplier invoice')}</h2>
+      <p>${daily ? '' : `<b>${esc(a.party_name)}</b> · `}${esc(a.project_name || '')} · ${esc(a.from)} → ${esc(a.to)}</p>
+      <p>${tr('حسب الساعات المسجلة', 'By the logged hours')}: <b>${money(a.hours)}</b> ${tr('ساعة', 'h')} = <b>${money(a.amount)}</b></p>
+      <div class="f2">${daily ? field({ k: 'method', ar: 'الدفع من', en: 'Paid from', type: 'select', options: [['cash', tr('النقدية', 'Cash')], ['petty', tr('العهدة النقدية', 'Petty cash')]] }, 'cash')
+        : field({ k: 'reference', ar: 'رقم فاتورة المورد', en: 'Supplier invoice no.' }, '') + field({ k: 'amount', ar: 'مبلغ الفاتورة (بدون ضريبة)', en: 'Invoice amount (ex VAT)', type: 'number' }, a.amount) + field({ k: 'vat_amount', ar: 'ضريبة القيمة المضافة في الفاتورة', en: 'VAT on the invoice', type: 'number' }, Math.round(a.amount * 5) / 100)}
+        ${field({ k: 'date', ar: daily ? 'تاريخ الصرف' : 'تاريخ الفاتورة', en: daily ? 'Payment date' : 'Invoice date', type: 'date' }, today())}</div>
+      <p class="muted" id="hdiff">${daily ? tr('يُسجَّل مصروف عمالة على المشروع ويُدفع نقداً، وتُقفل هذه الساعات.', 'Books a labour expense on the project, paid in cash, and closes these hours.') : tr('تُسجَّل فاتورة مورد على المشروع بالمبلغ الذي تكتبه وتُقفل هذه الساعات. إذا اختلف مبلغ الفاتورة عن الساعات المسجلة راجع المورد قبل الحفظ.', 'Books a supplier bill on the project for the amount you enter and closes these hours. If the invoice differs from the logged hours, check with the supplier before saving.')}</p>
+      <div class="acts"><button class="btn" id="save">${daily ? tr('صرف', 'Pay') : tr('تسجيل الفاتورة', 'Record the invoice')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button></div>`);
+    $('#cancel', m).onclick = closeModal;
+    const amt = $('[name=amount]', m); if (amt) amt.oninput = () => { const d = Math.round((+amt.value - a.amount) * 100) / 100; $('#hdiff', m).innerHTML = Math.abs(d) > 0.01 ? `<span class="neg">⚠ ${tr('الفاتورة تختلف عن الساعات المسجلة بـ', 'The invoice differs from the logged hours by')} <b>${money(d)}</b></span>` : `<span class="ok">✔ ${tr('مطابقة للساعات المسجلة', 'Matches the logged hours')}</span>`; };
+    $('#save', m).onclick = guard(async () => {
+      const body = { ...sel, date: val(m, 'date') };
+      if (daily) await api('POST', 'hire/pay-daily', { ...body, method: val(m, 'method') }); else await api('POST', 'hire/invoice', { ...body, reference: val(m, 'reference'), amount: val(m, 'amount'), vat_amount: val(m, 'vat_amount') });
+      closeModal(); toast(tr('تم', 'Done')); render();
+    });
+  });
+};
