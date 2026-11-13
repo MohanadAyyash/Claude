@@ -31,9 +31,15 @@ const recolor = (svg, map) => Object.entries(map).reduce((s, [a, b]) => s.split(
   const four = [...svgs.logo.matchAll(/<path fill="[^"]+" d="[^"]+"\/>/g)].slice(0, 4).map(m => m[0]).join('');
   const lineSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"><g id="art">${four}</g></svg>`;
   svgs.logo_line = retarget(lineSvg, await tight(page, lineSvg));
+  if (svgs.logo_ar) {                                   // Letterhead B shows the Arabic wordmark without the mark; the full lock-up is kept as logo_ar_mark
+    svgs.logo_ar_mark = svgs.logo_ar;
+    const words = [...svgs.logo_ar.matchAll(/<path fill="[^"]+" d="[^"]+"\/>/g)].slice(3).map(m => m[0]).join('');
+    const arSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"><g id="art">${words}</g></svg>`;
+    svgs.logo_ar = retarget(arSvg, await tight(page, arSvg));
+  }
   svgs.logo_white = recolor(svgs.logo, { [BLUE]: PAPER, [GREY]: STONE });
   svgs.logo_black = recolor(svgs.logo, { [BLUE]: '#000000', [GREY]: '#000000' });
-  const px = { logo: 2400, logo_ar: 1800, logo_stacked: 900, logo_line: 900, mark: 600, logo_white: 2400, logo_black: 2400 };
+  const px = { logo: 2400, logo_ar: 1200, logo_ar_mark: 1800, logo_stacked: 900, logo_line: 900, mark: 600, logo_white: 2400, logo_black: 2400 };
   for (const [name, svg] of Object.entries(svgs)) {
     fs.writeFileSync(path.join(out, name + '.svg'), svg);
     const m = svg.match(/viewBox="[^"]*? ([\d.]+) ([\d.]+)"/), w = +m[1], h = +m[2], width = px[name], height = Math.round(width * h / w);

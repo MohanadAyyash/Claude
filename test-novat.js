@@ -21,7 +21,8 @@ server.listen(0, async () => {
     const inv = ok(await call('POST', 'invoices', { project_id: p, date: '2026-11-05', items: [{ description: 'Works', qty: 1, rate: 1000 }] }), 'invoice without a TRN');
     const iv = ok(await call('GET', 'invoices/' + inv.id)); assert.equal(iv.vat_pct, 0); assert.equal(iv.vat, 0); assert.equal(iv.total, 1000);
     const S = ok(await call('GET', 'settings')), html = docHtml({ kind: 'invoices', doc: iv, settings: S });
-    assert.ok(/Invoice \/ فاتورة/.test(html) && !/Tax Invoice/.test(html), 'title is "Invoice", not "Tax Invoice"');
+    assert.ok(/>Invoice</.test(html) && !/Tax Invoice/.test(html), 'title is "Invoice", not "Tax Invoice"'); assert.ok(!/فاتورة/.test(html), 'English only unless Arabic labels are turned on');
+    assert.ok(/Invoice \/ فاتورة/.test(docHtml({ kind: 'invoices', doc: iv, settings: { ...S, print_arabic: '1' } })), 'bilingual title when the setting is on');
     ok(await call('POST', 'bills', { date: '2026-11-06', party_id: sup, project_id: p, category: 'materials', description: 'Sand', amount: 200, vat_amount: 10 }));
     ok(await call('POST', 'zoho/connect', { code: '1000.code.one' }));
     ok(await call('PUT', 'zoho/config', { enabled: '1', start: '2026-11-01', post: '0' }));

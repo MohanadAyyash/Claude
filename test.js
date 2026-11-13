@@ -332,7 +332,26 @@ server.listen(0, async () => {
     // ---- Trigon brand pack, profile and branded e-mail signature ----
     assert.equal((await call('PUT', 'profile', { display_name: 'Mohanad Ayyash', job_title: 'Managing Partner', mobile: '+971 50 000 0000' })).j.display_name, 'Mohanad Ayyash');
     assert.equal((await call('POST', 'brand/pack')).s, 200);
-    const stg = (await call('GET', 'settings')).j; assert.equal(stg.company_name_ar, 'تريجون سيفيل للمقاولات ذ.م.م'); assert.equal(stg.license_no, '1656279'); assert.equal(stg.po_box, '334112');
+    const stg = (await call('GET', 'settings')).j; assert.equal(stg.company_name, 'Trigon Civil L.L.C'); assert.equal(stg.company_name_ar, 'تريجون سيفيل ذ.م.م'); assert.equal(stg.license_no, '1656279'); assert.equal(stg.po_box, '334112');
+    assert.equal(stg.address, 'Office 810, Magnum Opus Bay, Business Bay, Dubai, UAE'); assert.equal(stg.address_ar, 'مكتب 810، ماغنوم أوبوس باي، الخليج التجاري، دبي، الإمارات'); assert.equal(stg.phone, 'T/F +971 4 880 3438');
+    // Letterhead A (standard): logo, contact lines stacked on the right, one hairline; legal name · address · P.O. Box and the licence in the footer; mark watermark
+    await call('PUT', 'settings', { email: 'info@example.com' });
+    const lhA = await (await fetch(base + 'doc/invoices/' + inv3, { headers: { cookie } })).text();
+    assert.match(lhA, /<div class="contact">.*<div>T\/F \+971 4 880 3438<\/div><div>info@example\.com<\/div><div>trigon\.ae<\/div>/); assert.match(lhA, /<div class="hr"><\/div>/); assert.ok(!/class="rules"/.test(lhA), 'the three-rule divider is gone');
+    assert.match(lhA, /TRN 100123456700003/, 'tax invoices keep the TRN in the letterhead'); assert.match(lhA, /class="lgl">Trigon Civil L\.L\.C</, 'and the legal name');
+    assert.match(lhA, /class="foot"><div class="row"><div>Trigon Civil L\.L\.C · Office 810, Magnum Opus Bay, Business Bay, Dubai, UAE · P\.O\. Box 334112<\/div><div>Lic\. 1656279<\/div>/); assert.match(lhA, /<div class="wm">/);
+    // Letterhead B (official, bilingual): both logos, legal name and licence under each, hairline; contact line and both addresses in the footer
+    const lhB = await (await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).text();
+    assert.match(lhB, /class="logo-ar"/); assert.match(lhB, /<div class="legal"><div>TRIGON CIVIL L\.L\.C · Licence 1656279<\/div><div dir="rtl">تريجون سيفيل ذ\.م\.م · رخصة رقم 1656279<\/div><\/div><div class="hr"><\/div>/); assert.ok(!/class="rules"/.test(lhB));
+    assert.match(lhB, /class="mid">T\/F \+971 4 880 3438 .*info@example\.com .*trigon\.ae .*P\.O\. Box 334112<\/div><div class="row"><div>Office 810, Magnum Opus Bay, Business Bay, Dubai, UAE<\/div><div dir="rtl">مكتب 810، ماغنوم أوبوس باي، الخليج التجاري، دبي، الإمارات · ص\.ب 334112<\/div>/); assert.match(lhB, /<div class="wm">/);
+    // printed documents on the standard letterhead are English only, unless the company turns Arabic labels on in the settings
+    const AR = /[\u0600-\u06FF]/, printed = async u => (await fetch(base + u, { headers: { cookie } })).text();
+    for (const u of ['doc/quotes/' + q, 'doc/invoices/' + inv3, 'doc/statement/' + client + '?from=2020-01-01']) { const h = await printed(u); assert.match(h, /class="lh"/, u); assert.ok(!AR.test(h), u + ' has Arabic text: ' + (h.match(/.{0,30}[\u0600-\u06FF]+/) || [])[0]); }
+    assert.match(await printed('doc/quotes/' + q), /<h2 class="t">Quotation<\/h2>/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice/);
+    assert.equal((await call('PUT', 'settings', { print_arabic: '1' })).s, 200);
+    assert.match(await printed('doc/quotes/' + q), /Quotation \/ عرض سعر/); assert.match(await printed('doc/quotes/' + q), /عرض سعر لـ/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice \/ فاتورة ضريبية/);
+    assert.match(await printed('doc/statement/' + client), /Statement of account \/ كشف حساب/); assert.match(await printed('doc/quotes/' + q), /Authorised signatory \/ المفوّض بالتوقيع/);
+    assert.equal((await call('PUT', 'settings', { print_arabic: '0' })).s, 200);
     for (const n of ['logo', 'logo_ar', 'logo_white', 'logo_line', 'mark']) assert.equal((await fetch(base + 'brand/' + n, { headers: { cookie } })).status, 200);   // (the stamp is not part of the public repository)
     const m3 = mails.length; await call('POST', `invoices/${inv3}/email`, { to: 'client@example.com' });
     const sigMail = mails[m3].body; assert.match(sigMail, /multipart\/related/); assert.match(sigMail, /Content-ID: <brandlogo>/);

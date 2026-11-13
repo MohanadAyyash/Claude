@@ -142,12 +142,12 @@ function printReport() {
   const el = $('#main').cloneNode(true);
   el.querySelectorAll('input,select,textarea').forEach(i => i.replaceWith(document.createTextNode(i.tagName === 'SELECT' ? (i.selectedOptions[0]?.text || '') : i.value)));
   el.querySelectorAll('.noprint,button,a.btn,.sp').forEach(x => x.remove());
-  const contact = [S.phone, S.email, S.website].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+  const contact = [S.phone, S.email, S.website].filter(Boolean).map(x => `<div>${esc(x)}</div>`).join('');
   $('#print-area').innerHTML = `<div class="doc rep"><div class="hd" style="display:flex;justify-content:space-between;align-items:flex-start"><div><img src="/api/brand/logo" style="width:60mm" alt="${esc(S.company_name || '')}" onerror="this.replaceWith(Object.assign(document.createElement('b'),{textContent:'${esc(S.company_name || '')}'}))"></div>
-    <div style="text-align:end;font:7.5pt 'IBM Plex Mono',monospace;color:#8A8578;line-height:1.7"><div>${contact}</div>${S.trn ? `<div>TRN ${esc(S.trn)}</div>` : ''}</div></div><div class="rules"><i></i><i></i><i></i></div>
+    <div style="text-align:end;font-size:8.5pt;line-height:13pt;white-space:nowrap">${contact}${S.trn ? `<div>TRN ${esc(S.trn)}</div>` : ''}</div></div><div class="lhr"></div>
     <div style="font:8pt 'IBM Plex Mono',monospace;color:#8A8578;margin:2mm 0 4mm;display:flex;justify-content:space-between"><span>${esc(location.hash.slice(1) || '')}</span><span>${tr('طُبع بتاريخ', 'Printed')} ${today()} · ${esc(ME.username)}</span></div>${el.innerHTML}
     <div class="sign"><div></div><div style="border:0;position:relative;min-height:26mm"><img src="/api/brand/stamp" style="height:25mm" onerror="this.remove()"><img src="/api/brand/signature" style="height:17mm;position:absolute;inset-inline-start:18mm;top:5mm" onerror="this.remove()"></div></div>
-    <div style="font:6.5pt 'IBM Plex Mono',monospace;color:#8A8578;border-top:.5pt solid #D6D2C8;padding-top:2mm;margin-top:6mm">${esc(S.company_name || '')}${S.address ? ' · ' + esc(S.address) : ''}${S.po_box ? ' · P.O. Box ' + esc(S.po_box) : ''}${S.license_no ? ' · Lic. ' + esc(S.license_no) : ''}</div></div>`;
+    <div style="font-size:7pt;border-top:.5pt solid #D6D2C8;padding-top:3mm;margin-top:6mm;display:flex;justify-content:space-between;gap:8mm"><div>${esc([S.company_name, S.address, S.po_box && 'P.O. Box ' + S.po_box].filter(Boolean).join(' · '))}</div><div style="white-space:nowrap">${S.license_no ? 'Lic. ' + esc(S.license_no) : ''}</div></div></div>`;
   setTimeout(() => window.print(), 450);                                  // let the logo load first
 }
 
@@ -713,6 +713,7 @@ PAGES.settings = async () => {
   main(`<h1>${tr('الإعدادات', 'Settings')}</h1>
   ${admin ? `<div class="card" id="sf"><div class="f2">${F.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, s[k])).join('')}
     ${field({ k: 'vat_registered', ar: 'مسجّل في ضريبة القيمة المضافة؟', en: 'VAT registered?', type: 'select', options: [['1', tr('نعم', 'Yes')], ['0', tr('لا', 'No')]] }, s.vat_registered ?? '1')}
+    ${field({ k: 'print_arabic', ar: 'العناوين العربية في المستندات المطبوعة (مثل: Quotation / عرض سعر)', en: 'Arabic labels on printed documents (e.g. Quotation / عرض سعر)', type: 'select', options: [['0', tr('لا — إنجليزي فقط', 'No — English only')], ['1', tr('نعم — إنجليزي وعربي', 'Yes — English and Arabic')]] }, s.print_arabic ?? '0')}
     ${field({ k: 'bank_details', ar: 'بيانات البنك (تظهر في الفاتورة)', en: 'Bank details (shown on invoices)', type: 'textarea', full: 1 }, s.bank_details)}${field({ k: 'terms', ar: 'الشروط الافتراضية لعروض الأسعار', en: 'Default quotation terms', type: 'textarea', full: 1 }, s.terms)}
     ${field({ k: 'po_notes', ar: 'ملاحظات ثابتة على أوامر الشراء (سطر لكل ملاحظة)', en: 'Standard notes on purchase orders (one per line)', type: 'textarea', full: 1 }, s.po_notes ?? poDef.notes)}${field({ k: 'sc_template', ar: 'نص اتفاقية عقد الباطن القياسي ({{ }} خانات تُعبّأ تلقائياً)', en: 'Standard sub-contract agreement wording ({{ }} fields fill in)', type: 'textarea', full: 1 }, s.sc_template ?? scDef.text)}${field({ k: 'po_conditions', ar: 'الشروط العامة لأوامر الشراء (صفحة ثانية — اتركها فارغة لعدم طباعتها)', en: 'General conditions of purchase (second page — leave empty for none)', type: 'textarea', full: 1 }, s.po_conditions ?? poDef.conditions)}</div>
     <button class="btn" id="save">${tr('حفظ', 'Save')}</button></div>
@@ -742,7 +743,7 @@ PAGES.settings = async () => {
   if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
   $('#pack').onclick = guard(async () => { if (!confirm(tr('سيُركَّب الشعار والختم وتُحدَّث بيانات الشركة القانونية (الاسم، الرخصة، العنوان، ص.ب). متابعة؟', 'This installs the logos and stamp and sets the legal company details (name, licence, address, P.O. Box). Continue?'))) return; await api('POST', 'brand/pack'); S = { ...S, ...(await api('GET', 'settings')) }; toast(tr('تم تركيب الهوية', 'Brand pack installed')); boot(); });
-  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
+  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'print_arabic', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
   if ($('#saveE')) $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure', 'mail_method', 'graph_tenant', 'graph_client', 'graph_secret'].forEach(k => b[k] = val($('#ef'), k)); if (!b.graph_secret) delete b.graph_secret; if (!b.smtp_pass) delete b.smtp_pass; await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
   if ($('#ef')) { const mm = $('#ef [name=mail_method]'), sync = () => $('#ef').querySelectorAll('[data-mm]').forEach(d => { d.style.display = d.dataset.mm === mm.value ? '' : 'none'; }); mm.onchange = sync; sync(); }
   if ($('#test')) $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });
