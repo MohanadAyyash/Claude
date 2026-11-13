@@ -251,7 +251,8 @@ function compliance() {
   if (ctx.chequeAlerts) ctx.chequeAlerts(add);
   if (ctx.treasuryAlerts) ctx.treasuryAlerts(add);
   if (ctx.spendAlerts) ctx.spendAlerts(add);
-  if (ctx.siteAlerts) ctx.siteAlerts(add);                                  // equipment service due, programme activities past their finish date                          // guarantees expiring, projects over budget, cash shortfall ahead                              // post-dated cheques due this week / past their date
+  if (ctx.siteAlerts) ctx.siteAlerts(add);
+  if (ctx.hiredAlerts) ctx.hiredAlerts(add);                                // rented equipment past its return date or standing idle                                  // equipment service due, programme activities past their finish date                          // guarantees expiring, projects over budget, cash shortfall ahead                              // post-dated cheques due this week / past their date
   if (ctx.backupStatus && fs.existsSync(path.join(DATA_DIR, 'backups'))) { const bk = ctx.backupStatus(); if (bk.stale) add('bad', 'backup_stale', { days: bk.age_days }); if (bk.last_copy && !bk.last_copy.ok) add('bad', 'backup_copy', { who: bk.last_copy.dir }); }
   const { invoices } = enrich();
   const noTrn = new Set(invoices.filter(i => !i.voided && i.warnings.includes('customer_trn_missing')).map(i => i.client_name));
@@ -395,7 +396,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {

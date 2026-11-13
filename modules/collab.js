@@ -53,6 +53,7 @@ module.exports = ctx => {
       const cert = db.prepare("SELECT COALESCE(MAX(cumulative),0) c FROM sub_certs WHERE subcontract_id=? AND status!='draft'").get(sc.id).c;
       committed.subcontract = round((committed.subcontract || 0) + Math.max(0, sc.contract_value - cert));
     }
+    if (ctx.hiredAccrued) { const h = ctx.hiredAccrued(pid); if (h.labour) committed.labour = round((committed.labour || 0) + h.labour); if (h.equipment) committed.equipment = round((committed.equipment || 0) + h.equipment); }   // hours logged, not invoiced yet
     const progress = p.boq_progress || 0, lines = CATS.map(c => {
       const b = set[c] || 0, a = actual[c] || 0, cm = committed[c] || 0;
       return { category: c, budget: b, actual: a, committed: cm, remaining: round(b - a - cm), used_pct: b ? round((a + cm) / b * 100) : null };

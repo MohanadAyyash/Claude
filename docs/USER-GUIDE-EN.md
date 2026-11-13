@@ -56,6 +56,7 @@
 40. [Two-step sign-in](#40-two-step-sign-in)
 41. [Equipment log](#41-equipment-log)
 42. [Project programme (Gantt)](#42-project-programme-gantt)
+43. [Hired labour and rented equipment](#43-hired-labour-and-rented-equipment)
 
 ---
 
@@ -1946,5 +1947,54 @@ Menu: **Programme (Gantt)**. Choose the project at the top of the screen.
 1. Actual against planned progress, and late activities.
 2. The Gantt chart with the today line.
 3. The activity table and each status; click an activity to edit it.
+
+<!--/img-->
+
+---
+
+## 43. Hired labour and rented equipment
+
+Menu: **Hired labour & rentals**. For workers who are not on the payroll (from a labour-supply company, or daily workers paid in cash) and for rented equipment. Choose **Labour** or **Rented equipment** at the top of the screen.
+
+**The rule: everything is worked out by the hour.** Each source or agreement has a rate (per month, day or hour) and the hours that rate covers, so the hourly rate = rate ÷ hours. Example: an excavator at 13,000 a month on a 260-hour basis = 50 an hour; a 12-hour day costs 600, a 6-hour day costs 300.
+
+**1. Add the agreement or source** (administrator, accountant, project manager, procurement):
+1. **+ Rental agreement** for a machine: equipment, rental company, project, rate per (month / day / hour), the rate, the **hours the rate covers** (a month is usually 260 = 26 days × 10 hours, a day 10), start date and expected return date.
+2. **+ Labour source**: choose **Labour-supply company** (and pick the company) or **Daily worker** (no company), then the trade or worker name and the rate in the same way.
+
+**2. Log the hours every day** (including foremen and site engineers, for their own projects): **+ Log hours** → the machine or trade, date, project, number of workers, hours. Site roles see hours only, never rates.
+
+**3. Accrued, not invoiced:** logged hours that are not invoiced yet appear in the **Accrued, not invoiced** table per supplier and project, and on the project budget as **committed** cost.
+
+**4. When the supplier's invoice arrives** (administrator and accountant): **Match supplier invoice** → enter the invoice number, amount and VAT. The system shows the difference between the invoice and the logged hours; if there is one, check with the supplier before saving. An ordinary supplier bill is recorded on the project (labour or equipment) and those hours are closed; then pay it under **Payments**.
+
+**5. Daily workers:** **Pay daily workers** → choose cash or petty cash. A labour expense is booked on the project, paid in cash, and the hours are closed.
+
+**6. When the machine is returned or the source ends:** open the agreement and enter the **actual return date**; it is closed and no longer offered for new hours.
+
+**Dashboard alerts:** a hired item past its end date and still open, and a rented machine with no hours for 5 days (you pay its rent while it stands).
+
+**Notes:** rates are before VAT; VAT is entered when the invoice is matched. If your agreement guarantees the rental company a minimum number of hours per month, the system does not work that out: enter the real invoice amount when matching. Employing daily workers in cash outside the payroll has legal requirements (work permits and the Wage Protection System); confirm their status with whoever handles HR.
+
+<!--img-->
+
+**📷 Rented equipment**
+
+![Rented equipment](../public/guide/img/en/n9-hired-equipment.jpg)
+
+1. Summary: machines on hire, hours this month, accrued not invoiced.
+2. Each agreement with its rate and how it works out per hour, and a flag when past its return date.
+3. Accrued amounts and the button to match the supplier invoice.
+
+<!--/img-->
+
+<!--img-->
+
+**📷 Hired and daily labour**
+
+![Hired and daily labour](../public/guide/img/en/n10-hired-labour.jpg)
+
+1. Labour sources: a supply company or a daily worker.
+2. Pay daily workers for the daily ones; match the invoice for the supply company.
 
 <!--/img-->
