@@ -340,6 +340,7 @@ server.listen(0, async () => {
     assert.match(lhA, /<div class="contact">.*<div>T\/F \+971 4 880 3438<\/div><div>info@example\.com<\/div><div>trigon\.ae<\/div>/); assert.match(lhA, /<div class="hr"><\/div>/); assert.ok(!/class="rules"/.test(lhA), 'the three-rule divider is gone');
     assert.match(lhA, /TRN 100123456700003/, 'tax invoices keep the TRN in the letterhead'); assert.ok(!/class="lgl"/.test(lhA) && !/<div class="contact"><div>Trigon/.test(lhA), 'the company name is not repeated above the contact lines (it is in the logo and in the footer)');
     assert.match(lhA, /class="foot"><div class="row"><div>Trigon Civil L\.L\.C · Office 810, Magnum Opus Bay, Business Bay, Dubai, UAE · P\.O\. Box 334112<\/div><div>Lic\. 1656279<\/div>/); assert.match(lhA, /<div class="wm">/);
+    assert.match(lhA, /@bottom-right\{content:"Page " counter\(page\) " of " counter\(pages\)/, 'every printed page is numbered: Page n of N');
     // Letterhead B (official, bilingual): both logos, legal name and licence under each, hairline; contact line and both addresses in the footer
     const lhB = await (await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).text();
     assert.match(lhB, /class="logo-ar"/); assert.match(lhB, /<div class="legal"><div>TRIGON CIVIL L\.L\.C · Licence 1656279<\/div><div dir="rtl">تريجون سيفيل ذ\.م\.م · رخصة رقم 1656279<\/div><\/div><div class="hr"><\/div>/); assert.ok(!/class="rules"/.test(lhB));

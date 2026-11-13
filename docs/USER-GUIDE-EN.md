@@ -1718,7 +1718,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 
 ---
 
-**Letterhead on every page:** printed documents repeat the letterhead at the top of every page and keep room for the footer, so text never runs under them. Tax invoices, credit notes and subcontractor certificates show the **legal name** and TRN at the top; proformas show no TRN.
+**Letterhead on every page:** printed documents repeat the letterhead at the top of every page and keep room for the footer, so text never runs under them, and every page is numbered at the bottom (`Page 1 of 2`). Tax invoices, credit notes and subcontractor certificates show the TRN at the top and the **legal name** in the footer of every page; proformas and quotations show no TRN.
 
 ---
 
