@@ -424,7 +424,7 @@ Menu: **Quotations**.
 
 ### 6.2 Send it to the client
 Open the quotation, then:
-- **Print** or **PDF** — prints with the cover page and letterhead. (Add `?cover=0` to the print link to print without the cover.)
+- **Print** or **PDF** — prints with a cover sheet on the letterhead — reference and date, client, project summary, total excluding and including VAT, and the signature and stamp with the name and title of the person issuing it (from **Settings → My profile**) — followed by the items page. (Add `?cover=0` to the print link to print without the cover.)
 - **Email** — type the client's email; the PDF is attached.
 - **🔗 Client acceptance link** — gives a link the client opens without signing in. They review the quotation and either **accept** with their name and signature or **decline** with a comment. You are notified at once and the result shows on the quotation. Use **Copy**, **Email with the quotation** or **Preview**.
 - Change **Status** to **Sent**, then **Accepted** or **Rejected** if you follow up by hand.

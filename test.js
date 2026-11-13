@@ -338,7 +338,7 @@ server.listen(0, async () => {
     await call('PUT', 'settings', { email: 'info@example.com' });
     const lhA = await (await fetch(base + 'doc/invoices/' + inv3, { headers: { cookie } })).text();
     assert.match(lhA, /<div class="contact">.*<div>T\/F \+971 4 880 3438<\/div><div>info@example\.com<\/div><div>trigon\.ae<\/div>/); assert.match(lhA, /<div class="hr"><\/div>/); assert.ok(!/class="rules"/.test(lhA), 'the three-rule divider is gone');
-    assert.match(lhA, /TRN 100123456700003/, 'tax invoices keep the TRN in the letterhead'); assert.match(lhA, /class="lgl">Trigon Civil L\.L\.C</, 'and the legal name');
+    assert.match(lhA, /TRN 100123456700003/, 'tax invoices keep the TRN in the letterhead'); assert.ok(!/class="lgl"/.test(lhA) && !/<div class="contact"><div>Trigon/.test(lhA), 'the company name is not repeated above the contact lines (it is in the logo and in the footer)');
     assert.match(lhA, /class="foot"><div class="row"><div>Trigon Civil L\.L\.C · Office 810, Magnum Opus Bay, Business Bay, Dubai, UAE · P\.O\. Box 334112<\/div><div>Lic\. 1656279<\/div>/); assert.match(lhA, /<div class="wm">/);
     // Letterhead B (official, bilingual): both logos, legal name and licence under each, hairline; contact line and both addresses in the footer
     const lhB = await (await fetch(base + 'doc/letter/' + lt.id, { headers: { cookie } })).text();
@@ -349,15 +349,23 @@ server.listen(0, async () => {
     for (const u of ['doc/quotes/' + q, 'doc/invoices/' + inv3, 'doc/statement/' + client + '?from=2020-01-01']) { const h = await printed(u); assert.match(h, /class="lh"/, u); assert.ok(!AR.test(h), u + ' has Arabic text: ' + (h.match(/.{0,30}[\u0600-\u06FF]+/) || [])[0]); }
     assert.match(await printed('doc/quotes/' + q), /<h2 class="t">Quotation<\/h2>/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice/);
     assert.equal((await call('PUT', 'settings', { print_arabic: '1' })).s, 200);
-    assert.match(await printed('doc/quotes/' + q), /Quotation \/ عرض سعر/); assert.match(await printed('doc/quotes/' + q), /عرض سعر لـ/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice \/ فاتورة ضريبية/);
-    assert.match(await printed('doc/statement/' + client), /Statement of account \/ كشف حساب/); assert.match(await printed('doc/quotes/' + q), /Authorised signatory \/ المفوّض بالتوقيع/);
+    assert.match(await printed('doc/quotes/' + q), /Quotation \/ عرض سعر/); assert.match(await printed('doc/quotes/' + q), /<div class="sub" dir="rtl">عرض سعر<\/div>/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice \/ فاتورة ضريبية/);
+    assert.match(await printed('doc/statement/' + client), /Statement of account \/ كشف حساب/); assert.match(await printed('doc/quotes/' + q + '?cover=0'), /Authorised signatory \/ المفوّض بالتوقيع/);
     assert.equal((await call('PUT', 'settings', { print_arabic: '0' })).s, 200);
     for (const n of ['logo', 'logo_ar', 'logo_white', 'logo_line', 'mark']) assert.equal((await fetch(base + 'brand/' + n, { headers: { cookie } })).status, 200);   // (the stamp is not part of the public repository)
     const m3 = mails.length; await call('POST', `invoices/${inv3}/email`, { to: 'client@example.com' });
     const sigMail = mails[m3].body; assert.match(sigMail, /multipart\/related/); assert.match(sigMail, /Content-ID: <brandlogo>/);
     const sh = Buffer.from(sigMail.split('multipart/related')[1].split('text/html')[1].split('\n\n')[1].split('--')[0].replace(/\s/g, ''), 'base64').toString(); assert.match(sh, /Mohanad Ayyash/); assert.match(sh, /Managing Partner/); assert.match(sh, /cid:brandlogo/);
     // quotation printed with the brand cover page; letters on the official bilingual letterhead
-    const qh = await (await fetch(base + 'doc/quotes/' + q, { headers: { cookie } })).text(); assert.match(qh, /class="cover"/); assert.match(qh, /Quotation for Villa/); assert.match(qh, /class="rules"/);
+    const qh = await (await fetch(base + 'doc/quotes/' + q, { headers: { cookie } })).text();
+    // cover sheet = first page on the letterhead: REF / DATE, TO, title band, summary table, totals, covering paragraph, signature with the legal name
+    assert.match(qh, /<table class="pg cv"[^>]*><thead><tr><td><div class="lh">/, 'the cover carries the letterhead'); assert.match(qh, /class="cover"/); assert.ok(!/class="rules"/.test(qh));
+    assert.match(qh, /<span>REF<\/span> <b class="mono">TC\d\d\/\d\d-[A-Z]+<\/b>/); assert.match(qh, /<span>DATE<\/span> <b class="mono">\d{1,2} [A-Z][a-z]+ \d{4}<\/b>/); assert.match(qh, /<td>TO<\/td><td class="nm">/);
+    assert.match(qh, /<div class="cv-band"><h1>QUOTATION<\/h1><div class="sub">Villa<\/div>/); assert.match(qh, /<td>Project<\/td><td>Villa<\/td>/); assert.match(qh, /<td>Validity<\/td><td>\d+ days from date of issue<\/td>/);
+    { const qd = (await call('GET', 'quotes/' + q)).j, m2 = n => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      assert.ok(qh.includes(`<span>TOTAL AMOUNT (Excl. VAT ${qd.vat_pct}%)</span><b class="mono">AED ${m2(qd.subtotal)}</b>`), 'cover total excl. VAT = the quotation subtotal'); assert.ok(qh.includes(`<span>TOTAL INCLUSIVE OF VAT ${qd.vat_pct}%</span><b class="mono">AED ${m2(qd.total)}</b>`), 'cover total incl. VAT = the quotation total'); }
+    assert.match(qh, /FOR &amp; ON BEHALF OF<\/div><div class="lg">TRIGON CIVIL L\.L\.C</); assert.equal(qh.split('class="sign"').length, 1, 'signed once, on the cover');
+    assert.equal((await (await fetch(base + 'doc/quotes/' + q + '?cover=0', { headers: { cookie } })).text()).split('class="sign"').length, 2, 'without the cover the items page is signed');
     assert.ok(!/class="cover"/.test(await (await fetch(base + 'doc/quotes/' + q + '?cover=0', { headers: { cookie } })).text()));
     assert.equal((await call('POST', 'brand/pack')).s, 200);                                                                                  // idempotent
     await loginAs('pm1'); assert.equal((await call('POST', 'brand/pack')).s, 403); cookie = adminCookie;
