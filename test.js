@@ -347,9 +347,9 @@ server.listen(0, async () => {
     // printed documents on the standard letterhead are English only, unless the company turns Arabic labels on in the settings
     const AR = /[\u0600-\u06FF]/, printed = async u => (await fetch(base + u, { headers: { cookie } })).text();
     for (const u of ['doc/quotes/' + q, 'doc/invoices/' + inv3, 'doc/statement/' + client + '?from=2020-01-01']) { const h = await printed(u); assert.match(h, /class="lh"/, u); assert.ok(!AR.test(h), u + ' has Arabic text: ' + (h.match(/.{0,30}[\u0600-\u06FF]+/) || [])[0]); }
-    assert.match(await printed('doc/quotes/' + q), /<h2 class="t">Quotation<\/h2>/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice/);
+    assert.match(await printed('doc/quotes/' + q), /<h1>QUOTATION<\/h1>/); assert.match(await printed('doc/quotes/' + q), /<h2 class="t bq">BILL OF QUANTITIES — VILLA<\/h2>/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice/);
     assert.equal((await call('PUT', 'settings', { print_arabic: '1' })).s, 200);
-    assert.match(await printed('doc/quotes/' + q), /Quotation \/ عرض سعر/); assert.match(await printed('doc/quotes/' + q), /<div class="sub" dir="rtl">عرض سعر<\/div>/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice \/ فاتورة ضريبية/);
+    assert.match(await printed('doc/quotes/' + q), /<div class="sub" dir="rtl">عرض سعر<\/div>/); assert.match(await printed('doc/invoices/' + inv3), /Tax Invoice \/ فاتورة ضريبية/);
     assert.match(await printed('doc/statement/' + client), /Statement of account \/ كشف حساب/); assert.match(await printed('doc/quotes/' + q + '?cover=0'), /Authorised signatory \/ المفوّض بالتوقيع/);
     assert.equal((await call('PUT', 'settings', { print_arabic: '0' })).s, 200);
     for (const n of ['logo', 'logo_ar', 'logo_white', 'logo_line', 'mark']) assert.equal((await fetch(base + 'brand/' + n, { headers: { cookie } })).status, 200);   // (the stamp is not part of the public repository)

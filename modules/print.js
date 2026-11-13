@@ -18,13 +18,15 @@ module.exports = ctx => {
     if (isQ && !(q && q.get && q.get('cover') === '0')) {          // quotations open with the brand cover page
       const cur = S.currency || 'AED', u = me && me.id ? ctx.db.prepare('SELECT username,display_name,job_title,mobile FROM users WHERE id=?').get(me.id) : null;   // signed by the person who issues it (profile)
       out.cover = cover(S, ctx.brand, { ref: doc.number, date: doc.date, to: doc.client_name, subtitle: doc.project_name, title_ar: S.print_arabic === '1' ? 'عرض سعر' : '',
-        rows: [['Project', doc.project_name], ['Scope of Work', (doc.items[0] || {}).description], ['Validity', `${doc.validity_days} days from date of issue`]],
+        attention: doc.attention, rows: [['Project', doc.project_name], ['Location', doc.location], ['Plot No.', doc.plot_no], ['NOC Reference', doc.noc_ref], ['Scope of Work', doc.scope || (doc.items[0] || {}).description], ['Contract Basis', doc.contract_basis], ['Validity', `${doc.validity_days} days from date of issue`]],
+        payment: String(doc.payment_terms || '').split(/\r?\n/).map(l => /^\s*([^\s:|–—-]+)\s*[:|–—-]\s*(.+)$/.exec(l)).filter(Boolean).map(m => [m[1], m[2].trim()]).slice(0, 6),   // one stage per line: "25% - Upon signing of the agreement"
         totals: doc.vat_pct > 0 ? [[`TOTAL AMOUNT (Excl. VAT ${doc.vat_pct}%)`, `${cur} ${money(doc.subtotal)}`], [`TOTAL INCLUSIVE OF VAT ${doc.vat_pct}%`, `${cur} ${money(doc.total)}`]] : [['TOTAL AMOUNT', `${cur} ${money(doc.total)}`]],
         intro: 'We are pleased to submit our quotation for the above-mentioned works. The detailed Bill of Quantities is attached herewith. We trust our offer meets your requirements and remain at your disposal for any clarification.',
         signer: u ? { name: u.display_name || u.username, title: u.job_title, contact: [u.mobile, S.email].filter(Boolean).join(' · ') } : {} });
       out.stamp = false; out.signature = false;                    // signed and stamped once, on the cover
     }
     if (isQ) {
+      out.ref = out.date = undefined;                               // the bill of quantities carries its own reference line
       out.trn = false;                                              // a quotation is not a tax document: the letterhead as designed, without the TRN line
     }
     return out;
