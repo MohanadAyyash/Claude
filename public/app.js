@@ -138,10 +138,25 @@ const main = html => { $('#main').innerHTML = html; };
 
 // ---- printing any page on the company letterhead ------------------------------------
 const xl = (name, qs = '') => `<a class="btn sec sm noprint" href="/api/export/${name}${qs}" target="_blank">Excel</a>`;
-function printReport() {
+// iPhone / iPad: the home-screen app cannot print (window.print does nothing there) and Safari blocks a delayed print,
+// so the page is turned into a PDF on the server and opened in the phone's PDF viewer (share → print, save, send)
+const iosDevice = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+async function reportPdf(el) {
+  const title = ($('#main h1')?.textContent || location.hash.slice(1) || 'Report').trim();
+  const m = modal(`<h2>${tr('تجهيز ملف PDF…', 'Preparing the PDF…')}</h2><p class="muted">${tr('لحظات من فضلك.', 'One moment please.')}</p>`);
+  try {
+    const r = await api('POST', 'report-pdf', { title, html: el.innerHTML, lang });
+    m.querySelector('.modal').innerHTML = `<h2>${tr('ملف PDF جاهز', 'The PDF is ready')}</h2><p class="muted">${tr('افتحه، ثم اضغط زر المشاركة لطباعته أو حفظه أو إرساله. الرابط صالح 10 دقائق.', 'Open it, then use the share button to print, save or send it. The link works for 10 minutes.')}</p>
+      <div class="acts"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener" style="text-decoration:none">📄 ${tr('فتح PDF', 'Open PDF')}</a><button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`;
+    $('#cancel', m).onclick = closeModal;
+    return true;
+  } catch (e) { closeModal(); toast(e.message); return false; }
+}
+async function printReport() {
   const el = $('#main').cloneNode(true);
   el.querySelectorAll('input,select,textarea').forEach(i => i.replaceWith(document.createTextNode(i.tagName === 'SELECT' ? (i.selectedOptions[0]?.text || '') : i.value)));
   el.querySelectorAll('.noprint,button,a.btn,.sp').forEach(x => x.remove());
+  if (iosDevice && !window.STANDALONE && await reportPdf(el)) return;
   const contact = [S.phone, S.email, S.website].filter(Boolean).map(x => `<div>${esc(x)}</div>`).join('');
   $('#print-area').innerHTML = `<div class="doc rep"><div class="hd" style="display:flex;justify-content:space-between;align-items:flex-start"><div><img src="/api/brand/logo" style="width:60mm" alt="${esc(S.company_name || '')}" onerror="this.replaceWith(Object.assign(document.createElement('b'),{textContent:'${esc(S.company_name || '')}'}))"></div>
     <div style="text-align:end;font-size:8.5pt;line-height:13pt;white-space:nowrap">${contact}${S.trn ? `<div>TRN ${esc(S.trn)}</div>` : ''}</div></div><div class="lhr"></div>
