@@ -97,6 +97,15 @@ server.listen(0, async () => {
     assert.equal((await call('DELETE', 'push/subscribe', { endpoint: pushOrigin + '/phone1' })).s, 200);   // someone else's device: untouched
     cookie = admin; assert.equal((await call('GET', 'push/key')).j.devices, 1);
     console.log('✔ static gzip/ETag/304, versioned service worker, compressed API, Web Push (VAPID verified, payload decrypted), 410 cleanup, inbox, roles');
+    // iPhone home-screen app runs under the status bar (viewport-fit=cover + black-translucent): what starts at the top keeps clear of it
+    { const css = fs.readFileSync(path.join(__dirname, 'public', 'style.css'), 'utf8'), idxHtml = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+      assert.match(idxHtml, /viewport-fit=cover/); assert.match(idxHtml, /black-translucent/);
+      const phone = css.slice(css.lastIndexOf('@media(max-width:800px)'));
+      assert.match(phone, /\.modal\{[^}]*padding-top:calc\([^)]*env\(safe-area-inset-top\)/, 'full-screen forms on the phone start below the clock');
+      assert.match(phone, /\.login\{[^}]*env\(safe-area-inset-top\)/, 'login screen below the clock');
+      for (const sel of ['side', 'main', 'overlay']) assert.match(css, new RegExp('\\.' + sel + '\\{[^}]*padding-top:calc\\([^)]*env\\(safe-area-inset-top\\)'), `.${sel} below the clock on iPad`);
+      assert.match(css, /\.topbar\{[^}]*env\(safe-area-inset-top\)/); assert.match(css, /\.toast\{[^}]*env\(safe-area-inset-bottom\)/);
+      console.log('✔ iPhone / iPad home-screen app: forms, login, pages and the menu keep clear of the status bar'); }
     console.log('MOBILE TESTS PASSED');
   } catch (e) { console.error('FAIL', e); process.exitCode = 1; }
   finally { push.close(); server.close(); setTimeout(() => process.exit(process.exitCode || 0), 100); }

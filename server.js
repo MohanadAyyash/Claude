@@ -440,6 +440,7 @@ async function api(req, res, url) {
   }
 
   if (a === 'brand' && method === 'GET' && ['logo', 'logo_white', 'mark'].includes(b)) return void await MODULES[0].handle(req, res, url, parts, null);   // logos are public (login screen)
+  if (a === 'report-pdf' && b && method === 'GET' && ctx.servePdfToken) return void ctx.servePdfToken(res, b);   // the random link is the key (the phone's PDF viewer may not carry the login)
   const me = sessionUser(req);
   if (!me) return send(res, 401, { error: 'unauthorized' });
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });

@@ -88,3 +88,17 @@ body[data-role=viewer] #prt{display:inline-block}
   .docitems td[data-amt]{grid-column:1/3;align-self:center;font-weight:700;text-align:start}.docitems td:last-child{position:absolute;top:2px;inset-inline-end:6px}
 }
 .side a.guide{margin:10px 12px 0;border:1px solid rgba(255,255,255,.25);border-radius:8px;text-align:center;color:#fff}
+
+/* iPhone / iPad home-screen app: the page runs under the clock / status bar (black-translucent), so everything that starts at the
+   top of the screen keeps clear of it. env(safe-area-inset-*) is 0 on computers and older phones, so nothing moves there. */
+.login{margin-top:calc(10vh + env(safe-area-inset-top))}
+.toast{bottom:calc(20px + env(safe-area-inset-bottom))}
+@media(min-width:801px){
+  .side{padding-top:calc(14px + env(safe-area-inset-top))}
+  .main{padding-top:calc(22px + env(safe-area-inset-top))}
+  .overlay{padding-top:calc(30px + env(safe-area-inset-top))}
+}
+@media(max-width:800px){
+  .modal{padding-top:calc(16px + env(safe-area-inset-top))}          /* forms open full screen: their title was hidden under the clock */
+  .login{margin-top:calc(6vh + env(safe-area-inset-top))}
+}
