@@ -33,7 +33,7 @@ if (require.main === module) server.listen(0, async () => {
     const fin = (await api(page, 'GET', 'financials')).j; assert.equal(fin.tb_debit, fin.tb_credit);
     { const m = (await api(page, 'GET', 'm365/status')).j; assert.equal(m.available, false); assert.equal(m.enabled, false); assert.ok(m.missing.some(x => /standalone/.test(x)), JSON.stringify(m));   // no Microsoft 365 link in the browser edition
       const bundle = require('fs').readFileSync(require('path').join(__dirname, '..', 'dist', 'erp-server.js'), 'utf8');
-      assert.ok(bundle.includes('jose is not part of the standalone edition') && !/ERR_JWKS_NO_MATCHING_KEY|createRemoteJWKSet|JWSSignatureVerificationFailed/.test(bundle), 'jose is not bundled'); }
+      assert.ok(bundle.includes('jose is not part of the standalone edition') && !/JSON Web Key Set HTTP response|JWSSignatureVerificationFailed|signature verification failed/.test(bundle), 'jose library code is not bundled'); }
     assert.equal((await api(page, 'POST', 'brand/pack')).s, 200); assert.equal((await api(page, 'GET', 'settings')).j.license_no, '1656279');
     const doc = await page.evaluate(async id => (await fetch('/api/doc/invoices/' + id)).text(), inv.id); assert.match(doc, /Tax Invoice/); assert.match(doc, /data:image\/png;base64/);
     // ---- data survives a reload (IndexedDB) and the login session too
