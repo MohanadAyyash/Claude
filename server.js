@@ -264,7 +264,8 @@ function compliance() {
 }
 
 // ---- auth -----------------------------------------------------------------
-const isHttps = req => req.headers['x-forwarded-proto'] === 'https' || process.env.SECURE_COOKIES === '1';
+// the scheme the client used: X-Forwarded-Proto is believed only behind the reverse proxy (TRUST_PROXY=1), first value, trimmed, any case
+const isHttps = req => process.env.SECURE_COOKIES === '1' || (process.env.TRUST_PROXY === '1' && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https');
 const cookie = (req, token, maxAge) => `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
 const fails = new Map();                                    // ip -> [timestamps of failed logins]
 // behind the reverse proxy the client address is the LAST X-Forwarded-For hop (the one the proxy added); earlier hops are whatever the client sent
@@ -391,6 +392,7 @@ const mailCfgFor = () => {
 };
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
 ctx.siteScope = me => siteScope(me);
+ctx.isHttps = isHttps;
 ctx.applyPayroll = (...a) => applyPayroll(...a);
 // brand e-mail signature: Arial text block + the one-line logo as an inline image
 ctx.signature = user => {

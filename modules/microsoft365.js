@@ -12,7 +12,8 @@ const SCOPES = 'openid profile email offline_access User.Read';
 const STATE_TTL = 10 * 60e3, HTTP_TIMEOUT = 10e3, PROVIDER = 'microsoft', CLOCK_SKEW = 60;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const B64U = /^[A-Za-z0-9_-]+$/;
-const loadJose = () => { try { return require('jose'); } catch { return null; } };   // npm dependency: when it is missing the link stays closed
+const loadJose = () => { try { return require('jose'); } catch { return null; } };   // runtime dependency installed by the update (npm ci); if it is missing the link stays closed
+const STANDALONE = typeof process === 'undefined' || process.platform === 'browser';      // the browser edition cannot hold a client secret or receive the callback
 
 module.exports = ctx => {
   const { db, send, audit, readBody } = ctx;
@@ -42,7 +43,8 @@ module.exports = ctx => {
     let ru = null; try { ru = new URL(c.redirect); } catch { /* invalid */ }
     if (!ru || ru.pathname !== '/auth/microsoft/callback' || ru.search || ru.hash || ru.username || !(ru.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(ru.hostname))) missing.push('M365_REDIRECT_URI');
     if (!c.key) missing.push('M365_ENCRYPTION_KEY');
-    if (!loadJose()) missing.push('jose (run: npm install --omit=dev)');
+    if (STANDALONE) missing.push('not available in the standalone (browser) edition');
+    else if (!loadJose()) missing.push('jose (the update installs it with npm ci --omit=dev)');
     if (!identityIndex) missing.push('m365_connections: one Microsoft account is linked to several users');
     return { ...c, redirectUrl: ru, issuer: `${c.loginBase}/${c.tenant}/v2.0`, jwksUri: `${c.loginBase}/${c.tenant}/discovery/v2.0/keys`, missing, configured: missing.length === 0 };
   }
@@ -162,7 +164,7 @@ module.exports = ctx => {
   const proxied = () => process.env.TRUST_PROXY === '1';
   const lastHop = v => String(v || '').split(',').pop().trim();
   const reqHost = req => (proxied() && req.headers['x-forwarded-host'] ? lastHop(req.headers['x-forwarded-host']) : String(req.headers.host || '')).toLowerCase();
-  const secureCookie = (req, c) => c.redirectUrl.protocol === 'https:' || process.env.SECURE_COOKIES === '1' || (proxied() && lastHop(req.headers['x-forwarded-proto']) === 'https');
+  const secureCookie = (req, c) => c.redirectUrl.protocol === 'https:' || ctx.isHttps(req);   // same proxy rule as the ERP session cookie
   const BIND = 'm365_flow';
   const bindCookie = (req, c, v, age) => `${BIND}=${v}; HttpOnly; SameSite=Lax; Path=/auth/microsoft; Max-Age=${age}${secureCookie(req, c) ? '; Secure' : ''}`;   // Lax: it must come back on Microsoft's top-level redirect
   const readBind = req => (/(?:^|;\s*)m365_flow=([A-Za-z0-9_-]{43})(?:;|$)/.exec(req.headers.cookie || '') || [])[1] || '';
@@ -173,7 +175,7 @@ module.exports = ctx => {
     if (url.pathname !== '/auth/microsoft' && url.pathname !== '/auth/microsoft/callback') return false;
     if (req.method !== 'GET') return html(res, 405, 'Not allowed', 'Use the Connect button in Settings.'), true;
     const c = cfg(); noteConfig(c);
-    if (!c.enabled) return html(res, 404, 'Microsoft 365 is off', 'The Microsoft 365 link is not enabled on this server.'), true;
+    if (!c.enabled || STANDALONE) return html(res, 404, 'Microsoft 365 is off', 'The Microsoft 365 link is not enabled on this server.'), true;
     if (!c.configured) return html(res, 503, 'Microsoft 365 is not configured', 'The server settings for Microsoft 365 are incomplete. Ask the administrator to check the server.'), true;
     if (reqHost(req) !== c.redirectUrl.host.toLowerCase()) return html(res, 400, 'Wrong address', 'Open the system at its registered address and try again.'), true;   // exactly the registered host
     prune();
@@ -244,7 +246,7 @@ module.exports = ctx => {
       const c = cfg(); noteConfig(c); prune();
       if (b === 'status' && req.method === 'GET') {
         const link = db.prepare('SELECT email, display_name, tenant_id, expires_at, updated_at FROM m365_connections WHERE user_id=?').get(me.id);
-        return send(res, 200, { enabled: c.enabled, configured: c.enabled && c.configured, missing: c.enabled ? c.missing : [],
+        return send(res, 200, { available: !STANDALONE, enabled: c.enabled && !STANDALONE, configured: c.enabled && c.configured, missing: c.enabled || STANDALONE ? c.missing : [],
           tenant_id: c.tenant || null, client_id: c.clientId || null, redirect_uri: c.redirect || null, sharepoint_site_id: c.siteId || null, sharepoint_drive_id: c.driveId || null,
           client_secret_set: !!c.secret, encryption_key_set: !!c.key, scopes: SCOPES.split(' '),
           connection: link ? { email: link.email, display_name: link.display_name, tenant_id: link.tenant_id, linked_at: link.updated_at } : null }), true;

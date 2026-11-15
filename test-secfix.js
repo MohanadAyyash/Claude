@@ -54,6 +54,20 @@ server.listen(0, async () => {
     cookie = first; assert.equal((await call('GET', 'quotes')).s, 401, 'the other session is gone'); cookie = jar.view; assert.equal((await call('GET', 'quotes')).s, 200); cookie = jar.admin || cookie;
     console.log('✔ password change: current password required, other sessions signed out');
 
+    // ---- X-Forwarded-Proto is believed only behind the proxy (TRUST_PROXY=1): first value, trimmed, any case
+    { const saved = { tp: process.env.TRUST_PROXY, sc: process.env.SECURE_COOKIES };
+      const loginWith = async (headers, env) => { delete process.env.TRUST_PROXY; delete process.env.SECURE_COOKIES; Object.assign(process.env, env);
+        const r = await fetch(base + 'login', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ username: 'admin', password: 'secret12' }) });
+        assert.equal(r.status, 200, 'login works'); return { secure: /;\s*Secure/i.test(r.headers.get('set-cookie') || ''), hsts: !!r.headers.get('strict-transport-security') }; };
+      assert.deepEqual(await loginWith({}, {}), { secure: false, hsts: false }, 'local http development: plain cookie');
+      assert.deepEqual(await loginWith({ 'X-Forwarded-Proto': 'https' }, {}), { secure: false, hsts: false }, 'direct request: a forged X-Forwarded-Proto is ignored');
+      assert.deepEqual(await loginWith({ 'X-Forwarded-Proto': 'https' }, { TRUST_PROXY: '1' }), { secure: true, hsts: true }, 'behind the proxy (office tunnel / Docker)');
+      assert.deepEqual(await loginWith({ 'X-Forwarded-Proto': ' HTTPS , http' }, { TRUST_PROXY: '1' }), { secure: true, hsts: true }, 'first value, trimmed, any case');
+      assert.deepEqual(await loginWith({ 'X-Forwarded-Proto': 'http, https' }, { TRUST_PROXY: '1' }), { secure: false, hsts: false }, 'only the first value counts');
+      assert.deepEqual(await loginWith({ 'X-Forwarded-Proto': 'http' }, { TRUST_PROXY: '1' }), { secure: false, hsts: false });
+      assert.deepEqual(await loginWith({}, { SECURE_COOKIES: '1' }), { secure: true, hsts: true }, 'SECURE_COOKIES=1 always');
+      delete process.env.TRUST_PROXY; delete process.env.SECURE_COOKIES; if (saved.tp !== undefined) process.env.TRUST_PROXY = saved.tp; if (saved.sc !== undefined) process.env.SECURE_COOKIES = saved.sc; }
+    console.log('✔ session cookie Secure / HSTS: X-Forwarded-Proto only with TRUST_PROXY=1 (first value, trimmed, any case); SECURE_COOKIES=1 and local http unchanged');
     // ---- lockout per account even when the address changes; dates validated; oversized body → 413
     cookie = '';
     for (let i = 0; i < 12; i++) assert.equal((await call('POST', 'login', { username: 'fore', password: 'bad' + i })).s, i < 8 ? 401 : 429);

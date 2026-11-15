@@ -24,5 +24,12 @@ Arabic and English UI. Treat it like financial software: a silent wrong number i
 4. **Money, tax and payroll changes need a person's sign-off.** Changes to VAT, payroll, end-of-service, ledger postings, invoice numbering or rounding: say so at the top of the PR description, and explain the rule you applied with its source (law / FTA guide) if you know it. Do not "fix" a legal rule from memory. If unsure, ask in the issue.
 5. **Never delete or renumber tax invoices**, and never weaken the void/credit-note flow, the audit log, payroll locking or role checks.
 6. **No personal data or secrets** in commits, tests, issues or PR text: no real names, IBANs, Emirates IDs, salaries, tokens. The repository may be public. Use obviously fake test data.
-7. **Keep changes small and focused** on the issue. No drive-by refactors, no new dependencies, no reformatting of untouched code.
+7. **Keep changes small and focused** on the issue. No drive-by refactors, no reformatting of untouched code.
+   **Runtime dependencies:** do not add one unless it is necessary, security-reviewed, version-pinned (exact version), committed through
+   `package-lock.json`, installed by the supported deployment / update path (`npm ci --omit=dev` in `Trigon-Update.bat`), and covered by
+   regression tests. Prefer the Node standard library otherwise. Approved runtime dependencies:
+   - `jose` (pinned in `package.json` / `package-lock.json`): a standards-based JOSE / JWT / JWKS implementation, used only to verify
+     Microsoft Entra id_tokens (`modules/microsoft365.js`), so the project does not carry its own cryptographic protocol code. Tested with
+     signed RS256 tokens against a local JWKS mock (`test-m365.js`). Not bundled in the standalone (browser) edition, which has no
+     Microsoft 365 link.
 8. User-visible text: keep both languages in step where the screen has both. The user guide is `docs/USER-GUIDE-AR.md` / `-EN.md`.
