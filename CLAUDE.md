@@ -26,7 +26,7 @@ Arabic and English UI. Treat it like financial software: a silent wrong number i
 6. **No personal data or secrets** in commits, tests, issues or PR text: no real names, IBANs, Emirates IDs, salaries, tokens. The repository may be public. Use obviously fake test data.
 7. **Keep changes small and focused** on the issue. No drive-by refactors, no reformatting of untouched code.
    **Runtime dependencies:** do not add one unless it is necessary, security-reviewed, version-pinned (exact version), committed through
-   `package-lock.json`, installed by the supported deployment / update path (`npm ci --omit=dev` in `Trigon-Update.bat`), and covered by
+   `package-lock.json`, installed by the supported deployment / update path (`npm ci --omit=dev` in `scripts/update.js`, run by `Trigon-Update.bat`; see `UPDATE.md`), and covered by
    regression tests. Prefer the Node standard library otherwise. Approved runtime dependencies:
    - `jose` (pinned in `package.json` / `package-lock.json`): a standards-based JOSE / JWT / JWKS implementation, used only to verify
      Microsoft Entra id_tokens (`modules/microsoft365.js`), so the project does not carry its own cryptographic protocol code. Tested with
