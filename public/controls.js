@@ -66,3 +66,19 @@ window.twoStepCard = async el => {
     $('#tfago', el).onclick = guard(async () => { await api('POST', '2fa/enable', { code: $('#tfacode', el).value }); toast(tr('تم التفعيل', 'Two-step sign-in is on')); twoStepCard(el); });
   });
 };
+
+// Settings → Microsoft 365 link (administrator). Shown only when the server has the integration switched on.
+window.m365Card = async el => {
+  if (ME.role !== 'admin') return;
+  const s = await api('GET', 'm365/status').catch(() => null); if (!s || !s.enabled) { el.innerHTML = ''; return; }
+  const head = `<h2>${tr('الربط مع Microsoft 365', 'Microsoft 365 link')}</h2>`;
+  if (!s.configured) { el.innerHTML = `<div class="card">${head}<p class="neg">⛔ ${tr('الربط مفعّل لكن إعدادات الخادم ناقصة', 'The link is switched on but the server settings are incomplete')}: <span dir="ltr">${esc(s.missing.join(', '))}</span></p><p class="muted">${tr('تُضبط في ملف .env على جهاز الخادم ثم يُعاد تشغيل النظام.', 'They are set in the .env file on the server PC, then the system is restarted.')}</p></div>`; return; }
+  const c = s.connection;
+  el.innerHTML = `<div class="card">${head}
+    <p class="muted">${tr('يربط حسابك في النظام بحساب Microsoft الخاص بك (تسجيل الدخول للنظام لا يتغير). الصلاحيات المطلوبة: قراءة ملفك الشخصي فقط.', 'Links your account in the system to your Microsoft account (signing in to the system does not change). Permissions asked: read your own profile only.')}</p>
+    ${c ? `<p class="ok">✔ ${tr('مربوط بـ', 'Linked to')} <b dir="ltr">${esc(c.email || '')}</b>${c.display_name ? ' — ' + esc(c.display_name) : ''} <span class="muted">(${esc((c.linked_at || '').slice(0, 16).replace('T', ' '))})</span></p>
+      <button class="btn sec" id="m365chk">${tr('فحص الربط', 'Check the link')}</button> <button class="btn bad" id="m365off">${tr('فصل الربط', 'Disconnect')}</button>`
+      : `<p>${tr('غير مربوط', 'Not linked')}</p><a class="btn" href="/auth/microsoft" style="text-decoration:none;display:inline-block">${tr('ربط حساب Microsoft', 'Connect Microsoft account')}</a>`}</div>`;
+  if ($('#m365chk', el)) $('#m365chk', el).onclick = guard(async () => { const r = await api('POST', 'm365/check', {}); toast(`✔ ${r.email || r.display_name || 'OK'}`); });
+  if ($('#m365off', el)) $('#m365off', el).onclick = guard(async () => { if (!confirm(tr('فصل الربط مع Microsoft 365؟', 'Disconnect Microsoft 365?'))) return; await api('POST', 'm365/disconnect', {}); toast(tr('تم الفصل', 'Disconnected')); m365Card(el); });
+};

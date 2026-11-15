@@ -49,7 +49,7 @@ module.exports = ctx => {
   function runBackup() {
     fs.mkdirSync(BK, { recursive: true });
     const file = path.join(BK, `erp-${today()}.db`), tmp = file + '.tmp';
-    fs.rmSync(tmp, { force: true }); db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`); fs.rmSync(file, { force: true }); fs.renameSync(tmp, file);   // written aside, then swapped: a half-written file never replaces a good one
+    fs.rmSync(tmp, { force: true }); db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`); if (ctx.scrubBackupTokens) ctx.scrubBackupTokens(tmp); fs.rmSync(file, { force: true }); fs.renameSync(tmp, file);   // written aside, then swapped: a half-written file never replaces a good one
     for (const f of list()) if (Date.now() - f.ms > KEEP * 864e5) fs.rmSync(path.join(BK, f.name), { force: true });
     copyOut(file);
     return file;

@@ -397,7 +397,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -590,6 +590,7 @@ async function api(req, res, url) {
   if (a === 'backup' && !b && method === 'GET') {
     const file = path.join(DATA_DIR, 'backup.db'); fs.rmSync(file, { force: true });
     db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+    if (ctx.scrubBackupTokens) ctx.scrubBackupTokens(file);                    // no Microsoft 365 tokens leave the server in a backup
     return send(res, 200, fs.readFileSync(file), { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="erp-backup-${today()}.db"` });
   }
 
@@ -912,6 +913,7 @@ const server = http.createServer(async (req, res) => {
     if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
+    if (url.pathname.startsWith('/auth/microsoft') && ctx.m365Auth && await ctx.m365Auth(req, res, url)) return;   // Microsoft 365 link (OAuth redirect and callback)
     if ((url.pathname.startsWith('/q/') || url.pathname.startsWith('/pub/q/')) && ctx.publicHandler && await ctx.publicHandler(req, res, url)) return;   // client quote acceptance (no login)
     let p = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
     if (p === '/' || p === '\\') p = '/index.html';
