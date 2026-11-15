@@ -2,6 +2,7 @@
 // database backups (daily safety net, status, optional copy to a second folder) and the post-dated cheque register.
 // Additive: no new tables — the lock date and the copy folder are settings; cheques are the payments paid by cheque.
 const fs = require('node:fs'), path = require('node:path');
+const { sanitizedCopy } = require('../lib/backupsafe');
 
 module.exports = ctx => {
   const { db, send, bad, audit, readBody, getSettings, enrich, today, round, DATA_DIR, C } = ctx;
@@ -48,8 +49,8 @@ module.exports = ctx => {
   }
   function runBackup() {
     fs.mkdirSync(BK, { recursive: true });
-    const file = path.join(BK, `erp-${today()}.db`), tmp = file + '.tmp';
-    fs.rmSync(tmp, { force: true }); db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`); if (ctx.scrubBackupTokens) ctx.scrubBackupTokens(tmp); fs.rmSync(file, { force: true }); fs.renameSync(tmp, file);   // written aside, then swapped: a half-written file never replaces a good one
+    const file = path.join(BK, `erp-${today()}.db`);
+    sanitizedCopy(db, file);                                                   // written aside, sanitised and checked, then swapped: a half-written or unsanitised file never replaces a good one
     for (const f of list()) if (Date.now() - f.ms > KEEP * 864e5) fs.rmSync(path.join(BK, f.name), { force: true });
     copyOut(file);
     return file;

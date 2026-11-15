@@ -10,6 +10,7 @@ const { sendMail, validEmail } = require('./lib/mailer');
 const { docHtml, toText } = require('./lib/docs');
 const ACLX = require('./lib/acl');
 const TOTP = require('./lib/totp');
+const { sanitizedCopy } = require('./lib/backupsafe');
 
 // secrets (Zoho OAuth client…) live in .env next to server.js — never in the code, the database or git
 try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env */ }
@@ -588,10 +589,10 @@ async function api(req, res, url) {
   if (a === 'vat') return send(res, 200, vatReport(url.searchParams.get('from'), url.searchParams.get('to')));
   if (a === 'project-summary' && !b) return send(res, 200, projectRows());
   if (a === 'backup' && !b && method === 'GET') {
-    const file = path.join(DATA_DIR, 'backup.db'); fs.rmSync(file, { force: true });
-    db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-    if (ctx.scrubBackupTokens) ctx.scrubBackupTokens(file);                    // no Microsoft 365 tokens leave the server in a backup
-    return send(res, 200, fs.readFileSync(file), { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="erp-backup-${today()}.db"` });
+    // sanitised (no Microsoft 365 tokens or OAuth states), integrity-checked copy; deleted once it has been read
+    const file = sanitizedCopy(db, path.join(DATA_DIR, `backup-download-${crypto.randomBytes(6).toString('hex')}.db`));
+    let data; try { data = fs.readFileSync(file); } finally { fs.rmSync(file, { force: true }); }
+    return send(res, 200, data, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="erp-backup-${today()}.db"` });
   }
 
   if (a === 'compliance') return send(res, 200, compliance());
