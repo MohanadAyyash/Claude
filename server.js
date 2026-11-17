@@ -10,6 +10,7 @@ const { sendMail, validEmail } = require('./lib/mailer');
 const { docHtml, toText } = require('./lib/docs');
 const ACLX = require('./lib/acl');
 const TOTP = require('./lib/totp');
+const { sanitizedCopy } = require('./lib/backupsafe');
 
 // secrets (Zoho OAuth client…) live in .env next to server.js — never in the code, the database or git
 try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env */ }
@@ -263,7 +264,8 @@ function compliance() {
 }
 
 // ---- auth -----------------------------------------------------------------
-const isHttps = req => req.headers['x-forwarded-proto'] === 'https' || process.env.SECURE_COOKIES === '1';
+// the scheme the client used: X-Forwarded-Proto is believed only behind the reverse proxy (TRUST_PROXY=1), first value, trimmed, any case
+const isHttps = req => process.env.SECURE_COOKIES === '1' || (process.env.TRUST_PROXY === '1' && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https');
 const cookie = (req, token, maxAge) => `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
 const fails = new Map();                                    // ip -> [timestamps of failed logins]
 // behind the reverse proxy the client address is the LAST X-Forwarded-For hop (the one the proxy added); earlier hops are whatever the client sent
@@ -390,6 +392,7 @@ const mailCfgFor = () => {
 };
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
 ctx.siteScope = me => siteScope(me);
+ctx.isHttps = isHttps;
 ctx.applyPayroll = (...a) => applyPayroll(...a);
 // brand e-mail signature: Arial text block + the one-line logo as an inline image
 ctx.signature = user => {
@@ -397,7 +400,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -588,9 +591,10 @@ async function api(req, res, url) {
   if (a === 'vat') return send(res, 200, vatReport(url.searchParams.get('from'), url.searchParams.get('to')));
   if (a === 'project-summary' && !b) return send(res, 200, projectRows());
   if (a === 'backup' && !b && method === 'GET') {
-    const file = path.join(DATA_DIR, 'backup.db'); fs.rmSync(file, { force: true });
-    db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-    return send(res, 200, fs.readFileSync(file), { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="erp-backup-${today()}.db"` });
+    // sanitised (no Microsoft 365 tokens or OAuth states), integrity-checked copy; deleted once it has been read
+    const file = sanitizedCopy(db, path.join(DATA_DIR, `backup-download-${crypto.randomBytes(6).toString('hex')}.db`));
+    let data; try { data = fs.readFileSync(file); } finally { fs.rmSync(file, { force: true }); }
+    return send(res, 200, data, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="erp-backup-${today()}.db"` });
   }
 
   if (a === 'compliance') return send(res, 200, compliance());
@@ -912,6 +916,7 @@ const server = http.createServer(async (req, res) => {
     if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
+    if (url.pathname.startsWith('/auth/microsoft') && ctx.m365Auth && await ctx.m365Auth(req, res, url)) return;   // Microsoft 365 link (OAuth redirect and callback)
     if ((url.pathname.startsWith('/q/') || url.pathname.startsWith('/pub/q/')) && ctx.publicHandler && await ctx.publicHandler(req, res, url)) return;   // client quote acceptance (no login)
     let p = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
     if (p === '/' || p === '\\') p = '/index.html';

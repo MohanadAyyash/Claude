@@ -7,7 +7,7 @@ const copy = (from, to) => fs.cpSync(from, to, { recursive: true });
   fs.rmSync(dist, { recursive: true, force: true }); fs.mkdirSync(dist, { recursive: true });
   await esbuild.build({
     entryPoints: [path.join(__dirname, 'entry-server.js')], bundle: true, format: 'iife', platform: 'browser', target: 'es2022', outfile: path.join(dist, 'erp-server.js'), minify: true, legalComments: 'none', logLevel: 'warning',
-    alias: { 'node:sqlite': sh('sqlite'), 'node:crypto': sh('crypto'), 'node:fs': sh('fs'), 'node:path': sh('path'), 'node:http': sh('http'), 'node:net': sh('net'), 'node:tls': sh('tls'), 'node:child_process': sh('child_process'), 'node:os': sh('os'), 'node:zlib': sh('zlib') },
+    alias: { jose: sh('jose'), 'node:sqlite': sh('sqlite'), 'node:crypto': sh('crypto'), 'node:fs': sh('fs'), 'node:path': sh('path'), 'node:http': sh('http'), 'node:net': sh('net'), 'node:tls': sh('tls'), 'node:child_process': sh('child_process'), 'node:os': sh('os'), 'node:zlib': sh('zlib') },
     inject: [sh('inject')], define: { __dirname: '"/app"', __filename: '"/app/server.js"' },
   });
   copy(path.join(root, 'public'), dist);                                           // the application UI
