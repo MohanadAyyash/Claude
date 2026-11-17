@@ -57,15 +57,17 @@ elevation, the scheduled task, `npm.cmd` and Windows file locking can only be ch
 first, never on the only live installation.
 
 The updater only acts on its own folder: it stops/starts the `TrigonERP` task only if the task's working directory is that folder,
-and stops only the `node` process listening on that folder's port (and the launcher window around it). A test copy therefore uses
-`Trigon-Start.bat`, which always listens on port 3000 - so the live system must be stopped while you test.
+and stops only the `node` process listening on that folder's port (and the launcher window around it). The port is the same everywhere:
+`PORT` in the folder's `.env`, else 3000 (`scripts/port.js`, used by `Trigon-Start.bat`, the server and the updater's health check).
+A test copy therefore gets its own `PORT=3101` in its `.env` and uses `Trigon-Start.bat`.
 
 Preparation (outside working hours)
 1. Take a verified backup of the live system (Settings → Backups → download, and open the downloaded copy once).
 2. Stop the live system: PowerShell **as administrator** → `Stop-ScheduledTask TrigonERP`, and check `http://localhost:3000`
    no longer opens.
 3. Copy the system folder to `C:\erp-test` (with `data`; without `app-backup-*` / `data-backup-*` to save space) and **delete
-   `C:\erp-test\node_modules`** if it exists. Copy the new `Trigon-Update.bat` from this branch into `C:\erp-test`.
+   `C:\erp-test\node_modules`** if it exists. Copy the new `Trigon-Update.bat` from this branch into `C:\erp-test`, and set
+   `PORT=3101` in `C:\erp-test\.env` (add the line if it is not there).
 4. Note `Get-FileHash C:\erp-test\data\erp.db` and `Get-FileHash C:\erp-test\Trigon-Update.bat`.
 5. Registry access: `npm ping` → `PONG`.
 
@@ -87,7 +89,7 @@ run, when the window says "Press any key", press a key and then type `echo EXIT=
 6. **Normal update** (no node_modules yet): `Trigon-Update.bat` → `DONE - Trigon ERP is updated and running.`, `EXIT=0`.
    At step 2/6 the window shows the PowerShell version, the TLS setting, the proxy (if any) and `downloaded with <method> (… MB)`;
    if a method fails, its full error chain is shown before the next one is tried. Note which method succeeded.
-   `http://localhost:3000` opens the TEST copy; log in, open a project and an invoice: the data is there.
+   `http://localhost:3101` opens the TEST copy; log in, open a project and an invoice: the data is there.
 7. `node -e "console.log(require('jose/package.json').version)"` → `5.10.0`. No `.update-staging-*` folder; one new `app-backup-*`.
 8. **The updater replaced itself:** close the admin Command Prompt window (the updater waits for the window that ran it), wait 5 s,
    then in `C:\erp-test`: `Trigon-Update.bat.new` does not exist; `type update-history.log` shows

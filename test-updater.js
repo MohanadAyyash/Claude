@@ -10,7 +10,8 @@
 // and the old updater is replaced by the release's one only after the window running it has closed, with nothing left behind.
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert'), crypto = require('crypto'), cp = require('child_process'), net = require('net');
 const { DatabaseSync } = require('node:sqlite');
-const { runUpdate, manifest, sameManifest } = require('./scripts/update.js');
+const { runUpdate, manifest, sameManifest, portOf } = require('./scripts/update.js');
+const { configuredPort } = require('./scripts/port.js');
 const { finish } = require('./scripts/update-finish.js');
 
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-update-'));
@@ -186,6 +187,43 @@ function dataPrint(app) {
     await svc.stop();
     assert.equal(dataPrint(okApp), goldenData);
     console.log('✓ second run with the same release: idempotent');
+  }
+
+  // ---- 4b. the port: launcher, server and updater health check agree (Windows retest of PR #10: .env PORT=3101, Trigon-Start.bat
+  //      hard-coded PORT=3000, so the updater checked 3101 while the new version listened on 3000 → rolled back) ----
+  {
+    const app = path.join(T, 'port-app'); fs.cpSync(golden, app, { recursive: true });
+    const port = await freePort();
+    fs.appendFileSync(path.join(app, '.env'), `PORT=${port}\n`);
+    const launcherPort = cmdEnv => cp.execFileSync(process.execPath, ['--no-warnings', path.join('scripts', 'port.js')], { cwd: app, env: cmdEnv, encoding: 'utf8' }).trim();   // the line in Trigon-Start.bat
+    assert.equal(launcherPort(ENV), String(port), 'launcher reads PORT from .env');
+    assert.equal(portOf(app), port, 'updater reads the same port');
+    assert.equal(configuredPort(app, { ...ENV, PORT: '3200' }), 3200, 'a PORT already set wins, as with process.loadEnvFile');
+    const bare = path.join(T, 'port-bare'); fs.mkdirSync(bare);
+    assert.equal(configuredPort(bare, ENV), 3000, 'no .env: 3000'); fs.writeFileSync(path.join(bare, '.env'), 'HOST=127.0.0.1\n');
+    assert.equal(configuredPort(bare, ENV), 3000, '.env without PORT: 3000');
+    fs.writeFileSync(path.join(bare, '.env'), 'PORT = 3105 # test\n'); assert.equal(configuredPort(bare, ENV), 3105, 'parsed like loadEnvFile');
+    // the service as Trigon-Start.bat runs it: PORT from scripts/port.js, then node server.js; no port given by the test
+    let child = null;
+    const svc = {
+      async start() { const p = launcherPort(ENV); child = cp.spawn(process.execPath, ['--no-warnings', 'server.js'], { cwd: app, env: { ...ENV, PORT: p, HOST: '127.0.0.1' }, stdio: 'ignore' }); },
+      async stop() { const c = child; child = null; if (c && c.exitCode === null && c.signalCode === null) { const gone = new Promise(r => c.once('exit', r)); c.kill(); await gone; } },
+    };
+    await svc.start(); await waitUp(port);
+    const lines = [];
+    const r = await runUpdate({ app, src, service: svc, healthTries: 20, healthEvery: 250, npmArgs: ['--offline'], log: m => lines.push(m) });   // default health URL
+    assert.equal(r.ok, true, 'the health check finds the new version on the configured port\n' + lines.join('\n'));
+    assert.equal((await get(port, '/version-fixture.txt')).t, 'new');
+    // and node server.js on its own (the scheduled task's run-server.cmd sets no PORT) listens on the same port
+    await svc.stop();
+    const solo = cp.spawn(process.execPath, ['--no-warnings', 'server.js'], { cwd: app, env: { ...ENV, HOST: '127.0.0.1' }, stdio: 'ignore' });
+    try { await waitUp(port); } finally { solo.kill(); }
+    const start = fs.readFileSync(path.join(__dirname, 'Trigon-Start.bat'), 'latin1');
+    assert.ok(/\r\n/.test(start) && !/[^\r]\n/.test(start), 'CRLF');
+    assert.match(start, /for \/f "delims=" %%P in \('node --no-warnings scripts\\port\.js'\) do set "PORT=%%P"/, 'Trigon-Start.bat takes the port from scripts\\port.js');
+    assert.doesNotMatch(start.replace(/if not defined PORT set PORT=3000/, ''), /set PORT=\d/, 'no hard-coded port (3000 only as the fallback)');
+    assert.doesNotMatch(start, /localhost:3000/, 'the browser opens the configured port');
+    console.log('✓ launcher, server and updater health check use the same configured port (.env PORT, 3000 fallback)');
   }
 
   // ---- 5. the self-replacement refuses a staged updater that does not match, and leaves nothing behind ----

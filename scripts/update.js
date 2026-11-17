@@ -81,10 +81,7 @@ async function healthy(url, tries, every) {
   }
   return false;
 }
-function portOf(app) {                                                       // PORT from .env next to server.js, else 3000
-  try { const m = /^\s*PORT\s*=\s*(\d+)/m.exec(fs.readFileSync(path.join(app, '.env'), 'utf8')); if (m) return +m[1]; } catch { /* no .env */ }
-  return 3000;
-}
+const portOf = app => require('./port.js').configuredPort(app);               // the same rule as server.js and Trigon-Start.bat
 
 // opts: app, src, service {stop, start} (may be async), healthUrl, healthTries, healthEvery, npmArgs (extra), waitPids, fault, log, stamp
 async function runUpdate(opts) {
@@ -204,4 +201,4 @@ if (require.main === module) {
   runUpdate({ app: arg('--app'), src: arg('--src'), waitPids: String(arg('--wait-pid') || '').split(',').map(Number).filter(n => n > 0) })
     .then(r => process.exit(r.ok ? 0 : 1), e => { console.log('UPDATE FAILED: ' + e.message); process.exit(1); });
 }
-module.exports = { runUpdate, manifest, sameManifest };
+module.exports = { runUpdate, manifest, sameManifest, portOf };

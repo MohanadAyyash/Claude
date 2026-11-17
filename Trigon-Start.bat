@@ -15,13 +15,15 @@ if errorlevel 1 (
 
 rem this PC only; nothing is exposed to the network
 set HOST=127.0.0.1
-set PORT=3000
+rem the port: PORT from .env (as the server and the updater read it), 3000 if it is not set
+for /f "delims=" %%P in ('node --no-warnings scripts\port.js') do set "PORT=%%P"
+if not defined PORT set PORT=3000
 
 rem daily backup when the app starts
 node --no-warnings scripts\backup.js >nul 2>nul
 
-start "" /min cmd /c "timeout /t 3 /nobreak >nul & start http://localhost:3000"
-echo Trigon ERP is running at http://localhost:3000
+start "" /min cmd /c "timeout /t 3 /nobreak >nul & start http://localhost:%PORT%"
+echo Trigon ERP is running at http://localhost:%PORT%
 echo Keep this window open while you work. Close it to stop the app.
 :loop
 node --no-warnings server.js

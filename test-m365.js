@@ -281,6 +281,20 @@ const CODE = 'mock-auth-code-CODE-444';
       const outJ = JSON.parse(execFileSync(process.execPath, ['--no-warnings', '-e', child], { cwd: __dirname, env: { ...process.env, DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'erp-m365-nojose-')) }, encoding: 'utf8' }).trim().split('\n').pop());
       assert.equal(outJ.configured, false); assert.ok(outJ.missing.some(m => /^jose/.test(m)), JSON.stringify(outJ)); assert.equal(outJ.start, 503);
       console.log('✔ without the jose package: the ERP starts, status says jose is missing, the link refuses to start (fail closed)');
+      // ---- the service worker never answers the sign-in or its callback itself (Windows test: the cached app page was shown for
+      //      /auth/microsoft → blank page; it worked with "Bypass for network")
+      {
+        const vm = require('vm'), on = {}, origin = 'https://erp.example.test';
+        const sw = { self: { addEventListener: (t, f) => { on[t] = f; }, registration: { scope: origin + '/' }, clients: {} }, location: { origin }, URL, Response, Promise,
+          caches: { match: async () => new Response('<cached app page>'), open: async () => ({ match: async () => null, put() {} }), keys: async () => [] }, fetch: async () => new Response('network') };
+        vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'public', 'sw.js'), 'utf8'), sw);
+        const taken = (p, mode = 'navigate') => { let r = false; on.fetch({ request: { method: 'GET', mode, url: origin + p }, respondWith() { r = true; } }); return r; };
+        for (const p of ['/auth/microsoft', '/auth/microsoft/callback?code=x&state=y', '/auth/microsoft/callback?error=access_denied']) {
+          assert.equal(taken(p), false, 'the service worker leaves ' + p + ' to the server'); assert.equal(taken(p, 'no-cors'), false, p);
+        }
+        assert.equal(taken('/'), true, 'control: other page loads still open the cached app'); assert.equal(taken('/app.js', 'no-cors'), true, 'control: cached files');
+      }
+      console.log('✔ the service worker does not intercept /auth/microsoft or /auth/microsoft/callback');
       console.log('M365 TESTS PASSED');
     } catch (err) { console.error('FAIL', err); process.exitCode = 1; }
     finally { server.close(); ms.close(); setTimeout(() => process.exit(process.exitCode || 0), 100); }
