@@ -16,7 +16,10 @@ server.listen(0, async () => {
     await page.waitForFunction(() => document.querySelector('form.login, .side'), null, { timeout: 30000 }); return { ctx, page };
   };
   const state = p => p.evaluate(() => ERPCloud.st.state);
-  const link = async p => { await p.evaluate(() => ERPCloud.signIn()); await p.waitForURL(u => u.href.startsWith(url), { timeout: 20000 }); await p.waitForFunction(() => document.querySelector('form.login, .side'), null, { timeout: 30000 }); };
+  // signIn() ends with location.assign() to the (mock) Microsoft sign-in: the page may leave before evaluate() gets its answer, which
+  // Playwright reports as "Execution context was destroyed" - expected here, so only that error is accepted; then the page must load again
+  const link = async p => { await p.evaluate(() => ERPCloud.signIn()).catch(e => { if (!/Execution context was destroyed/.test(e.message)) throw e; });
+    await p.waitForLoadState('load'); await p.waitForURL(u => u.href.startsWith(url), { timeout: 20000 }); await p.waitForFunction(() => document.querySelector('form.login, .side'), null, { timeout: 30000 }); };
   const remoteBytes = () => ms.files.get(ms.FILE)?.bytes, remoteTag = () => ms.files.get(ms.FILE)?.etag;
   // wait until this device has uploaded a NEW version (remote etag moved past `before`) and is in sync with it
   const uploadedSince = (p, before, what) => waitFor(async () => remoteTag() !== before && (await p.evaluate(() => ERPStore.rec.baseETag)) === remoteTag() && (await state(p)) === 'synced', 20000, what);
