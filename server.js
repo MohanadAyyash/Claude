@@ -12,8 +12,10 @@ const ACLX = require('./lib/acl');
 const TOTP = require('./lib/totp');
 const { sanitizedCopy } = require('./lib/backupsafe');
 
-// secrets (Zoho OAuth client…) live in .env next to server.js — never in the code, the database or git
-try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env */ }
+// settings and secrets (Zoho, Microsoft 365…) live in .env next to server.js — never in the code, the database, git or a launcher.
+// Loaded here, before anything reads process.env, whatever started the server; any Windows encoding; never silently (lib/envfile.js)
+const ENV_FILE = typeof process !== 'undefined' && process.platform !== 'browser' && process.versions && process.versions.node
+  ? (() => { try { return require('./lib/envfile').load(__dirname); } catch (e) { return { found: true, encoding: null, loaded: [], kept: [], warning: '.env could not be loaded: ' + e.message }; } })() : null;
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -391,6 +393,7 @@ const mailCfgFor = () => {
   return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
 };
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+ctx.envFile = ENV_FILE;                                                       // what was read from .env (names only), for the Microsoft 365 status
 ctx.siteScope = me => siteScope(me);
 ctx.isHttps = isHttps;
 ctx.applyPayroll = (...a) => applyPayroll(...a);
@@ -930,5 +933,6 @@ const server = http.createServer(async (req, res) => {
 });
 // one failed background callback (e.g. a locked temp file while a PDF is cleaned up on Windows) must not take the office server down
 if (require.main === module) for (const ev of ['uncaughtException', 'unhandledRejection']) process.on(ev, e => console.error(new Date().toISOString(), ev, e));
+if (require.main === module && ENV_FILE) console.log(require('./lib/envfile').describe(ENV_FILE));   // into server.log: names only, never values
 if (require.main === module) server.listen(PORT, process.env.HOST || '0.0.0.0', () => { console.log(`Contractor ERP running → http://localhost:${PORT}`); if (ctx.startBackups) ctx.startBackups(); });
 module.exports = { server, ctx };

@@ -46,6 +46,8 @@ module.exports = ctx => {
     if (STANDALONE) missing.push('not available in the standalone (browser) edition');
     else if (!loadJose()) missing.push('jose (the update installs it with npm ci --omit=dev)');
     if (!identityIndex) missing.push('m365_connections: one Microsoft account is linked to several users');
+    const envWarn = ctx.envFile && ctx.envFile.warning;                       // .env not readable / wrong encoding / .env.txt: say so, never silently
+    if (envWarn && (missing.length || !c.enabled)) missing.unshift('.env: ' + envWarn);
     return { ...c, redirectUrl: ru, issuer: `${c.loginBase}/${c.tenant}/v2.0`, jwksUri: `${c.loginBase}/${c.tenant}/discovery/v2.0/keys`, missing, configured: missing.length === 0 };
   }
   const now = () => new Date().toISOString();
@@ -246,9 +248,11 @@ module.exports = ctx => {
       const c = cfg(); noteConfig(c); prune();
       if (b === 'status' && req.method === 'GET') {
         const link = db.prepare('SELECT email, display_name, tenant_id, expires_at, updated_at FROM m365_connections WHERE user_id=?').get(me.id);
-        return send(res, 200, { available: !STANDALONE, enabled: c.enabled && !STANDALONE, configured: c.enabled && c.configured, missing: c.enabled || STANDALONE ? c.missing : [],
+        return send(res, 200, { available: !STANDALONE, enabled: c.enabled && !STANDALONE, configured: c.enabled && c.configured, missing: c.enabled || STANDALONE ? c.missing : c.missing.filter(m => m.startsWith('.env: ')),
           tenant_id: c.tenant || null, client_id: c.clientId || null, redirect_uri: c.redirect || null, sharepoint_site_id: c.siteId || null, sharepoint_drive_id: c.driveId || null,
           client_secret_set: !!c.secret, encryption_key_set: !!c.key, scopes: SCOPES.split(' '),
+          env_file: ctx.envFile ? { found: ctx.envFile.found, encoding: ctx.envFile.encoding, warning: ctx.envFile.warning || null,   // names only, never values
+            m365_settings_loaded: ctx.envFile.loaded.filter(k => k.startsWith('M365_')), m365_settings_kept_from_launcher: ctx.envFile.kept.filter(k => k.startsWith('M365_')) } : null,
           connection: link ? { email: link.email, display_name: link.display_name, tenant_id: link.tenant_id, linked_at: link.updated_at } : null }), true;
       }
       if (b === 'disconnect' && req.method === 'POST') {

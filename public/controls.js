@@ -70,7 +70,10 @@ window.twoStepCard = async el => {
 // Settings → Microsoft 365 link (administrator). Shown only when the server has the integration switched on.
 window.m365Card = async el => {
   if (ME.role !== 'admin') return;
-  const s = await api('GET', 'm365/status').catch(() => null); if (!s || !s.enabled) { el.innerHTML = ''; return; }
+  const s = await api('GET', 'm365/status').catch(() => null);
+  const envWarn = s && s.env_file && s.env_file.warning;                     // .env unreadable / wrong encoding / .env.txt: the settings never reached the server
+  if (s && !s.enabled && envWarn) { el.innerHTML = `<div class="card"><h2>${tr('الربط مع Microsoft 365', 'Microsoft 365 link')}</h2><p class="neg">⛔ ${tr('ملف إعدادات الخادم (.env) لم يُقرأ بشكل صحيح', 'The server settings file (.env) was not read correctly')}: <span dir="ltr">${esc(envWarn)}</span></p><p class="muted">${tr('صحّح الملف ثم أعد تشغيل النظام.', 'Fix the file, then restart the system.')}</p></div>`; return; }
+  if (!s || !s.enabled) { el.innerHTML = ''; return; }
   const head = `<h2>${tr('الربط مع Microsoft 365', 'Microsoft 365 link')}</h2>`;
   if (!s.configured) { el.innerHTML = `<div class="card">${head}<p class="neg">⛔ ${tr('الربط مفعّل لكن إعدادات الخادم ناقصة', 'The link is switched on but the server settings are incomplete')}: <span dir="ltr">${esc(s.missing.join(', '))}</span></p><p class="muted">${tr('تُضبط في ملف .env على جهاز الخادم ثم يُعاد تشغيل النظام.', 'They are set in the .env file on the server PC, then the system is restarted.')}</p></div>`; return; }
   const c = s.connection;
