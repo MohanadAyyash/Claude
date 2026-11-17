@@ -72,9 +72,21 @@ Preparation (outside working hours)
 Before the merge the default branch has no `scripts/update.js`, so the tests download this branch: in the admin Command Prompt
 below, first `set TRIGON_UPDATE_BRANCH=copilot/m365-foundation` (only branch names of this repository are accepted).
 
+Download check (identifies why a download fails; delete the test ZIPs afterwards) - in an **administrator Command Prompt**:
+- A. As the updater ran it before the fix (Windows PowerShell, no profile, TLS 1.2 forced):
+  `powershell -NoProfile -Command "$PSVersionTable.PSVersion; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing -Uri https://github.com/MohanadAyyash/Trigon-ERP-System/archive/refs/heads/copilot/m365-foundation.zip -OutFile $env:TEMP\t1.zip; (Get-Item $env:TEMP\t1.zip).Length"`
+- B. The same without forcing TLS 1.2:
+  `powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol; Invoke-WebRequest -UseBasicParsing -Uri https://github.com/MohanadAyyash/Trigon-ERP-System/archive/refs/heads/copilot/m365-foundation.zip -OutFile $env:TEMP\t2.zip; (Get-Item $env:TEMP\t2.zip).Length"`
+- C. Windows' own curl: `curl.exe -fsSL -o "%TEMP%\t3.zip" https://github.com/MohanadAyyash/Trigon-ERP-System/archive/refs/heads/copilot/m365-foundation.zip` then `dir "%TEMP%\t3.zip"`
+- D. In the PowerShell window where the manual download worked: `$PSVersionTable.PSVersion` and
+  `[Net.WebRequest]::DefaultWebProxy.GetProxy('https://github.com')`
+Write down for A-D: success + size, or the full error text.
+
 Tests - open **Command Prompt as administrator**, `cd /d C:\erp-test` (so the `set` lines below reach the updater), and after each
 run, when the window says "Press any key", press a key and then type `echo EXIT=%errorlevel%`
 6. **Normal update** (no node_modules yet): `Trigon-Update.bat` → `DONE - Trigon ERP is updated and running.`, `EXIT=0`.
+   At step 2/6 the window shows the PowerShell version, the TLS setting, the proxy (if any) and `downloaded with <method> (… MB)`;
+   if a method fails, its full error chain is shown before the next one is tried. Note which method succeeded.
    `http://localhost:3000` opens the TEST copy; log in, open a project and an invoice: the data is there.
 7. `node -e "console.log(require('jose/package.json').version)"` → `5.10.0`. No `.update-staging-*` folder; one new `app-backup-*`.
 8. **The updater replaced itself:** close the admin Command Prompt window (the updater waits for the window that ran it), wait 5 s,

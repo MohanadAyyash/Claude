@@ -26,12 +26,48 @@ exit /b %RC%
 
 #POWERSHELL-BELOW
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'   # the Windows PowerShell 5.1 progress bar slows a 35 MB download to a crawl
 $app = (Get-Location).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmm'
 $branch = 'claude/construction-management-app-rfq8al'
 # for testing a branch before it is merged (same repository only): set TRIGON_UPDATE_BRANCH=<branch name>
 if ($env:TRIGON_UPDATE_BRANCH) { if ($env:TRIGON_UPDATE_BRANCH -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$' -or $env:TRIGON_UPDATE_BRANCH -match '\.\.') { Write-Host 'TRIGON_UPDATE_BRANCH is not a valid branch name - nothing was changed.' -ForegroundColor Red; exit 1 }; $branch = $env:TRIGON_UPDATE_BRANCH; Write-Host "Testing branch: $branch" -ForegroundColor Yellow }
 $url = 'https://github.com/MohanadAyyash/Trigon-ERP-System/archive/refs/heads/' + $branch + '.zip'
+# Download the release ZIP. Tried in turn, each with its full error chain kept for the message:
+#  1. Invoke-WebRequest as in a normal PowerShell window: the TLS versions Windows allows are kept (TLS 1.2 is only ADDED on an
+#     old .NET that does not use the system default - never forced as the only protocol), the system proxy with the signed-in
+#     user's credentials;
+#  2. curl.exe that ships with Windows 10/11 (its own connection, no .NET);
+#  3. PowerShell 7 (pwsh), if installed.
+function Get-Chain($e) { $m = @(); while ($e) { if ($m -notcontains $e.Message) { $m += $e.Message }; $e = $e.InnerException }; $m -join ' -> ' }
+function Get-Release($url, $zip) {
+  $errs = @()
+  Write-Host ('    Windows PowerShell ' + $PSVersionTable.PSVersion + ', .NET TLS setting: ' + [Net.ServicePointManager]::SecurityProtocol)
+  try {
+    $sp = [Net.ServicePointManager]::SecurityProtocol
+    if ([int]$sp -ne 0 -and -not ($sp -band [Net.SecurityProtocolType]::Tls12)) { [Net.ServicePointManager]::SecurityProtocol = $sp -bor [Net.SecurityProtocolType]::Tls12 }
+    $wp = [Net.WebRequest]::DefaultWebProxy
+    if ($wp) { $wp.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials; $via = $wp.GetProxy([uri]$url); if ($via -and $via.AbsoluteUri -ne ([uri]$url).AbsoluteUri) { Write-Host "    system proxy: $via" } }
+    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip
+    return 'Invoke-WebRequest'
+  } catch { $errs += 'Invoke-WebRequest: ' + (Get-Chain $_.Exception); Write-Host ('    ' + $errs[-1]) -ForegroundColor Yellow }
+  $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+  if (Test-Path $curl) {
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    & $curl --fail --silent --show-error --location --retry 2 --connect-timeout 30 --output $zip $url
+    if ($LASTEXITCODE -eq 0) { return 'curl.exe' }
+    $errs += "curl.exe: exit code $LASTEXITCODE"; Write-Host ('    ' + $errs[-1]) -ForegroundColor Yellow
+  } else { $errs += 'curl.exe: not found' }
+  $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+  if ($pwsh) {
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    & $pwsh.Source -NoProfile -NonInteractive -Command { param($u, $o) $ErrorActionPreference = 'Stop'; Invoke-WebRequest -Uri $u -OutFile $o } -args $url, $zip
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $zip)) { return 'PowerShell 7' }
+    $errs += "PowerShell 7: exit code $LASTEXITCODE"
+  } else { $errs += 'PowerShell 7: not installed' }
+  Remove-Item $zip -Force -ErrorAction SilentlyContinue
+  throw ('The download failed with every method - nothing was changed. ' + ($errs -join ' | '))
+}
 $rc = 1
 try {
   if (-not (Get-Command node -ErrorAction SilentlyContinue) -or -not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw 'Node.js / npm was not found on this PC - nothing was changed. Install Node.js 22 LTS and run this again.' }
@@ -49,8 +85,8 @@ try {
   $tmp = Join-Path $env:TEMP 'trigon-erp-update'
   Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item $zip -Force -ErrorAction SilentlyContinue
-  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-  Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip
+  $how = Get-Release $url $zip
+  Write-Host ("    downloaded with $how (" + [math]::Round((Get-Item $zip).Length / 1MB, 1) + ' MB)')
   Expand-Archive -Path $zip -DestinationPath $tmp -Force
   $src = (Get-ChildItem $tmp -Directory | Select-Object -First 1).FullName
   if (-not (Test-Path "$src\server.js") -or -not (Test-Path "$src\package-lock.json") -or -not (Test-Path "$src\scripts\update.js")) { throw 'The download does not look right - nothing was changed.' }
@@ -64,7 +100,7 @@ try {
   Remove-Item $zip -Force -ErrorAction SilentlyContinue
 } catch {
   Write-Host ''
-  Write-Host ('UPDATE FAILED: ' + $_.Exception.Message) -ForegroundColor Red
+  Write-Host ('UPDATE FAILED: ' + (Get-Chain $_.Exception)) -ForegroundColor Red
   $rc = 1
 }
 if ($rc -eq 0) { exit 0 } else { exit 1 }

@@ -222,7 +222,21 @@ function dataPrint(app) {
     assert.match(bat, /exit 1/);
     assert.match(bat, /\$url = 'https:\/\/github\.com\/MohanadAyyash\/Trigon-ERP-System\/archive\/refs\/heads\/' \+ \$branch \+ '\.zip'/, 'downloads only from this repository');
     assert.match(bat, /-notmatch '\^\[A-Za-z0-9\]/, 'a test branch name is validated');
-    console.log('✓ Trigon-Update.bat delegates to the transactional update');
+    // the download (Windows retest of PR #10: "Unable to connect to the remote server" from the updater while the same
+    // Invoke-WebRequest worked in an administrator PowerShell window)
+    const ps = bat.split('#POWERSHELL-BELOW')[1];
+    assert.doesNotMatch(ps, /SecurityProtocol\s*=\s*\[Net\.SecurityProtocolType\]::Tls12/, 'TLS 1.2 is never forced as the only protocol');
+    assert.match(ps, /\$how = Get-Release \$url \$zip/, 'the release is downloaded through Get-Release');
+    const fn = ps.slice(ps.indexOf('function Get-Release'), ps.indexOf('$rc = 1'));
+    const order = ['Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip', "System32\\curl.exe", 'Get-Command pwsh', "throw ('The download failed with every method - nothing was changed. '"].map(x => fn.indexOf(x));
+    assert.ok(order.every(i => i > 0) && order.every((i, k) => k === 0 || i > order[k - 1]), 'falls back from Invoke-WebRequest to curl.exe to PowerShell 7, then fails with every reason');
+    assert.match(fn, /--fail .*--location/, 'curl follows the GitHub redirect and fails on HTTP errors');
+    assert.match(fn, /DefaultNetworkCredentials/, 'the system proxy gets the signed-in credentials');
+    assert.match(ps, /'UPDATE FAILED: ' \+ \(Get-Chain \$_\.Exception\)/, 'the whole error chain is shown, not only the outer message');
+    assert.match(ps, /\$ProgressPreference = 'SilentlyContinue'/);
+    const code = ps.replace(/"[^"\r\n]*"/g, '""').replace(/'[^'\r\n]*'/g, "''").replace(/#[^\r\n]*/g, '');   // crude: strings and comments out
+    for (const [o, c] of [['{', '}'], ['(', ')']]) assert.equal(code.split(o).length, code.split(c).length, `balanced ${o}${c} in the PowerShell part`);
+    console.log('✓ Trigon-Update.bat delegates to the transactional update; download has fallbacks and full error detail');
   }
 
   fs.rmSync(T, { recursive: true, force: true });
