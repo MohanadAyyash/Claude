@@ -14,6 +14,10 @@
 const crypto = require('node:crypto');
 
 const SCOPES = 'openid profile email offline_access User.Read';
+// the link asks Mail.Send too when Outlook sending is switched on (incremental consent: users reconnect once to grant it)
+const linkScopes = () => SCOPES + ((typeof process !== 'undefined' && process.env && process.env.M365_OUTLOOK_ENABLED === '1') ? ' Mail.Send' : '');
+// "https://graph.microsoft.com/Mail.Send" / "Mail.Send" → "Mail.Send"; only permission names, nothing else
+const normScopes = s => [...new Set(String(s || '').split(/\s+/).map(x => x.replace(/^https:\/\/graph\.microsoft\.com\//i, '')).filter(x => /^[A-Za-z.]{2,60}$/.test(x)))];
 const LOGIN_SCOPES = 'openid profile email User.Read';                       // sign-in: no refresh token is asked for, nothing is stored
 const LOGIN_PATH = '/auth/microsoft/login', LOGIN_CB = '/auth/microsoft/login/callback';
 const STATE_TTL = 10 * 60e3, HTTP_TIMEOUT = 10e3, PROVIDER = 'microsoft', CLOCK_SKEW = 60;
@@ -33,6 +37,8 @@ module.exports = ctx => {
     expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS oauth_login_states (
     id INTEGER PRIMARY KEY, state_hash TEXT NOT NULL UNIQUE, verifier_encrypted TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);`);
+  // the Microsoft Graph permissions this link was granted (from the token answer; permission names only) — additive
+  if (!db.prepare('PRAGMA table_info(m365_connections)').all().some(x => x.name === 'scopes')) db.exec('ALTER TABLE m365_connections ADD COLUMN scopes TEXT');
   // one Microsoft identity → one ERP user. If old rows already break the rule the index cannot be built: the link stays closed.
   let identityIndex = true;
   try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS m365_connections_identity ON m365_connections(tenant_id, microsoft_user_id)'); }
@@ -151,6 +157,8 @@ module.exports = ctx => {
     return payload;
   }
 
+  ctx.m365Config = () => cfg();                                              // (for modules/m365business.js: the same validated settings)
+  ctx.m365Granted = userId => normScopes((db.prepare('SELECT scopes FROM m365_connections WHERE user_id=?').get(userId) || {}).scopes || SCOPES);
   // ---------- access token for a linked user (refreshed when needed, rotation stored; a refresh failure is audited) ----------
   ctx.m365Token = async userId => {
     const c = cfg(); if (!c.enabled || !c.configured) throw fail(503, 'Microsoft 365 is not enabled');
@@ -158,7 +166,9 @@ module.exports = ctx => {
     const row = db.prepare('SELECT * FROM m365_connections WHERE user_id=?').get(userId); if (!row) throw fail(404, 'This account is not linked to Microsoft 365');
     try {
       if (row.expires_at && Date.parse(row.expires_at) > Date.now() + 120e3) return open(c.key, row.access_token_encrypted);
-      const t = await tokenCall(c, { grant_type: 'refresh_token', refresh_token: open(c.key, row.refresh_token_encrypted) });
+      // renew with exactly what this link was granted (switching Outlook on later must not break links made before)
+      const granted = normScopes(row.scopes).filter(x => !['openid', 'profile', 'email', 'offline_access'].includes(x));
+      const t = await tokenCall(c, { grant_type: 'refresh_token', refresh_token: open(c.key, row.refresh_token_encrypted) }, granted.length ? `openid profile email offline_access ${granted.join(' ')}` : SCOPES);
       db.prepare('UPDATE m365_connections SET access_token_encrypted=?, refresh_token_encrypted=COALESCE(?,refresh_token_encrypted), expires_at=?, updated_at=? WHERE id=?')
         .run(seal(c.key, t.access_token), t.refresh_token ? seal(c.key, t.refresh_token) : null, new Date(Date.now() + (+t.expires_in || 3600) * 1000).toISOString(), now(), row.id);
       return t.access_token;
@@ -269,7 +279,7 @@ module.exports = ctx => {
       const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
       db.prepare('INSERT INTO oauth_states(user_id,provider,state_hash,verifier_encrypted,expires_at,created_at) VALUES(?,?,?,?,?,?)')
         .run(me.id, PROVIDER, stateHash(state, binding), seal(c.key, verifier), new Date(Date.now() + STATE_TTL).toISOString(), now());
-      const q = new URLSearchParams({ client_id: c.clientId, response_type: 'code', redirect_uri: c.redirect, response_mode: 'query', scope: SCOPES,
+      const q = new URLSearchParams({ client_id: c.clientId, response_type: 'code', redirect_uri: c.redirect, response_mode: 'query', scope: linkScopes(),
         state, nonce: nonceOf(c.key, state), code_challenge: challenge, code_challenge_method: 'S256', prompt: 'select_account' });
       res.writeHead(302, { Location: `${c.loginBase}/${encodeURIComponent(c.tenant)}/oauth2/v2.0/authorize?${q}`, 'Set-Cookie': bindCookie(req, c, binding, STATE_TTL / 1000), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
       return res.end(), true;
@@ -293,7 +303,7 @@ module.exports = ctx => {
       if (!code || code.length > 4000) return reject('Microsoft did not send an authorisation code.');
       let verifier; try { verifier = open(c.key, row.verifier_encrypted); } catch { return reject('This sign-in request could not be read. Start again from Settings.'); }
       try {
-        const t = await tokenCall(c, { grant_type: 'authorization_code', code, redirect_uri: c.redirect, code_verifier: verifier });
+        const t = await tokenCall(c, { grant_type: 'authorization_code', code, redirect_uri: c.redirect, code_verifier: verifier }, linkScopes());
         const claims = await verifyIdToken(c, t.id_token, state);
         const me = await graphMe(c, t.access_token);
         // the stable identity is tenant + object ID: both the verified id_token and Graph must name the same account
@@ -309,6 +319,7 @@ module.exports = ctx => {
             ON CONFLICT(user_id) DO UPDATE SET tenant_id=excluded.tenant_id, microsoft_user_id=excluded.microsoft_user_id, email=excluded.email, display_name=excluded.display_name,
             access_token_encrypted=excluded.access_token_encrypted, refresh_token_encrypted=excluded.refresh_token_encrypted, expires_at=excluded.expires_at, updated_at=excluded.updated_at`)
             .run(user.id, c.tenant, oid, email, me.displayName || claims.name || null, seal(c.key, t.access_token), t.refresh_token ? seal(c.key, t.refresh_token) : null, exp, ts, ts);
+          db.prepare('UPDATE m365_connections SET scopes=? WHERE user_id=?').run(normScopes(t.scope || linkScopes()).join(' '), user.id);
         } catch { throw fail(409, 'This Microsoft account is already linked to another user of the system.'); }   // unique (tenant, object ID); no DB detail shown
         auditAs(user.username, 'connect', user.id, `linked to Microsoft account ${oid}${email ? ' (' + String(email).slice(0, 120) + ')' : ''}`);
         res.writeHead(302, { Location: '/#settings', 'Set-Cookie': bindCookie(req, c, '', 0), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
@@ -322,7 +333,7 @@ module.exports = ctx => {
 
   return {
     async handle(req, res, url, [a, b], me) {
-      if (a !== 'm365') return false;
+      if (a !== 'm365' || !['status', 'disconnect', 'check'].includes(b)) return false;   // (the business features are modules/m365business.js)
       // every signed-in user, any role (lib/acl.js lets m365 through as self-service): each call acts on the caller's OWN link (me.id) only
       const c = cfg(); noteConfig(c); prune();
       if (b === 'status' && req.method === 'GET') {
@@ -332,7 +343,7 @@ module.exports = ctx => {
             connection: link ? { email: link.email, display_name: link.display_name, linked_at: link.updated_at } : null }), true;
         return send(res, 200, { available: !STANDALONE, enabled: c.enabled && !STANDALONE, configured: c.enabled && c.configured, missing: c.enabled || STANDALONE ? c.missing : [],
           tenant_id: c.tenant || null, client_id: c.clientId || null, redirect_uri: c.redirect || null, sharepoint_site_id: c.siteId || null, sharepoint_drive_id: c.driveId || null,
-          client_secret_set: !!c.secret, encryption_key_set: !!c.key, scopes: SCOPES.split(' '),
+          client_secret_set: !!c.secret, encryption_key_set: !!c.key, scopes: linkScopes().split(' '),
           auth: ctx.authState ? (st => ({ requested: st.requested, mode: st.mode, reason: st.reason, emergency_admins: st.emergency.map(e => ({ username: e.username, ok: e.ok, problems: e.problems })), sessions: st.sessions }))(ctx.authState()) : null,
           server_started_at: ctx.startedAt || null,
           connection: link ? { email: link.email, display_name: link.display_name, tenant_id: link.tenant_id, linked_at: link.updated_at } : null }), true;
