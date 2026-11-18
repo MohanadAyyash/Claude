@@ -2027,10 +2027,11 @@ Menu: **Hired labour & rentals**. For workers who are not on the payroll (from a
 
 These appear only when the administrator has switched them on. Trigon ERP stays the record of numbers, totals, VAT and approvals; Microsoft 365 receives copies and messages.
 
-**SharePoint copy of a document.** On a purchase order, quotation, invoice or subcontract, the **Microsoft 365** box shows *Not in SharePoint*, *Saved in SharePoint* (with **Open**) or *SharePoint upload failed* (with the reason).
-- **Save to SharePoint** stores the record's PDF in the company's SharePoint library, in the project's folder (for example `Trigon Civil Projects / P-101 - Villa / Purchase Orders / PO-0007.pdf`).
-- A purchase order can be saved once it is issued (sent / received / closed) and, if above the approval limit, approved. Draft quotations are not saved.
-- After changing the record, **Update the copy** (SharePoint keeps the earlier versions). If it failed, **Retry**. A failure never changes the record in the ERP.
+**SharePoint: automatic.** You do not need to press anything. As soon as a document is issued or approved, the ERP saves its PDF in the company's SharePoint library, in the project's folder by type (for example `Trigon Civil Projects / P-101 - Villa / Purchase Orders / PO-0007.pdf`), and saves it again when it changes (SharePoint keeps the earlier versions).
+- Saved automatically: purchase orders once issued (and approved, if above the approval limit), quotations once sent, tax invoices and credit notes, subcontract agreements, approved subcontractor payment certificates, interim payment certificates and submitted payment applications. Drafts and cancelled orders are not saved. A void invoice is not printed, so its copy stays as it was issued.
+- **Attachments you add** are copied to the folder of their **Document type**: choose it from the list when you upload — Drawing, Delivery Note, Supplier Invoice, Contract, RFI, Submittal, HSE, Site Photo or Other (Other goes to *Documents*). The type you choose always decides the folder. If no type is chosen (older attachments), the folder is guessed from the description (e.g. *drawing*, *invoice*, *مخطط*); a picture goes to *Site Photos*. Employee and company papers are never copied.
+- The **Microsoft 365** box on the record shows *Saved in SharePoint* (with **Open**), *Queued* (it will be saved within minutes) or *SharePoint upload failed* with the reason and the time of the next automatic try. If Microsoft is unavailable the ERP keeps trying by itself; nothing is lost and the record in the ERP never changes.
+- **Save now** / **Retry now** / **Update the copy** are still there if you want the copy at once.
 
 **Send via Outlook.** Sends the record's PDF from **your own** mailbox (it appears in your Sent Items).
 - The first time: Settings → **Microsoft 365 account** → Disconnect, then Connect again, to allow sending.
@@ -2038,7 +2039,7 @@ These appear only when the administrator has switched them on. Trigon ERP stays 
 
 **Teams.** The administrator can connect one Teams channel. It receives a card when a purchase order needs approval, when it is approved, and for overdue deliveries, with **Open in Trigon ERP**. Approvals are still made in the ERP.
 
-**Administrator:** Settings → **Microsoft 365 integration** shows SharePoint, Outlook and Teams, with **Test connection**, **Send a test notification**, **Send overdue purchase orders** and the **attachment migration plan** (a dry run that uploads nothing).
+**Administrator:** Settings → **Microsoft 365 integration** shows SharePoint (with the automatic saving queue: waiting, retrying, stopped, saved, the latest errors, **Run now** and **Retry all failed**; documents that failed three times also appear as a dashboard alert), Outlook and Teams, with **Test connection**, **Send a test notification**, **Send overdue purchase orders** and the **attachment migration plan** (a dry run that uploads nothing).
 
 ---
 
