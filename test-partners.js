@@ -4,7 +4,7 @@
 // Fake names and amounts only.
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-partners-'));
-const { server } = require('./server.js');
+const { server, ctx } = require('./server.js');
 
 server.listen(0, async () => {
   const base = `http://localhost:${server.address().port}/api/`; let cookie = '';
@@ -75,8 +75,6 @@ server.listen(0, async () => {
     no(await call('PUT', `payments/${ex2.payment_id}`, { amount: 1 }), /Partners page/);
     no(await call('DELETE', `payments/${ex2.payment_id}`), /Partners page/);
     no(await call('DELETE', `bills/${sb}`), /Partners page/);
-    // a partner payment is not company cash: the cash-flow views skip it
-    const cf = ok(await call('GET', 'dashboard')); assert.ok(cf);
 
     // ---- transfer: current account → capital
     no(await call('POST', 'partner_txns', { partner_id: A, date: '2025-05-01', type: 'transfer', amount: 10, from_section: 'current', to_section: 'current' }), /two different/);
@@ -153,6 +151,36 @@ server.listen(0, async () => {
     const outNow = () => call('GET', 'dashboard').then(r => { const m = ok(r).months; return m[m.length - 1].out; });
     const before = await outNow(), exNow = ok(await call('POST', `partners/${B}/expense`, { description: 'Taxi', amount: 75 }));
     assert.equal(await outNow(), before, 'cash out unchanged'); ok(await call('DELETE', `partners/expense/${exNow.payment_id}`));
+    // ---- review fixes
+    // F4: the journal that put capital in the books cannot be moved away or deleted once partners exist
+    const jvCap = ok(await call('GET', 'journal_entries')).find(j => j.memo === 'Opening capital').id;
+    no(await call('PUT', `journal_entries/${jvCap}`, { date: '2025-01-02', memo: 'moved', lines: [{ account: '1000', debit: 30000 }, { account: '3100', credit: 30000 }] }), /per partner/);
+    no(await call('DELETE', `journal_entries/${jvCap}`), /per partner/);
+    assert.equal((await tb()).cr('3000'), 110150, 'capital unchanged');
+    // F5: a bill paid by a partner keeps its amounts; no bill can drop below what was paid
+    const b5 = ok(await call('POST', 'bills', { date: '2026-01-05', party_id: sup, description: 'Steel', amount: 1000 })).id;
+    ok(await call('POST', 'payments', { kind: 'out', date: '2026-01-06', amount: 400, method: 'bank', bill_id: b5 }));
+    no(await call('PUT', `bills/${b5}`, { amount: 100 }), /below what was already paid/);
+    ok(await call('POST', `partners/${A}/expense`, { date: '2026-01-07', bill_id: b5 }));
+    no(await call('PUT', `bills/${b5}`, { amount: 1000, vat_amount: 50 }), /paid by a partner/);
+    no(await call('PUT', `bills/${b5}`, { date: '2026-01-08' }), /paid by a partner/);
+    ok(await call('PUT', `bills/${b5}`, { description: 'Steel bars' }), 'description can still change');
+    // F6: deleting a partner payment of an existing supplier bill never deletes the bill (whatever the note says)
+    const b6 = ok(await call('POST', 'bills', { date: '2026-01-05', party_id: sup, description: 'Sand', amount: 300 })).id;
+    const p6 = ok(await call('POST', `partners/${A}/expense`, { date: '2026-01-07', bill_id: b6, note: 'partner-expense' })).payment_id;
+    ok(await call('DELETE', `partners/expense/${p6}`));
+    assert.ok(ok(await call('GET', 'bills')).some(b => b.id === b6), 'the supplier bill stays');
+    // F8: VAT on a partner expense is at most 5% of the amount
+    no(await call('POST', `partners/${A}/expense`, { date: '2026-01-07', description: 'x', amount: 100, vat_amount: 5.02 }), /VAT is more than 5%/);
+    // F9: an account code the company already used for something else is not taken over
+    const before3110 = ctx.db.prepare("SELECT * FROM accounts WHERE code='2500'").get();
+    ctx.db.prepare("UPDATE accounts SET system=0, name='Bank loan' WHERE code='2500'").run();      // as if the company had its own 2500 before the upgrade
+    no(await call('POST', 'partner_txns', { partner_id: A, date: '2026-02-02', type: 'loan_in', amount: 10, method: 'bank' }), /already used/);
+    ok(await call('POST', 'journal_entries', { date: '2026-02-02', memo: 'own bank loan', lines: [{ account: '1000', debit: 10 }, { account: '2500', credit: 10 }] }), 'the company keeps using its own 2500');
+    chk = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'partner_accounts'); assert.equal(chk.status, 'fail'); assert.match(chk.detail, /2500 is already used/);
+    ok(await call('DELETE', `journal_entries/${ok(await call('GET', 'journal_entries')).find(j => j.memo === 'own bank loan').id}`));
+    ctx.db.prepare('UPDATE accounts SET system=?, name=? WHERE code=?').run(before3110.system, before3110.name, '2500');
+
     // a partner with movements cannot be deleted; an unused one can
     no(await call('DELETE', `partners/${A}`), /inactive/);
     const D = ok(await call('POST', 'partners', { name: 'Partner Delta' })).id; ok(await call('DELETE', `partners/${D}`));
