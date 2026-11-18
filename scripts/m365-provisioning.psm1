@@ -78,23 +78,119 @@ function Test-TrigonWebUrl {
 }
 
 # ---------------------------------------------------------------- Graph
+# The logical step a Graph call belongs to (shown when it fails). Set with Set-TGStep before each group of calls.
+$script:GStep = 'Microsoft Graph request'
+function Set-TGStep { param([string]$Name) $script:GStep = $Name }
+
+# The request path as it may be shown: relative to /v1.0, opaque paging tokens shortened, redacted, bounded.
+# (URLs built here never carry tokens or secrets; the redaction is a second guard.)
+function Get-SafeGraphPath {
+    param([string]$Uri)
+    $p = [string]$Uri
+    if ($p.StartsWith($script:GraphBase, [StringComparison]::OrdinalIgnoreCase)) { $p = $p.Substring($script:GraphBase.Length) }
+    $p = $p -replace '(?i)(\$?skiptoken=)[^&]+', '$1...'
+    $p = Protect-TrigonText $p
+    if ($p.Length -gt 300) { $p = $p.Substring(0, 300) + '...' }
+    return $p
+}
+
+$script:StatusByName = @{ BadRequest = 400; Unauthorized = 401; Forbidden = 403; NotFound = 404; MethodNotAllowed = 405; Conflict = 409; PreconditionFailed = 412
+    TooManyRequests = 429; InternalServerError = 500; BadGateway = 502; ServiceUnavailable = 503; GatewayTimeout = 504 }
+
+# Status, Graph error code / message and request-id from an Invoke-MgGraphRequest failure. Invoke-MgGraphRequest throws an
+# HttpResponseException (.Response = the HttpResponseMessage) whose ErrorRecord.ErrorDetails.Message holds the formatted HTTP
+# response (status line, response headers, then the JSON body {"error":{"code","message","innerError":{"request-id","date"}}}).
+# Only the JSON body's code / message / request-id / date are kept; response headers are never printed.
+function Get-GraphErrorInfo {
+    param($ErrorRecord, [string]$Method, [string]$Uri, [string]$Step)
+    $e = $ErrorRecord.Exception
+    if ($e -and $e.Data -and $e.Data.Contains('TrigonGraph')) { return $e.Data['TrigonGraph'] }
+    $status = 0
+    try { if ($e.Response -and $e.Response.StatusCode) { $status = [int]$e.Response.StatusCode } } catch { }
+    $m = [string]$e.Message
+    if (-not $status) {
+        foreach ($k in $script:StatusByName.Keys) { if ($m -match ('\b' + $k + '\b')) { $status = $script:StatusByName[$k]; break } }
+        if (-not $status -and $m -match 'status code[^0-9]{0,40}\b([1-5]\d\d)\b') { $status = [int]$Matches[1] }
+    }
+    $code = $null; $msg = $null; $rid = $null; $date = $null
+    $raw = $null
+    if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) { $raw = [string]$ErrorRecord.ErrorDetails.Message }
+    if ($raw) {
+        # the JSON body follows the response headers (some headers, e.g. x-ms-ags-diagnostic, hold JSON themselves)
+        $mm = [regex]::Match($raw, '\{\s*"error"\s*:'); $i = -1; if ($mm.Success) { $i = $mm.Index }
+        $j = $raw.LastIndexOf('}')
+        if ($i -ge 0 -and $j -gt $i) {
+            try {
+                $body = $raw.Substring($i, $j - $i + 1) | ConvertFrom-Json
+                if ($body.error) {
+                    $code = [string]$body.error.code; $msg = [string]$body.error.message
+                    $ie = $body.error.innerError; if (-not $ie) { $ie = $body.error.innererror }
+                    if ($ie) { $rid = [string]$ie.'request-id'; if ($ie.date -is [datetime]) { $date = $ie.date.ToString('yyyy-MM-ddTHH:mm:ss') } else { $date = [string]$ie.date } }
+                }
+            } catch { }
+        }
+    }
+    if (-not $msg) { $msg = $m }
+    $msg = Protect-TrigonText $msg; if ($msg.Length -gt 400) { $msg = $msg.Substring(0, 400) + '...' }
+    $code = Protect-TrigonText $code
+    if ($rid -notmatch '^[0-9a-fA-F-]{36}$') { $rid = $null }
+    $info = [pscustomobject]@{ Step = $Step; Method = $Method; Path = (Get-SafeGraphPath $Uri); Status = $status; Code = $code; Message = $msg; RequestId = $rid; Date = (Protect-TrigonText $date) }
+    $sum = "Microsoft Graph request failed during '$Step': $Method $($info.Path) -> HTTP $(if ($status) { $status } else { '(no response)' })"
+    if ($code) { $sum += " $code" }
+    $sum += ': ' + $msg
+    $info | Add-Member -NotePropertyName Summary -NotePropertyValue $sum
+    return $info
+}
+
 function Invoke-TG {
     param([string]$Method = 'GET', [string]$Uri, $Body = $null)
     if ($Method -ne 'GET') {
         if (-not $script:Apply) { throw "Internal safety stop: $Method $Uri attempted in dry-run mode (no change was made)" }
         [void]$script:Writes.Add("$Method $Uri")
     }
-    return (& $script:Invoker $Method $Uri $Body)
+    try { return (& $script:Invoker $Method $Uri $Body) }
+    catch {
+        $info = Get-GraphErrorInfo $_ $Method $Uri $script:GStep
+        $ex = New-Object System.Exception ($info.Summary)
+        $ex.Data['TrigonGraph'] = $info
+        throw $ex
+    }
 }
 function Get-TGStatus {
     param($ErrorRecord)
     $e = $ErrorRecord.Exception
-    try { if ($e.Response -and $e.Response.StatusCode) { return [int]$e.Response.StatusCode } } catch { }
-    $m = [string]$e.Message
-    if ($m -match '\b(400|401|403|404|409|429|500|502|503|504)\b') { return [int]$Matches[1] }
-    if ($m -match '(?i)notfound|itemNotFound|Request_ResourceNotFound') { return 404 }
-    return 0
+    if ($e -and $e.Data -and $e.Data.Contains('TrigonGraph')) { return [int]$e.Data['TrigonGraph'].Status }
+    return [int](Get-GraphErrorInfo $ErrorRecord '' '' '').Status
 }
+function Get-TGShort { param($ErrorRecord) $i = Get-GraphErrorInfo $ErrorRecord '' '' ''; $t = "HTTP $($i.Status)"; if ($i.Code) { $t += " $($i.Code)" }; return ($t + ': ' + $i.Message) }
+
+# The diagnostic block printed when a step fails (no headers, tokens or secrets; request-id is safe to give Microsoft support)
+function Write-TrigonGraphFailure {
+    param($ErrorRecord, [string]$Phase)
+    $i = Get-GraphErrorInfo $ErrorRecord '' '' $script:GStep
+    Section ("STOPPED during $Phase")
+    if ($i.Method) {
+        W "Step:          $($i.Step)"
+        W "Request:       $($i.Method) $($i.Path)"
+        W ("HTTP status:   " + $(if ($i.Status) { $i.Status } else { 'no response (network / sign-in problem)' }))
+        W ("Graph error:   " + $(if ($i.Code) { $i.Code } else { '(none)' }))
+        W "Graph message: $($i.Message)"
+        if ($i.RequestId) { W "Request ID:    $($i.RequestId)$(if ($i.Date) { ' at ' + $i.Date }) (safe to give Microsoft support)" }
+    } else {
+        W "Step:          $script:GStep"
+        W ('Error:         ' + (Protect-TrigonText ([string]$ErrorRecord.Exception.Message)))
+    }
+    $hint = switch ($i.Status) {
+        400 { 'Microsoft Graph refused this request as malformed. This is a defect in the tool, not in your tenant: send this block (it contains no secret).' }
+        401 { 'The sign-in is missing or expired: run the command again and complete the browser sign-in.' }
+        403 { 'The signed-in account lacks a role or consent for this step: sign in as a Global Administrator and accept the requested permissions.' }
+        404 { 'Microsoft 365 does not have this item (deleted, or a wrong ID in .env).' }
+        429 { 'Microsoft 365 is throttling: wait a few minutes and run again.' }
+        default { if ($i.Status -ge 500) { 'Microsoft 365 had a temporary problem: run again later.' } else { '' } }
+    }
+    if ($hint) { W "Likely cause:  $hint" }
+}
+
 function Get-TGOrNull {
     param([string]$Uri)
     try { return (Invoke-TG GET $Uri) } catch { if ((Get-TGStatus $_) -eq 404) { return $null }; throw }
@@ -112,7 +208,7 @@ function Get-TGAll {
     return $items
 }
 function Q { param([string]$Filter) return ('$filter=' + [uri]::EscapeDataString($Filter)) }
-function Get-SafeError { param($ErrorRecord) $m = [string]$ErrorRecord.Exception.Message; if ($m.Length -gt 400) { $m = $m.Substring(0, 400) + '...' }; return (Protect-TrigonText $m) }
+function Get-SafeError { param($ErrorRecord) $m = [string]$ErrorRecord.Exception.Message; if ($m.Length -gt 600) { $m = $m.Substring(0, 600) + '...' }; return (Protect-TrigonText $m) }
 
 # ---------------------------------------------------------------- local files (non-secret values only)
 function Read-TrigonEnvSafe {
@@ -160,12 +256,15 @@ function Save-TrigonState {
 function Get-TrigonM365Discovery {
     param([hashtable]$Cfg, $EnvInfo)
     $d = [ordered]@{ Warnings = New-Object System.Collections.ArrayList }
+    Set-TGStep 'tenant discovery (GET /organization)'
     $org = @((Invoke-TG GET '/organization?$select=id,displayName').value)[0]
+    Set-TGStep 'signed-in administrator lookup (GET /me)'
     $me = Invoke-TG GET '/me?$select=id,userPrincipalName,displayName'
     $d.Tenant = [ordered]@{ Id = $org.id; Name = $org.displayName }
     $d.Admin = [ordered]@{ Id = $me.id; Upn = $me.userPrincipalName }
 
     # --- Entra app registration (never selects passwordCredentials / keyCredentials)
+    Set-TGStep 'Entra app registration lookup (GET /applications)'
     $sel = '&$select=id,appId,displayName,requiredResourceAccess'
     $clientId = $Cfg.ClientId
     if ($clientId) {
@@ -183,6 +282,7 @@ function Get-TrigonM365Discovery {
     $d.App = $app
     $d.ClientId = $app.appId
 
+    Set-TGStep 'Microsoft Graph service principal lookup (permission names)'
     $gsp = @(Get-TGAll ('/servicePrincipals?' + (Q "appId eq '$script:GraphAppId'") + '&$select=id,appRoles,oauth2PermissionScopes'))[0]
     if (-not $gsp) { throw 'Microsoft Graph service principal not found in this tenant' }
     $d.GraphSpId = $gsp.id
@@ -206,15 +306,18 @@ function Get-TrigonM365Discovery {
     }
 
     # the app's enterprise application (service principal), its consented application permissions and delegated admin consent
+    Set-TGStep 'app enterprise application lookup (GET /servicePrincipals)'
     $d.AppSp = @(Get-TGAll ('/servicePrincipals?' + (Q "appId eq '$($app.appId)'") + '&$select=id,appId,displayName'))[0]
     $d.GrantedApp = @(); $d.GrantedAppAssignments = @(); $d.AllPrincipalsGrant = $null; $d.ConsentedDelegated = @()
     if ($d.AppSp) {
+        Set-TGStep 'app permissions lookup: consented application permissions (appRoleAssignments)'
         foreach ($a in @(Get-TGAll "/servicePrincipals/$($d.AppSp.id)/appRoleAssignments")) {
             if ($a.resourceId -ne $d.GraphSpId) { continue }
             $n = $d.RoleNameById[$a.appRoleId]; if (-not $n) { $n = $a.appRoleId }
             $d.GrantedApp += $n
             $d.GrantedAppAssignments += [pscustomobject]@{ Id = $a.id; Name = $n }
         }
+        Set-TGStep 'app permissions lookup: delegated admin consent (oauth2PermissionGrants)'
         foreach ($g in @(Get-TGAll ('/oauth2PermissionGrants?' + (Q "clientId eq '$($d.AppSp.id)'")))) {
             if ($g.resourceId -ne $d.GraphSpId) { continue }
             if ($g.consentType -eq 'AllPrincipals') { $d.AllPrincipalsGrant = $g; $d.ConsentedDelegated = @(([string]$g.scope).Split(' ', [StringSplitOptions]::RemoveEmptyEntries)) }
@@ -222,31 +325,45 @@ function Get-TrigonM365Discovery {
     }
 
     # --- SharePoint site
+    Set-TGStep 'SharePoint root site lookup (GET /sites/root)'
     $root = Invoke-TG GET '/sites/root?$select=id,webUrl,siteCollection'
     $spHost = $root.siteCollection.hostname
     if (-not $spHost) { $spHost = ([Uri]$root.webUrl).Host }
     $d.SharePointHost = $spHost
-    $d.SiteCandidates = @(Get-TGAll ('/sites?search=' + [uri]::EscapeDataString('Trigon') + '&$select=id,displayName,name,webUrl') | Where-Object { $_ })
+    $d.RootSiteId = $root.id
+    # Keyword site search. Written as $search on purpose: Invoke-MgGraphRequest rewrites a bare "search=" to "$search=" anyway
+    # (ODataQueryOptionsHandler), so this is exactly what Graph receives. Never "*": that is a $search syntax error (HTTP 400).
+    # Informational only: a failure here is reported and discovery continues with the /sites/<SiteName> address.
+    Set-TGStep 'SharePoint site search for "Trigon" (GET /sites?$search=)'
+    try { $d.SiteCandidates = @(Get-TGAll ('/sites?$search=' + [uri]::EscapeDataString('Trigon')) | Where-Object { $_ }) }
+    catch { $d.SiteCandidates = @(); [void]$d.Warnings.Add('The SharePoint search for "Trigon" sites failed (' + (Get-TGShort $_) + '); continuing with the site address') }
     $site = $null; $source = $null
     $envSite = $null; if ($EnvInfo -and $EnvInfo.Values) { $envSite = $EnvInfo.Values['M365_SHAREPOINT_SITE_ID'] }
     if ($envSite -and (Test-TrigonSiteId $envSite)) {
+        Set-TGStep 'SharePoint site lookup by the M365_SHAREPOINT_SITE_ID in .env'
         $site = Get-TGOrNull ('/sites/' + $envSite + '?$select=id,displayName,name,webUrl')
         if ($site) { $source = 'the M365_SHAREPOINT_SITE_ID already in .env' } else { [void]$d.Warnings.Add('M365_SHAREPOINT_SITE_ID in .env does not resolve to a site; it will be replaced by the discovered value') }
     }
+    Set-TGStep "SharePoint site lookup by address /sites/$($Cfg.SiteName)"
     $byUrl = Get-TGOrNull ('/sites/' + $spHost + ':/sites/' + $Cfg.SiteName + '?$select=id,displayName,name,webUrl')
     if (-not $site -and $byUrl) { $site = $byUrl; $source = "its address /sites/$($Cfg.SiteName)" }
     elseif ($site -and $byUrl -and $byUrl.id -ne $site.id) { [void]$d.Warnings.Add("The site in .env ($($site.webUrl)) is not /sites/$($Cfg.SiteName) ($($byUrl.webUrl)); the one in .env is used") }
     if (-not $site) {
         $m = @($d.SiteCandidates | Where-Object { $_.displayName -eq $Cfg.SiteDisplayName })
+        Set-TGStep "SharePoint site lookup by name '$($Cfg.SiteDisplayName)'"
         if ($m.Count -eq 1) { $site = Get-TGOrNull ('/sites/' + $m[0].id + '?$select=id,displayName,name,webUrl'); $source = "its name '$($Cfg.SiteDisplayName)'" }
         elseif ($m.Count -gt 1) { throw "More than one site is named '$($Cfg.SiteDisplayName)'. Put the right one in .env as M365_SHAREPOINT_SITE_ID and run again." }
     }
     $d.Site = $site; $d.SiteSource = $source
     $d.SiteGroup = $null
     $d.NicknameTaken = $null
-    $nick = $Cfg.SiteName; if ($site -and $site.name) { $nick = $site.name }
+    # the group alias is the last segment of the site address (/sites/<alias>); the site's "name" is not guaranteed to be it
+    $nick = $Cfg.SiteName
+    if ($site -and $site.webUrl) { $seg = ([Uri]$site.webUrl).AbsolutePath.TrimEnd('/').Split('/')[-1]; if ($seg -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { $nick = $seg } }
+    Set-TGStep "Microsoft 365 group lookup (mailNickname '$nick')"
     $groups = @(Get-TGAll ('/groups?' + (Q "mailNickname eq '$nick'") + '&$select=id,displayName,visibility,mailNickname'))
     if ($groups.Count -ge 1) {
+        Set-TGStep 'group site lookup (GET /groups/{id}/sites/root)'
         $gsite = Get-TGOrNull ('/groups/' + $groups[0].id + '/sites/root?$select=id,webUrl')
         if ($site -and $gsite -and $gsite.id -eq $site.id) { $d.SiteGroup = $groups[0] }
         elseif (-not $site) { $d.NicknameTaken = $groups[0] }
@@ -255,15 +372,18 @@ function Get-TrigonM365Discovery {
     # --- document library, drive, grants
     $d.Library = $null; $d.LibraryDuplicates = @(); $d.LibraryExactCount = 0; $d.SiteGrants = @()
     if ($site) {
+        Set-TGStep "document library lookup (GET /sites/{site}/lists)"
         $lists = @(Get-TGAll ('/sites/' + $site.id + '/lists?$select=id,displayName,list'))
         $exact = @($lists | Where-Object { $_.displayName -ceq $Cfg.LibraryName -and $_.list -and $_.list.template -eq 'documentLibrary' })
         $d.LibraryExactCount = $exact.Count
         $d.LibraryDuplicates = @($lists | Where-Object { $_.displayName -match ('^' + [regex]::Escape($Cfg.LibraryName) + '\s*\d+$') } | ForEach-Object { $_.displayName })
         if ($exact.Count -gt 1) { [void]$d.Warnings.Add("$($exact.Count) libraries are named '$($Cfg.LibraryName)'; the first one is used") }
         if ($exact.Count -ge 1) {
+            Set-TGStep "library drive lookup (GET /sites/{site}/lists/{list}/drive)"
             $drive = Invoke-TG GET ('/sites/' + $site.id + '/lists/' + $exact[0].id + '/drive?$select=id,name,webUrl')
             $d.Library = [ordered]@{ ListId = $exact[0].id; DriveId = $drive.id; Name = $exact[0].displayName; WebUrl = $drive.webUrl }
         }
+        Set-TGStep 'site grant lookup (GET /sites/{site}/permissions; needs Sites.FullControl.All for the signed-in admin)'
         foreach ($p in @(Get-TGAll ('/sites/' + $site.id + '/permissions'))) {
             $ids = @(); foreach ($x in @($p.grantedToIdentitiesV2) + @($p.grantedToIdentities)) { if ($x -and $x.application) { $ids += $x.application.id } }
             if ($ids -notcontains $d.ClientId) { continue }
@@ -272,15 +392,18 @@ function Get-TrigonM365Discovery {
         }
     }
 
-    # --- other sites where this app has a grant (best effort: the sites the signed-in administrator can find)
+    # --- other sites where this app has a grant. Microsoft Graph cannot list EVERY site with an administrator (delegated) sign-in:
+    # GET /sites/getAllSites and an unfiltered GET /sites are application-permission only, and "$search=*" is a syntax error (400).
+    # So the sites checked are the tenant root site and every site the "Trigon" search found; the result says so.
     $d.OtherSiteGrants = @(); $d.SitesScanned = 0; $d.SitesNotChecked = 0
     if (-not $Cfg.SkipSiteScan) {
-        foreach ($s in @(Get-TGAll ('/sites?search=' + [uri]::EscapeDataString('*') + '&$select=id,webUrl') | Select-Object -First 500)) {
-            if (-not $s -or ($site -and $s.id -eq $site.id)) { continue }
+        $toCheck = @(@($d.RootSiteId) + @($d.SiteCandidates | ForEach-Object { $_.id }) | Where-Object { $_ -and (-not $site -or $_ -ne $site.id) } | Select-Object -Unique)
+        foreach ($sid in $toCheck) {
+            Set-TGStep 'other-site grant check (GET /sites/{site}/permissions)'
             try {
                 $d.SitesScanned++
-                foreach ($p in @(Get-TGAll ('/sites/' + $s.id + '/permissions'))) {
-                    foreach ($x in @($p.grantedToIdentitiesV2) + @($p.grantedToIdentities)) { if ($x -and $x.application -and $x.application.id -eq $d.ClientId) { $d.OtherSiteGrants += $s.webUrl } }
+                foreach ($p in @(Get-TGAll ('/sites/' + $sid + '/permissions'))) {
+                    foreach ($x in @($p.grantedToIdentitiesV2) + @($p.grantedToIdentities)) { if ($x -and $x.application -and $x.application.id -eq $d.ClientId) { $u = @($d.SiteCandidates | Where-Object { $_.id -eq $sid } | ForEach-Object { $_.webUrl })[0]; if (-not $u) { $u = $sid }; $d.OtherSiteGrants += $u } }
                 }
             } catch { $d.SitesNotChecked++ }
         }
@@ -337,7 +460,8 @@ function Get-TrigonChecks {
         $ok = (Test-TrigonSiteId $D.Site.id) -and (Test-TrigonDriveId $D.Library.DriveId) -and (Test-TrigonWebUrl $D.Site.webUrl) -and (Test-TrigonWebUrl $D.Library.WebUrl)
         if ($ok) { & $add 'Site ID / Drive ID / URLs pass the lib/m365graph.js rules' 'PASS' 'site id host,guid,guid; drive id opaque; https://*.sharepoint.com' }
         else { & $add 'Site ID / Drive ID / URLs pass the lib/m365graph.js rules' 'FAIL' 'an ID or URL has an unexpected format' }
-        $drv = Get-TGOrNull ('/sites/' + $D.Site.id + '/drives/' + $D.Library.DriveId + '?$select=id')
+        Set-TGStep 'drive ID check (GET /sites/{site}/drives/{drive})'
+        $drv = $null; try { $drv = Get-TGOrNull ('/sites/' + $D.Site.id + '/drives/' + $D.Library.DriveId + '?$select=id') } catch { [void]$D.Warnings.Add('Drive check failed: ' + (Get-TGShort $_)) }
         if ($drv -and $drv.id -eq $D.Library.DriveId) { & $add 'IDs resolve (GET site + drive)' 'PASS' 'the drive belongs to the site' } else { & $add 'IDs resolve (GET site + drive)' 'FAIL' 'the drive ID does not resolve inside the site' }
     } else { & $add 'Site ID / Drive ID resolve and are valid' $todo 'after the site and library exist' }
 
@@ -353,7 +477,7 @@ function Get-TrigonChecks {
     if (@($D.OtherSiteGrants).Count) { & $add 'App has no grant on any other site' 'FAIL' ('also granted on: ' + (@($D.OtherSiteGrants) -join ', ')) }
     elseif ($Cfg.SkipSiteScan) { & $add 'App has no grant on any other site' 'WARN' 'not scanned (-SkipSiteScan)' }
     else {
-        $det = "$($D.SitesScanned) other sites checked"; $st = 'PASS'
+        $det = "$($D.SitesScanned) other site(s) checked: the root site and the sites found by the 'Trigon' search (Graph cannot list every site with an administrator sign-in; the tenant-wide permission check below covers 'all sites' access)"; $st = 'PASS'
         if ($D.SitesNotChecked) { $det += ", $($D.SitesNotChecked) could not be read"; $st = 'WARN' }
         & $add 'App has no grant on any other site' $st $det
     }
@@ -453,11 +577,11 @@ function Write-TrigonManualSteps {
 function Invoke-TrigonApplyPlan {
     param($D, $Plan, [hashtable]$Cfg, $State)
     $keys = @($Plan | ForEach-Object { $_.Key })
-    $script:Step = ''
+    $script:Step = $script:GStep = 'apply: '
     $save = { param($ev) Save-TrigonState -State $State -Path $Cfg.StatePath -Event $ev }
 
     if ($keys -contains 'CreateServicePrincipal') {
-        $script:Step = 'create the enterprise application'
+        $script:Step = $script:GStep = 'apply: create the enterprise application'
         $sp = Invoke-TG POST '/servicePrincipals' @{ appId = $D.ClientId }
         $D.AppSp = $sp
         $State.created['servicePrincipal'] = [ordered]@{ id = $sp.id; note = 'kept on rollback (needed for sign-in)' }
@@ -468,7 +592,7 @@ function Invoke-TrigonApplyPlan {
     if ($keys -contains 'AddRequired:Sites.Selected') { $toAdd += [pscustomobject]@{ name = 'Sites.Selected'; id = $D.RoleIdByName['Sites.Selected']; type = 'Role' } }
     if ($keys -contains 'AddRequired:Mail.Send') { $toAdd += [pscustomobject]@{ name = 'Mail.Send'; id = $D.ScopeIdByName['Mail.Send']; type = 'Scope' } }
     if ($toAdd.Count) {
-        $script:Step = 'add the API permissions to the app registration'
+        $script:Step = $script:GStep = 'apply: add the API permissions to the app registration'
         $rra = @(); $hasGraph = $false
         foreach ($r in @($D.App.requiredResourceAccess)) {
             if (-not $r) { continue }
@@ -484,14 +608,14 @@ function Invoke-TrigonApplyPlan {
         W ('  done: API permissions added: ' + (($toAdd | ForEach-Object { "$($_.name) ($(if ($_.type -eq 'Role') { 'Application' } else { 'Delegated' }))" }) -join ', '))
     }
     if ($keys -contains 'GrantAppRole:Sites.Selected') {
-        $script:Step = 'grant admin consent for Sites.Selected'
+        $script:Step = $script:GStep = 'apply: grant admin consent for Sites.Selected'
         $a = Invoke-TG POST ('/servicePrincipals/' + $D.AppSp.id + '/appRoleAssignments') @{ principalId = $D.AppSp.id; resourceId = $D.GraphSpId; appRoleId = $D.RoleIdByName['Sites.Selected'] }
         $State.created['appRoleAssignment'] = [ordered]@{ id = $a.id; servicePrincipalId = $D.AppSp.id; permission = 'Sites.Selected' }
         & $save 'admin consent Sites.Selected'
         W '  done: admin consent for Sites.Selected'
     }
     if ($keys -contains 'ExtendConsent:Mail.Send') {
-        $script:Step = 'add Mail.Send to the tenant-wide consent'
+        $script:Step = $script:GStep = 'apply: add Mail.Send to the tenant-wide consent'
         $g = $D.AllPrincipalsGrant
         $newScope = ((@(([string]$g.scope).Split(' ', [StringSplitOptions]::RemoveEmptyEntries)) + 'Mail.Send') -join ' ')
         [void](Invoke-TG PATCH ('/oauth2PermissionGrants/' + $g.id) @{ scope = $newScope })
@@ -500,7 +624,7 @@ function Invoke-TrigonApplyPlan {
         W '  done: Mail.Send added to the tenant-wide delegated consent'
     }
     if ($keys -contains 'CreateSite') {
-        $script:Step = 'create the private SharePoint site'
+        $script:Step = $script:GStep = 'apply: create the private SharePoint site'
         if ($D.NicknameTaken) { throw "A Microsoft 365 group already uses the alias '$($Cfg.SiteName)' ($($D.NicknameTaken.displayName)) but its site was not found at /sites/$($Cfg.SiteName). Nothing was created for the site. Pick another -SiteName or put the existing site in .env." }
         $body = @{ displayName = $Cfg.SiteDisplayName; mailNickname = $Cfg.SiteName; description = 'Copies of Trigon ERP documents (written by the ERP; managed in the ERP)'
             groupTypes = @('Unified'); mailEnabled = $true; securityEnabled = $false; visibility = 'Private'
@@ -521,7 +645,7 @@ function Invoke-TrigonApplyPlan {
         W "  done: site ready: $($site.webUrl)"
     }
     if ((-not $D.Library) -and ($keys -contains 'CreateLibrary')) {
-        $script:Step = "create the '$($Cfg.LibraryName)' library"
+        $script:Step = $script:GStep = "apply: create the '$($Cfg.LibraryName)' library"
         $l = Invoke-TG POST ('/sites/' + $D.Site.id + '/lists') @{ displayName = $Cfg.LibraryName; list = @{ template = 'documentLibrary' } }
         $drive = Invoke-TG GET ('/sites/' + $D.Site.id + '/lists/' + $l.id + '/drive?$select=id,name,webUrl')
         $D.Library = [ordered]@{ ListId = $l.id; DriveId = $drive.id; Name = $Cfg.LibraryName; WebUrl = $drive.webUrl }
@@ -530,7 +654,7 @@ function Invoke-TrigonApplyPlan {
         W "  done: library created: $($drive.webUrl)"
     }
     if (($keys -contains 'CreateSiteGrant') -or ($keys -contains 'UpgradeSiteGrant')) {
-        $script:Step = 'grant the app write on the site'
+        $script:Step = $script:GStep = 'apply: grant the app write on the site'
         if (@($D.SiteGrants).Count -eq 0) {
             $p = Invoke-TG POST ('/sites/' + $D.Site.id + '/permissions') @{ roles = @('write'); grantedToIdentities = @(@{ application = @{ id = $D.ClientId; displayName = $D.App.displayName } }) }
             $State.created['siteGrant'] = [ordered]@{ siteId = $D.Site.id; permissionId = $p.id; action = 'created'; previousRoles = @() }
@@ -560,7 +684,12 @@ function Invoke-TrigonM365Setup {
     W ("Trigon ERP - Microsoft 365 provisioning (" + $result.Mode + ')')
     if (-not $script:Apply) { W 'DRY RUN: discovery and validation only. No Microsoft 365 change will be made. Use -Apply to make the changes.' }
 
-    $d = Get-TrigonM365Discovery -Cfg $Cfg -EnvInfo $envInfo
+    try { $d = Get-TrigonM365Discovery -Cfg $Cfg -EnvInfo $envInfo }
+    catch {
+        Write-TrigonGraphFailure $_ 'discovery (read-only)'
+        W 'No change was made: discovery only reads from Microsoft 365.'
+        $result.ExitCode = 2; $result.Overall = 'FAIL'; $result.Error = (Get-GraphErrorInfo $_ '' '' $script:GStep); return $result
+    }
     Write-TrigonDiscovery $d $envInfo $Cfg
     $plan = New-TrigonPlan $d $Cfg
     $result.Plan = $plan
@@ -600,9 +729,9 @@ function Invoke-TrigonM365Setup {
             Save-TrigonState -State $state -Path $Cfg.StatePath -Event 'apply finished'
         } catch {
             $msg = Get-SafeError $_
+            Write-TrigonGraphFailure $_ 'apply - partial failure'
             Section 'STOPPED - partial failure'
             W "Failed while trying to: $script:Step"
-            W "Error: $msg"
             try { Save-TrigonState -State $state -Path $Cfg.StatePath -Event ('failed: ' + $script:Step) } catch { W 'WARNING: the state file could not be written' }
             W 'Completed before the failure (recorded in the state file):'
             if ($state.created.Count) { foreach ($k in $state.created.Keys) { W "   - $k" } } else { W '   - nothing' }
@@ -617,7 +746,12 @@ function Invoke-TrigonM365Setup {
     } else { Save-TrigonState -State $state -Path $Cfg.StatePath -Event 'verified (no changes needed)' }
 
     Section 'Verification (fresh read from Microsoft 365)'
-    $d2 = Get-TrigonM365Discovery -Cfg $Cfg -EnvInfo $envInfo
+    try { $d2 = Get-TrigonM365Discovery -Cfg $Cfg -EnvInfo $envInfo }
+    catch {
+        Write-TrigonGraphFailure $_ 'verification (read-only)'
+        W 'The changes listed under "Applying" were made; the verification read failed. Run the same command again (it only verifies when nothing is missing).'
+        $result.ExitCode = 2; $result.Overall = 'FAIL'; return $result
+    }
     $plan2 = New-TrigonPlan $d2 $Cfg
     $checks = Get-TrigonChecks $d2 $plan2 $Cfg $envInfo $true
     Write-TrigonChecks $checks
@@ -641,6 +775,7 @@ function Invoke-TrigonM365Rollback {
     $state = Read-TrigonState $Cfg.StatePath
     if (-not $state -or -not $state.created) { W "No provisioning state at $($Cfg.StatePath): nothing was recorded as created by the setup, so nothing is removed."; $result.ExitCode = 0; return $result }
     $c = $state.created
+    Set-TGStep 'rollback: tenant discovery (GET /organization)'
     $org = @((Invoke-TG GET '/organization?$select=id,displayName').value)[0]
     if ($state.tenantId -and $org.id -ne $state.tenantId) { throw "Signed in to tenant $($org.id) but the state file is for $($state.tenantId). Sign in to the right tenant." }
     W "Tenant: $($org.displayName). The app registration itself is never deleted. Uploaded ERP documents are never deleted automatically."
@@ -650,6 +785,7 @@ function Invoke-TrigonM365Rollback {
     $add = { param($k, $t, $destructive) [void]$actions.Add([pscustomobject]@{ Key = $k; Text = $t; Destructive = [bool]$destructive }) }
 
     if ($c.siteGrant -and -not $c.siteGrant.removed) {
+        Set-TGStep 'rollback: site grant lookup'
         $p = Get-TGOrNull ('/sites/' + $c.siteGrant.siteId + '/permissions/' + $c.siteGrant.permissionId)
         if ($p) {
             if ($c.siteGrant.action -eq 'created') { & $add 'siteGrant' 'Remove the app''s write grant on the Trigon site (created by the setup)' $false }
@@ -661,6 +797,7 @@ function Invoke-TrigonM365Rollback {
     if ($c.requiredAccess -and -not $state.requiredAccessRemoved) { & $add 'requiredAccess' ('Remove from the app registration the API permissions the setup added: ' + ((@($c.requiredAccess) | ForEach-Object { $_.name }) -join ', ')) $false }
     $libEmpty = $null
     if ($c.library -and -not $c.library.removed) {
+        Set-TGStep 'rollback: library content check'
         $items = Get-TGOrNull ('/drives/' + $c.library.driveId + '/root/children?$top=1&$select=id')
         $libEmpty = -not ($items -and @($items.value).Count)
         if (-not $Cfg.RemoveCreatedSharePoint) { [void]$refused.Add("Library '$($c.library.name)' is kept (pass -RemoveCreatedSharePoint to remove it when it is empty).") }
@@ -671,6 +808,7 @@ function Invoke-TrigonM365Rollback {
         if (-not $Cfg.RemoveCreatedSharePoint) { [void]$refused.Add("Site '$($c.site.name)' is kept (pass -RemoveCreatedSharePoint to remove it when it is empty).") }
         else {
             $hasFiles = $false
+            Set-TGStep 'rollback: site content check'
             if ($c.site.siteId) {
                 foreach ($dv in @(Get-TGAll ('/sites/' + $c.site.siteId + '/drives?$select=id'))) {
                     if ($c.library -and $dv.id -eq $c.library.driveId -and $libEmpty) { continue }
@@ -702,7 +840,7 @@ function Invoke-TrigonM365Rollback {
     $step = ''
     try {
         foreach ($a in $actions) {
-            $step = $a.Text
+            $step = $a.Text; Set-TGStep ('rollback: ' + $a.Text)
             switch ($a.Key) {
                 'siteGrant' {
                     if ($c.siteGrant.action -eq 'created') { [void](Invoke-TG DELETE ('/sites/' + $c.siteGrant.siteId + '/permissions/' + $c.siteGrant.permissionId)) }
@@ -752,8 +890,8 @@ function Invoke-TrigonM365Rollback {
             W "  done: $($a.Text)"
         }
     } catch {
+        Write-TrigonGraphFailure $_ 'rollback'
         W "STOPPED while trying to: $step"
-        W ('Error: ' + (Get-SafeError $_))
         W 'The state file records what was already removed; fix the cause and run the same rollback command again.'
         $result.ExitCode = 2; return $result
     }
@@ -762,4 +900,4 @@ function Invoke-TrigonM365Rollback {
     return $result
 }
 
-Export-ModuleMember -Function Invoke-TrigonM365Setup, Invoke-TrigonM365Rollback, Set-TrigonProvisioningHooks, Get-TrigonWrites, Protect-TrigonText, Test-TrigonSiteId, Test-TrigonDriveId, Test-TrigonWebUrl, Read-TrigonEnvSafe
+Export-ModuleMember -Function Write-TrigonGraphFailure, Get-GraphErrorInfo, Invoke-TrigonM365Setup, Invoke-TrigonM365Rollback, Set-TrigonProvisioningHooks, Get-TrigonWrites, Protect-TrigonText, Test-TrigonSiteId, Test-TrigonDriveId, Test-TrigonWebUrl, Read-TrigonEnvSafe

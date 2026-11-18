@@ -43,7 +43,7 @@ try {
     $r = Invoke-TrigonM365Rollback -Cfg @{ Apply = $doApply; StatePath = $StatePath; RemoveCreatedSharePoint = [bool]$RemoveCreatedSharePoint }
     $code = $r.ExitCode
 } catch {
-    Write-Host ('STOPPED: ' + (Protect-TrigonText ([string]$_.Exception.Message)))
+    Write-TrigonGraphFailure $_ 'the run'
 } finally {
     try { Disconnect-MgGraph | Out-Null } catch { }
 }

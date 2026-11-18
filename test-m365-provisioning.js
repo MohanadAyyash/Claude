@@ -36,6 +36,17 @@ ok(!/passwordCredentials|keyCredentials/.test(psm.replace(/^\s*#.*$/gm, '')), 'n
 ok(!/M365_CLIENT_SECRET'\]|M365_ENCRYPTION_KEY'\]\s*=/.test(psm) && /SecretsSet\[\$k\] = \$isSet/.test(psm), 'secrets only checked for presence');
 ok(/ContextScope = 'Process'/.test(setup) && /ContextScope = 'Process'/.test(rollback), 'the admin token is not cached on disk');
 ok(!/DELETE \('\/applications/.test(psm), 'the rollback never deletes the app registration');
+// real-Graph query rules (the real-tenant 400 of 855c84e): Invoke-MgGraphRequest turns a bare "search=" into "$search=", and "$search=*"
+// is a Graph syntax error; listing every site is not available with a delegated sign-in. Code lines only (comments may explain it).
+const code = psm.replace(/^\s*#.*$/gm, '').replace(/#[^'"\n]*$/gm, '');
+ok(!/[?&]search=/.test(code), 'no bare search= query (the Graph SDK rewrites it to $search=)');
+ok(!/EscapeDataString\('\*'\)|\$search=\*|search=%2A/.test(code), 'no $search=* (HTTP 400 on real Graph)');
+ok(!/getAllSites/.test(code), 'no getAllSites (application permission only)');
+ok(!/ConsistencyLevel|\$count|endswith\(/.test(code), 'no advanced directory queries (they need ConsistencyLevel: eventual)');
+ok(/function Convert-LikeGraphSdk/.test(tests) && /REGRESSION \(real tenant 400\)/.test(tests) && /Syntax error: character '\{0\}' is not valid at position 0/.test(tests), 'the mock applies the SDK rewrite and reproduces the Graph 400');
+const steps = (psm.match(/Set-TGStep /g) || []).length;
+ok(steps >= 25, 'every Graph call group is labelled with a step (' + steps + ')');
+ok(/x-ms-ags-diagnostic/.test(tests) && /\{\\s\*"error"\\s\*:/.test(psm), 'error bodies are found after headers that contain JSON');
 const added = [...psm.matchAll(/toAdd \+= \[pscustomobject\]@\{ name = '([^']+)'[^}]*type = '(\w+)'/g)].map(m => m[1] + '/' + m[2]);
 ok(added.length === 2 && added.includes('Sites.Selected/Role') && added.includes('Mail.Send/Scope'), 'only Sites.Selected (Application) and Mail.Send (Delegated) can be added: ' + added);
 ok(/roles = @\('write'\)/.test(psm) && !/roles = @\('(owner|fullcontrol)'\)/.test(psm), 'site grant is write, never owner / full control');

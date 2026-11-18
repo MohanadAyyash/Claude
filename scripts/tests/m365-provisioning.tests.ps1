@@ -22,7 +22,7 @@ function New-Guid2 { return [guid]::NewGuid().ToString() }
 function New-Tenant {
     param([switch]$WithSite, [switch]$WithLibrary, [string]$GrantRoles = '', [switch]$Public, [switch]$BroadSites, [switch]$AppMailSend, [switch]$NoAdminConsent, [switch]$Configured)
     $t = @{
-        calls = New-Object System.Collections.ArrayList; failOn = $null; siteDelay = 0
+        calls = New-Object System.Collections.ArrayList; wire = New-Object System.Collections.ArrayList; failOn = $null; failWith = $null; siteDelay = 0
         app = @{ id = 'app-object-1'; appId = $CLIENT; displayName = 'Trigon ERP'
             requiredResourceAccess = @(@{ resourceAppId = $GRAPH; resourceAccess = @(
                         @{ id = $S_OPENID; type = 'Scope' }, @{ id = $S_PROFILE; type = 'Scope' }, @{ id = $S_EMAIL; type = 'Scope' }, @{ id = $S_OFFLINE; type = 'Scope' }, @{ id = $S_USER_READ; type = 'Scope' }) },
@@ -60,7 +60,44 @@ function New-Tenant {
 }
 function New-SiteObj { param($Id, $Name, $Display) $s = @{ id = $Id; name = $Name; displayName = $Display; webUrl = "https://contoso.sharepoint.com/sites/$Name"; lists = New-Object System.Collections.ArrayList; permissions = New-Object System.Collections.ArrayList }; [void]$s.lists.Add(@{ id = "list-docs-$Name"; displayName = 'Documents'; template = 'documentLibrary'; driveId = "b!DefaultDrive_$Name"; items = 0 }); return $s }
 function J { param($o) if ($null -eq $o) { return $null }; return (ConvertTo-Json -InputObject $o -Depth 20 | ConvertFrom-Json) }
-function NotFound { throw 'Response status code does not indicate success: 404 (Not Found) itemNotFound' }
+# --- errors shaped like Invoke-MgGraphRequest 2.x failures: an HttpResponseException (.Response = HttpResponseMessage) whose ErrorRecord
+#     carries ErrorDetails = the formatted HTTP response (status line, response headers, JSON body). See InvokeMgGraphRequest.cs
+#     GenerateHttpErrorRecordAsync in microsoftgraph/msgraph-sdk-powershell.
+if (-not ('FakeGraphHttpResponseException' -as [type])) {
+    Add-Type -TypeDefinition @'
+public sealed class FakeGraphHttpResponseException : System.Net.Http.HttpRequestException {
+    public FakeGraphHttpResponseException(string message, System.Net.Http.HttpResponseMessage response) : base(message) { Response = response; }
+    public System.Net.Http.HttpResponseMessage Response { get; private set; }
+}
+'@
+}
+$script:RequestIds = New-Object System.Collections.ArrayList
+function Throw-Graph {
+    param([int]$Status, [string]$Code, [string]$Message)
+    $resp = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
+    $rid = [guid]::NewGuid().ToString(); [void]$script:RequestIds.Add($rid)
+    $ex = [FakeGraphHttpResponseException]::new(("Response status code does not indicate success: {0} ({1})." -f $resp.StatusCode, $resp.ReasonPhrase), $resp)
+    $body = ConvertTo-Json -Compress -Depth 5 -InputObject @{ error = @{ code = $Code; message = $Message; innerError = @{ date = '2026-11-18T13:00:00'; 'request-id' = $rid; 'client-request-id' = $rid } } }
+    $text = "HTTP/1.1 $Status $($resp.ReasonPhrase)`r`nCache-Control: no-cache`r`nrequest-id: $rid`r`nclient-request-id: $rid`r`nx-ms-ags-diagnostic: {""ServerInfo"":{""DataCenter"":""UAE North""}}`r`nDate: Wed, 18 Nov 2026 13:00:00 GMT`r`nContent-Type: application/json`r`n`r`n$body"
+    $er = [System.Management.Automation.ErrorRecord]::new($ex, 'InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest', 'InvalidOperation', $null)
+    $er.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($text)
+    throw $er
+}
+function NotFound { Throw-Graph 404 'itemNotFound' 'The requested resource does not exist.' }
+
+# --- what the Graph PowerShell SDK does to every request URI before it is sent (ODataQueryOptionsHandler, 2.x): a query parameter
+#     whose name is a standard OData option without "$" gets "$" prepended, by a plain string Replace over the whole query.
+function Convert-LikeGraphSdk {
+    param([string]$Query)
+    if (-not $Query) { return $Query }
+    $std = @('count', 'expand', 'filter', 'format', 'orderby', 'search', 'select', 'skip', 'top')
+    $new = $Query
+    foreach ($seg in $Query.Split([char[]]@('&', '?'), [StringSplitOptions]::RemoveEmptyEntries)) {
+        $param = $seg.Split('=')[0]
+        if ($std -contains $param.ToLower()) { $new = $new.Replace($param, '$' + $param) }
+    }
+    return $new
+}
 function SiteOut { param($s) return @{ id = $s.id; name = $s.name; displayName = $s.displayName; webUrl = $s.webUrl } }
 function DriveOut { param($s, $l) return @{ id = $l.driveId; name = $l.displayName; webUrl = $s.webUrl + '/' + ($l.displayName -replace ' ', '%20') } }
 function Find-Site { param($id) return @($global:T.sites | Where-Object { $_.id -eq $id })[0] }
@@ -69,10 +106,22 @@ $Mock = {
     param($Method, $Uri, $Body)
     $t = $global:T
     [void]$t.calls.Add("$Method $Uri")
-    if ($t.failOn -and ("$Method $Uri") -match $t.failOn) { throw "Response status code does not indicate success: 500 (Internal Server Error). Authorization: Bearer $FAKE_BEARER" }
+    if ($t.failOn -and ("$Method $Uri") -match $t.failOn) { Throw-Graph 500 'generalException' "General exception while processing. Authorization: Bearer $FAKE_BEARER" }
+    if ($t.failWith -and ("$Method $Uri") -match $t.failWith.match) { Throw-Graph $t.failWith.status $t.failWith.code $t.failWith.message }
     $path = $Uri; $qs = ''
     if ($Uri.Contains('?')) { $path = $Uri.Substring(0, $Uri.IndexOf('?')); $qs = $Uri.Substring($Uri.IndexOf('?') + 1) }
+    $qs = Convert-LikeGraphSdk $qs                                   # what actually goes on the wire
+    [void]$t.wire.Add("$Method $path$(if ($qs) { '?' + $qs })")
     $q = @{}; foreach ($kv in $qs.Split('&')) { if ($kv -match '^([^=]+)=(.*)$') { $q[$Matches[1]] = [uri]::UnescapeDataString($Matches[2]) } }
+    # Graph rules the tool depends on (as documented / observed on the real service):
+    foreach ($k in $q.Keys) { if (-not $k.StartsWith('$')) { Throw-Graph 400 'BadRequest' "Unsupported query parameter '$k'." } }
+    $s0 = $q['$search']
+    if ($null -ne $s0 -and $s0 -notmatch '^("[^"]+"|[A-Za-z0-9][A-Za-z0-9 _.-]*)$') { Throw-Graph 400 'BadRequest' ("Syntax error: character '{0}' is not valid at position 0 in '{1}'." -f $s0.Substring(0, [Math]::Min(1, $s0.Length)), $s0) }
+    if ($path -match '^/(applications|servicePrincipals|groups|oauth2PermissionGrants|organization)$') {
+        $adv = ($null -ne $q['$search']) -or ($null -ne $q['$count']) -or ([string]$q['$filter'] -match '(?i)endswith\(|\sne\s|not\(')
+        if ($adv) { Throw-Graph 400 'Request_UnsupportedQuery' 'Unsupported query: this query needs the ConsistencyLevel: eventual header and $count=true.' }
+    }
+    if ($Method -eq 'GET' -and $path -eq '/sites/getAllSites') { Throw-Graph 403 'accessDenied' 'Access denied. getAllSites does not support delegated permissions.' }
     $f = $q['$filter']
     $m = $null
     switch -regex ("$Method $path") {
@@ -95,9 +144,11 @@ $Mock = {
         '^GET /oauth2PermissionGrants$' { return J @{ value = @($t.grants) } }
         '^GET /oauth2PermissionGrants/(.+)$' { $id = $Matches[1]; $g = @($t.grants | Where-Object { $_.id -eq $id })[0]; if (-not $g) { NotFound }; return J $g }
         '^PATCH /oauth2PermissionGrants/(.+)$' { $id = $Matches[1]; $g = @($t.grants | Where-Object { $_.id -eq $id })[0]; $g.scope = $Body.scope; return $null }
-        '^GET /sites/root$' { return J @{ id = 'root'; webUrl = 'https://contoso.sharepoint.com'; siteCollection = @{ hostname = 'contoso.sharepoint.com' } } }
+        '^GET /sites/root$' { $r0 = @($t.sites)[0]; return J @{ id = $r0.id; webUrl = 'https://contoso.sharepoint.com'; siteCollection = @{ hostname = 'contoso.sharepoint.com' } } }
         '^GET /sites$' {
-            $s = $q['search']
+            $s = $q['$search']
+            if ($null -eq $s) { Throw-Graph 403 'accessDenied' 'Access denied. Listing all sites does not support delegated permissions.' }
+            $s = $s.Trim('"')
             $all = @($t.sites | Where-Object { $s -eq '*' -or $_.displayName -match [regex]::Escape($s) -or $_.name -match [regex]::Escape($s) })
             return J @{ value = @($all | ForEach-Object { SiteOut $_ }) }
         }
@@ -395,6 +446,99 @@ Test-Case 'validation rules match lib/m365graph.js samples' {
     Assert (Test-TrigonWebUrl 'https://contoso.sharepoint.com/sites/TrigonERP/ERP%20Documents') 'sharepoint url ok'
     Assert (-not (Test-TrigonWebUrl 'http://contoso.sharepoint.com/x')) 'http refused'
     Assert (-not (Test-TrigonWebUrl 'https://evil.example.com/x')) 'other host refused'
+}
+
+Test-Case 'REGRESSION (real tenant 400): the old site scan GET /sites?search=* becomes $search=* in the Graph SDK and Graph answers 400' {
+    New-Tenant | Out-Null; $script:lines.Clear()
+    $mod = Get-Module m365-provisioning
+    $info = & $mod {
+        $script:Apply = $false
+        Set-TGStep 'other-site grant scan (the query of commit 855c84e)'
+        try { Invoke-TG GET ('/sites?search=' + [uri]::EscapeDataString('*') + '&$select=id,webUrl'); $null } catch { $_.Exception.Data['TrigonGraph'] }
+    }
+    Assert ($null -ne $info) 'the old query fails'
+    Assert (@($global:T.wire)[-1] -match '^GET /sites\?\$search=%2A&\$select=id,webUrl$') "the SDK rewrite is reproduced on the wire: $(@($global:T.wire)[-1])"
+    Assert ($info.Status -eq 400 -and $info.Code -eq 'BadRequest') "HTTP 400 BadRequest (got $($info.Status) $($info.Code))"
+    Assert ($info.Message -match "Syntax error: character '\*' is not valid at position 0") "Graph message kept: $($info.Message)"
+    Assert ($info.Step -match 'other-site grant scan') 'the logical step is named'
+    Assert ($info.Path -eq '/sites?search=%2A&$select=id,webUrl') "the request path is shown: $($info.Path)"
+    Assert ($info.RequestId -eq @($script:RequestIds)[-1]) 'the Graph request-id is kept'
+    # the same failure as the user saw it: through the setup, as a dry run
+    $global:T.failWith = @{ match = '^GET /sites/root'; status = 400; code = 'BadRequest'; message = "Syntax error: character '*' is not valid at position 0 in '*'." }
+    $script:lines.Clear()
+    $r = Invoke-TrigonM365Setup (Cfg)
+    $global:T.failWith = $null
+    $txt = Out-Text
+    Assert ($r.ExitCode -eq 2) 'dry run stops with exit 2'
+    Assert ($txt -match 'STOPPED during discovery \(read-only\)') 'says which phase stopped'
+    Assert ($txt -match 'Step:\s+SharePoint root site lookup') 'says which step failed'
+    Assert ($txt -match 'Request:\s+GET /sites/root\?\$select=id,webUrl,siteCollection') 'shows the safe request path'
+    Assert ($txt -match 'HTTP status:\s+400' -and $txt -match 'Graph error:\s+BadRequest' -and $txt -match "Graph message: Syntax error") 'shows HTTP status, Graph error code and message'
+    Assert ($txt -match 'Request ID:\s+[0-9a-f-]{36}') 'shows the request-id for Microsoft support'
+    Assert ($txt -match 'No change was made') 'states that nothing changed'
+    Assert ((Mutations).Count -eq 0) 'no mutation'
+    Assert ($txt -notmatch 'request-id: |x-ms-ags-diagnostic|Cache-Control') 'raw response headers are not printed'
+}
+
+Test-Case 'discovery never sends $search=* or a bare search= and the dry run passes on the SDK-faithful mock' {
+    New-Tenant -WithSite -WithLibrary -GrantRoles 'write' -Configured | Out-Null
+    $r = Invoke-TrigonM365Setup (Cfg)
+    Assert ($r.ExitCode -eq 0 -and $r.Overall -eq 'PASS') "dry run PASS (got $($r.Overall) / $($r.ExitCode))"
+    Assert (@($global:T.wire | Where-Object { $_ -match '\$search=(%2A|\*)' }).Count -eq 0) 'no $search=*'
+    Assert (@($global:T.calls | Where-Object { $_ -match '[?&]search=' }).Count -eq 0) 'no bare search= (the SDK would rewrite it)'
+    Assert (@($global:T.wire | Where-Object { $_ -match '^GET /sites/getAllSites|^GET /sites\?\$select' }).Count -eq 0) 'no delegated-unsupported site listing'
+    Assert (@($global:T.wire | Where-Object { $_ -match '^GET /sites\?\$search=Trigon$' }).Count -eq 1) 'one keyword search for Trigon'
+    Assert ((Check $r 'App has no grant on any other site').Detail -match 'root site and the sites found') 'the scan says what it covered'
+}
+
+Test-Case 'a Graph 400 in the app lookup: step, request, status, code, message; no token, no mutation' {
+    New-Tenant | Out-Null; $script:lines.Clear()
+    $global:T.failWith = @{ match = '^GET /applications'; status = 400; code = 'Request_BadRequest'; message = "Invalid filter clause. Authorization: Bearer $FAKE_BEARER client_secret=$FAKE_SECRET" }
+    $r = Invoke-TrigonM365Setup (Cfg)
+    $global:T.failWith = $null
+    $txt = Out-Text
+    Assert ($r.ExitCode -eq 2) 'exit 2'
+    Assert ($txt -match 'Step:\s+Entra app registration lookup') 'step = app lookup'
+    Assert ($txt -match "Request:\s+GET /applications\?\`$filter=appId%20eq%20%27$CLIENT%27") 'request path with the filter'
+    Assert ($txt -match 'Graph error:\s+Request_BadRequest' -and $txt -match 'Graph message: Invalid filter clause') 'code and message'
+    Assert (-not $txt.Contains($FAKE_BEARER) -and -not $txt.Contains($FAKE_SECRET)) 'token and secret redacted from the Graph message'
+    Assert ($txt -match 'defect in the tool') '400 hint'
+    Assert ((Mutations).Count -eq 0) 'no mutation'
+}
+
+Test-Case 'a 403 on the site grant lookup names the step and the role/consent cause' {
+    New-Tenant -WithSite -WithLibrary -GrantRoles 'write' -Configured | Out-Null; $script:lines.Clear()
+    $global:T.failWith = @{ match = '^GET /sites/contoso\.sharepoint\.com,0f0f0f0f[^/]*/permissions$'; status = 403; code = 'accessDenied'; message = 'Access denied' }
+    $r = Invoke-TrigonM365Setup (Cfg)
+    $global:T.failWith = $null
+    $txt = Out-Text
+    Assert ($r.ExitCode -eq 2 -and $txt -match 'Step:\s+site grant lookup' -and $txt -match 'HTTP status:\s+403' -and $txt -match 'Global Administrator') '403 diagnostics'
+}
+
+Test-Case 'the informational Trigon site search failing does not stop the dry run' {
+    New-Tenant -WithSite -WithLibrary -GrantRoles 'write' -Configured | Out-Null; $script:lines.Clear()
+    $global:T.failWith = @{ match = '^GET /sites\?\$search='; status = 400; code = 'BadRequest'; message = 'Search is not available' }
+    $r = Invoke-TrigonM365Setup (Cfg)
+    $global:T.failWith = $null
+    Assert ($r.ExitCode -eq 0) "dry run continues (exit $($r.ExitCode))"
+    Assert ((Out-Text) -match 'WARNING: The SharePoint search for "Trigon" sites failed \(HTTP 400 BadRequest: Search is not available\)') 'reported as a warning with status/code/message'
+}
+
+Test-Case 'mock fidelity: Graph rules the tool relies on are enforced by the mock' {
+    New-Tenant | Out-Null
+    $mod = Get-Module m365-provisioning
+    $res = & $mod {
+        $out = @{}
+        foreach ($u in '/sites?$select=id', '/sites/getAllSites', '/applications?$search="displayName:Trigon"', ('/groups?$filter=' + [uri]::EscapeDataString("endswith(mail,'x')")), '/sites?search=Trigon') {
+            try { [void](Invoke-TG GET $u); $out[$u] = 200 } catch { $out[$u] = $_.Exception.Data['TrigonGraph'].Status }
+        }
+        $out
+    }
+    Assert ($res['/sites?$select=id'] -eq 403) 'listing all sites delegated -> 403'
+    Assert ($res['/sites/getAllSites'] -eq 403) 'getAllSites delegated -> 403'
+    Assert ($res['/applications?$search="displayName:Trigon"'] -eq 400) 'advanced directory query without ConsistencyLevel -> 400'
+    Assert ($res['/groups?$filter=' + [uri]::EscapeDataString("endswith(mail,'x')")] -eq 400) 'endswith without ConsistencyLevel -> 400'
+    Assert ($res['/sites?search=Trigon'] -eq 200 -and @($global:T.wire)[-1] -match '\$search=Trigon') 'bare search= is rewritten to $search= like the SDK'
 }
 
 Test-Case 'setup and rollback scripts parse without errors' {

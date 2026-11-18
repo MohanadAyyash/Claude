@@ -90,7 +90,7 @@ try {
     $r = Invoke-TrigonM365Setup -Cfg $cfg
     $code = $r.ExitCode
 } catch {
-    Write-Host ('STOPPED: ' + (Protect-TrigonText ([string]$_.Exception.Message)))
+    Write-TrigonGraphFailure $_ 'the run'
     Write-Host 'No change was made by this run unless "done:" lines appear above. Re-run is safe; see the state file for what exists.'
 } finally {
     try { Disconnect-MgGraph | Out-Null } catch { }
