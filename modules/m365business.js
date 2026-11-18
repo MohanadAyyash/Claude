@@ -137,7 +137,7 @@ module.exports = ctx => {
     if (!took.changes) throw fail(409, 'This document is being uploaded right now — try again in a minute', 'busy');
     try {
       const item = await appGraph(c, 'PUT', `/drives/${G.seg(c.sp.driveId, G.validDriveId)}/root:/${G.encPath([...path, name])}:/content?@microsoft.graph.conflictBehavior=replace`,
-        { body: content, headers: { 'Content-Type': mime || 'application/octet-stream' }, idempotent: true, timeout: 60e3 });
+        { body: content, headers: { 'Content-Type': mime || 'application/octet-stream' }, idempotent: true, timeout: 4 * G.timeoutMs() });
       if (!item || !G.validItemId(String(item.id || ''))) throw G.gerr('bad_response', 'SharePoint did not confirm the upload');
       const url = G.safeWebUrl(item.webUrl);
       db.prepare("UPDATE m365_documents SET status='uploaded', error=NULL, file_name=?, site_id=?, drive_id=?, item_id=?, web_url=?, sha256=?, size=?, uploaded_at=?, uploaded_by=?, updated_at=? WHERE id=?")

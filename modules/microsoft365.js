@@ -17,7 +17,7 @@ const SCOPES = 'openid profile email offline_access User.Read';
 // the link asks Mail.Send too when Outlook sending is switched on (incremental consent: users reconnect once to grant it)
 const linkScopes = () => SCOPES + ((typeof process !== 'undefined' && process.env && process.env.M365_OUTLOOK_ENABLED === '1') ? ' Mail.Send' : '');
 // "https://graph.microsoft.com/Mail.Send" / "Mail.Send" → "Mail.Send"; only permission names, nothing else
-const normScopes = s => [...new Set(String(s || '').split(/\s+/).map(x => x.replace(/^https:\/\/graph\.microsoft\.com\//i, '')).filter(x => /^[A-Za-z.]{2,60}$/.test(x)))];
+const normScopes = s => [...new Set(String(s || '').split(/\s+/).map(x => x.replace(/^https:\/\/graph\.microsoft\.com\//i, '')).filter(x => /^[A-Za-z._]{2,60}$/.test(x)))];
 const LOGIN_SCOPES = 'openid profile email User.Read';                       // sign-in: no refresh token is asked for, nothing is stored
 const LOGIN_PATH = '/auth/microsoft/login', LOGIN_CB = '/auth/microsoft/login/callback';
 const STATE_TTL = 10 * 60e3, HTTP_TIMEOUT = 10e3, PROVIDER = 'microsoft', CLOCK_SKEW = 60;
