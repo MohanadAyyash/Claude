@@ -170,12 +170,59 @@ const mailOf = oid => `user-${oid.slice(-2)}@example.test`;
       const g = await nav('/auth/emergency'); assert.match(g.t, /Emergency administrator sign-in/); assert.match(g.t, /دخول المسؤول للطوارئ/); assert.ok(!sidOf(g.setCookie));
       const e1 = await emergency({ username: 'breakglass', password: BG_PW, code: bgCode() });
       assert.equal(e1.s, 303, e1.t); assert.equal(e1.loc, '/'); const eSid = sidOf(e1.setCookie); assert.ok(eSid);
-      assert.match(e1.setCookie, /sid=[a-f0-9]{48}; HttpOnly; SameSite=Strict; Path=\/; Max-Age=43200/, '12-hour cookie with the ERP session protections');
+      assert.match(e1.setCookie, /sid=[a-f0-9]{48}; HttpOnly; SameSite=Strict; Path=\/; Max-Age=3600(;|,|$)/, '1-hour cookie (default) with the ERP session protections');
       const eMe = ok(await call('GET', 'status', undefined, `sid=${eSid}`)).user; assert.equal(eMe.username, 'breakglass'); assert.equal(eMe.role, 'admin');
       assert.equal(q('SELECT method FROM sessions WHERE token=?', eSid)[0].method, 'emergency');
       ok(await call('GET', 'users', undefined, `sid=${eSid}`), 'administrator rights');
-      exec('UPDATE sessions SET created=? WHERE token=?', Date.now() - 13 * 3600e3, eSid); assert.equal(ok(await call('GET', 'status', undefined, `sid=${eSid}`)).user, null, 'an emergency session ends after 12 hours');
-      console.log('✔ 21: emergency administrator: password + valid ERP code → admin session (method emergency, 12 hours), works in microsoft-first without Microsoft');
+      exec('UPDATE sessions SET created=? WHERE token=?', Date.now() - 59 * 60e3, eSid); assert.equal(ok(await call('GET', 'status', undefined, `sid=${eSid}`)).user.username, 'breakglass', 'still valid at 59 minutes');
+      exec('UPDATE sessions SET created=? WHERE token=?', Date.now() - 61 * 60e3, eSid); assert.equal(ok(await call('GET', 'status', undefined, `sid=${eSid}`)).user, null, 'an emergency session ends after 60 minutes (default)');
+      console.log('✔ 21: emergency administrator: password + valid ERP code → admin session (method emergency, 60 minutes by default), works in microsoft-first without Microsoft');
+
+      // ---- session lifetimes: configured, clamped, never extended ----
+      {
+        const emSignIn = async (ck = '') => { const r = await emergency({ username: 'breakglass', password: BG_PW, code: bgCode() }, { ck }); assert.equal(r.s, 303, r.t); return { sid: sidOf(r.setCookie), setCookie: r.setCookie }; };
+        const age = (sid, ms) => exec('UPDATE sessions SET created=? WHERE token=?', Date.now() - ms, sid);
+        const who = async sid => (ok(await call('GET', 'status', undefined, `sid=${sid}`)).user || {}).username || null;
+        // the configured emergency duration is the one applied (cookie and server)
+        process.env.AUTH_EMERGENCY_SESSION_MINUTES = '30';
+        let e = await emSignIn(); assert.match(e.setCookie, /Max-Age=1800(;|,|$)/, 'cookie: 30 minutes');
+        age(e.sid, 29 * 60e3); assert.equal(await who(e.sid), 'breakglass', '29 minutes: valid'); age(e.sid, 31 * 60e3); assert.equal(await who(e.sid), null, '31 minutes: expired');
+        // invalid or extreme values: never longer than 4 hours, and anything that is not a positive number means the 1-hour default
+        const minutes = async v => { if (v === undefined) delete process.env.AUTH_EMERGENCY_SESSION_MINUTES; else process.env.AUTH_EMERGENCY_SESSION_MINUTES = v; return ok(await call('GET', 'm365/status', undefined, 'sid=' + (await sso(OID.admin)).sid)).auth.sessions.emergency_minutes; };
+        for (const [v, want] of [[undefined, 60], ['', 60], ['abc', 60], ['0', 60], ['-30', 60], ['NaN', 60], ['Infinity', 60], ['1e9', 240], ['100000', 240], ['241', 240], ['240', 240], ['1', 5], ['90', 90]])
+          assert.equal(await minutes(v), want, `AUTH_EMERGENCY_SESSION_MINUTES=${v} → ${want}`);
+        process.env.AUTH_EMERGENCY_SESSION_MINUTES = '100000'; e = await emSignIn(); assert.match(e.setCookie, /Max-Age=14400(;|,|$)/, 'an extreme value is clamped to 4 hours');
+        age(e.sid, 4 * 3600e3 + 60e3); assert.equal(await who(e.sid), null, 'and expires after 4 hours');
+        delete process.env.AUTH_EMERGENCY_SESSION_MINUTES;
+        // Microsoft sessions: 12 hours by default, configurable, at most 30 days
+        const ms1 = await sso(OID.proc); assert.match(ms1.setCookie, /sid=[a-f0-9]{48}; HttpOnly; SameSite=Strict; Path=\/; Max-Age=43200/);
+        age(ms1.sid, 11 * 3600e3); assert.equal(await who(ms1.sid), 'proc'); age(ms1.sid, 13 * 3600e3); assert.equal(await who(ms1.sid), null, 'a Microsoft session ends after 12 hours (default)');
+        process.env.AUTH_MICROSOFT_SESSION_HOURS = '99999'; assert.match((await sso(OID.proc)).setCookie, /Max-Age=2592000(;|,|$)/, 'clamped to 30 days (the ERP\'s own limit)');
+        process.env.AUTH_MICROSOFT_SESSION_HOURS = 'abc'; assert.match((await sso(OID.proc)).setCookie, /Max-Age=43200(;|,|$)/, 'invalid → 12 hours');
+        delete process.env.AUTH_MICROSOFT_SESSION_HOURS;
+        // nothing extends an emergency session: using it, signing in again with a password or Microsoft in the same browser
+        e = await emSignIn(); age(e.sid, 50 * 60e3); const created = q('SELECT created FROM sessions WHERE token=?', e.sid)[0].created;
+        for (let i = 0; i < 3; i++) { ok(await call('GET', 'users', undefined, `sid=${e.sid}`)); ok(await call('GET', 'status', undefined, `sid=${e.sid}`)); }
+        assert.equal(q('SELECT created FROM sessions WHERE token=?', e.sid)[0].created, created, 'use does not move the expiry (no sliding)');
+        const viaMs = await sso(OID.admin, { ck: `sid=${e.sid}` });
+        assert.equal(q('SELECT COUNT(*) n FROM sessions WHERE token=?', e.sid)[0].n, 0, 'a Microsoft sign-in in that browser ends the emergency session (not extended)');
+        assert.equal(q('SELECT method FROM sessions WHERE token=?', viaMs.sid)[0].method, 'microsoft', 'and the new session is a Microsoft one, with its own lifetime');
+        process.env.AUTH_MODE = 'hybrid';
+        const e2 = await emSignIn(); age(e2.sid, 50 * 60e3); const c2 = q('SELECT created FROM sessions WHERE token=?', e2.sid)[0].created;
+        const pwr = await call('POST', 'login', { username: 'admin', password: PW }, `sid=${e2.sid}`); assert.equal(pwr.s, 200);
+        assert.notEqual(sidOf(pwr.sc), e2.sid, 'the password sign-in gets its own session');
+        assert.equal(q('SELECT method FROM sessions WHERE token=?', sidOf(pwr.sc))[0].method, 'password');
+        assert.equal(q('SELECT created FROM sessions WHERE token=?', e2.sid)[0].created, c2, 'the emergency session keeps its own creation time');
+        age(e2.sid, 61 * 60e3); assert.equal(await who(e2.sid), null, '…and still ends at 60 minutes');
+        process.env.AUTH_MODE = 'microsoft-first'; assert.equal(await mode(), 'microsoft-first');
+        assert.equal(q("SELECT COUNT(*) n FROM sessions WHERE method='password'")[0].n, 0, 'switching to microsoft-first again ended that password session');
+        // a password session that appears while microsoft-first is on (e.g. made by older code) is not accepted
+        exec("INSERT INTO sessions(token,user_id,created,method) VALUES(?,?,?,'password')", 'ab'.repeat(24), id('admin'), Date.now());
+        exec("INSERT INTO sessions(token,user_id,created,method) VALUES(?,?,?,NULL)", 'cd'.repeat(24), id('admin'), Date.now());
+        assert.equal(await who('ab'.repeat(24)), null, 'password session refused in microsoft-first'); assert.equal(await who('cd'.repeat(24)), null, 'legacy (no method) session refused too');
+        exec("DELETE FROM sessions WHERE token IN (?,?)", 'ab'.repeat(24), 'cd'.repeat(24));
+      }
+      console.log('✔ session lifetimes: emergency = AUTH_EMERGENCY_SESSION_MINUTES (default 60, 5–240; invalid → 60, extreme → 240), Microsoft = AUTH_MICROSOFT_SESSION_HOURS (default 12, ≤ 30 days); never extended by use or by another sign-in; switching mode ends / refuses incompatible sessions');
       const bad = async (label, form, opts, status = 401) => { const r = await emergency(form, opts); assert.equal(r.s, status, `${label}: ${r.s} ${r.t.slice(0, 120)}`); assert.ok(!sidOf(r.setCookie), `${label}: no session`); return r; };
       await bad('22 no code', { username: 'breakglass', password: BG_PW });
       await bad('22 wrong code', { username: 'breakglass', password: BG_PW, code: '000000' });

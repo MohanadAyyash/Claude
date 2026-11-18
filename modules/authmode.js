@@ -55,7 +55,8 @@ module.exports = ctx => {
         if (n) sysAudit('system', 'auth-mode', 0, `${n} password session(s) ended by the switch to microsoft-first`);
       }
     }
-    return { requested: raw, mode, reason: reason || null, emergency };
+    const t = m => ctx.sessionTtl ? ctx.sessionTtl(m) : 0;
+    return { requested: raw, mode, reason: reason || null, emergency, sessions: { password_days: t('password') / 864e5, microsoft_hours: t('microsoft') / 3600e3, emergency_minutes: t('emergency') / 60e3 } };
   }
   ctx.authState = authState;
   ctx.authMode = () => authState().mode;
@@ -114,8 +115,8 @@ ${msg ? `<p style="color:#b91c1c">${esc(msg)}</p>` : ''}
     const old = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || ''); if (old) db.prepare('DELETE FROM sessions WHERE token=?').run(old[1]);
     const sid = ctx.createSession(u.id, 'emergency');
     tries.delete(acct);
-    sysAudit(username, 'emergency-login', u.id, `emergency administrator signed in (from ${String(ip).slice(0, 60)}; session 12 hours)`);
-    res.writeHead(303, { Location: '/', 'Set-Cookie': ctx.sessionCookie(req, sid, 12 * 3600), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    sysAudit(username, 'emergency-login', u.id, `emergency administrator signed in (from ${String(ip).slice(0, 60)}; session ${Math.round(ctx.sessionTtl('emergency') / 60e3)} minutes)`);
+    res.writeHead(303, { Location: '/', 'Set-Cookie': ctx.sessionCookie(req, sid, Math.floor(ctx.sessionTtl('emergency') / 1000)), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
     return res.end(), true;
   };
 

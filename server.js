@@ -279,13 +279,22 @@ function createSession(userId, method = 'password') {
   return token;
 }
 let CTX = null;                                                              // (set below; the authentication mode comes from modules/authmode.js)
-const EMERGENCY_TTL = 12 * 3600e3;                                           // an emergency session lasts 12 hours, not 30 days
+// session lifetime by how it was signed in, counted from its creation and never extended by use (no sliding expiry):
+//   password 30 days (unchanged) · microsoft AUTH_MICROSOFT_SESSION_HOURS, default 12, 1–720 · emergency AUTH_EMERGENCY_SESSION_MINUTES,
+//   default 60, 5–240. A value that is not a positive number falls back to the (short) default; an extreme one is clamped.
+const envNum = (v, def, lo, hi) => { const n = Number(v); if (v === undefined || String(v).trim() === '' || !Number.isFinite(n) || n <= 0) return def; return Math.min(hi, Math.max(lo, Math.round(n))); };
+function sessionTtl(method) {
+  const e = (typeof process !== 'undefined' && process.env) || {};
+  if (method === 'emergency') return envNum(e.AUTH_EMERGENCY_SESSION_MINUTES, 60, 5, 240) * 60e3;
+  if (method === 'microsoft') return envNum(e.AUTH_MICROSOFT_SESSION_HOURS, 12, 1, 720) * 3600e3;
+  return 30 * 864e5;
+}
 function sessionUser(req) {
   const m = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
   if (!m) return null;
   const s = db.prepare('SELECT user_id, created, method FROM sessions WHERE token=? AND created>?').get(m[1], Date.now() - 30 * 864e5);
   if (!s) return null;
-  if (s.method === 'emergency' && s.created < Date.now() - EMERGENCY_TTL) return null;
+  if (s.created < Date.now() - sessionTtl(s.method)) return null;
   // microsoft-first: only Microsoft and emergency sessions count; password sessions made before the switch end with it
   if (s.method !== 'microsoft' && s.method !== 'emergency' && CTX && CTX.authMode && CTX.authMode() === 'microsoft-first') return null;
   return db.prepare('SELECT id,username,role,employee_id FROM users WHERE id=? AND COALESCE(disabled,0)=0').get(s.user_id);
@@ -400,7 +409,7 @@ const mailCfgFor = () => {
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
 ctx.siteScope = me => siteScope(me);
 ctx.isHttps = isHttps;
-ctx.createSession = createSession; CTX = ctx;                                             // Microsoft sign-in (Phase 1B) starts exactly the same session as the password login
+ctx.createSession = createSession; CTX = ctx; ctx.sessionTtl = sessionTtl;                                             // Microsoft sign-in (Phase 1B) starts exactly the same session as the password login
 ctx.sessionCookie = (req, token, maxAge = 2592000) => cookie(req, token, maxAge);
 ctx.startedAt = new Date().toISOString();                                     // to confirm a restart really started a new process
 ctx.clientIp = clientIp;
