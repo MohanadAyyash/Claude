@@ -32,7 +32,7 @@ module.exports = ctx => {
 
   const mk = (acc, dr = 0, cr = 0) => { dr = round(dr); cr = round(cr); if (dr < 0) { cr = round(cr - dr); dr = 0; } if (cr < 0) { dr = round(dr - cr); cr = 0; } return { account: acc, debit: dr, credit: cr }; };
   const monthEnd = ym => `${ym}-${String(C.daysInMonth(ym)).padStart(2, '0')}`;
-  const bankAcct = (p, kind) => p.method === 'cash' ? '1020' : p.method === 'petty' ? '1010' : p.method === 'partner' ? '3110' : p.method === 'offset' ? '1400' : p.method === 'cheque' && p.cheque_status === 'pending' ? (kind === 'in' ? '1050' : '2050') : codeOf(p.bank_account_id);
+  const bankAcct = (p, kind) => p.method === 'cash' ? '1020' : p.method === 'petty' ? '1010' : p.method === 'partner' ? '3110' : p.method === 'employee' ? '2260' : p.method === 'offset' ? '1400' : p.method === 'cheque' && p.cheque_status === 'pending' ? (kind === 'in' ? '1050' : '2050') : codeOf(p.bank_account_id);
 
   function entries() {
     const out = [], e = enrich();
@@ -44,6 +44,7 @@ module.exports = ctx => {
     for (const p of e.payments) {
       if (p.cheque_status === 'bounced') continue;
       if (p.kind === 'in') add(p.date, p.ref_label, `Receipt — ${p.party_name || ''}${p.is_retention ? ' (retention)' : ''}`, 'receipt', [mk(bankAcct(p, 'in'), p.amount), mk(p.is_retention ? '1150' : '1100', 0, p.amount)]);
+      else if (p.employee_id && !p.bill_id) add(p.date, p.reference || `PAY-${p.id}`, 'Expense claims reimbursed to an employee', 'payment', [mk('2260', p.amount), mk(bankAcct(p, 'out'), 0, p.amount)]);   // modules/staffaccounts.js
       else add(p.date, p.ref_label, `Payment — ${p.party_name || ''}`, 'payment', [mk('2000', p.amount), mk(bankAcct(p, 'out'), 0, p.amount)]);
     }
     for (const t of db.prepare('SELECT * FROM petty_topups').all()) add(t.date, 'PETTY', `Petty cash top-up ${t.note || ''}`, 'petty', [mk('1010', t.amount), mk('1000', 0, t.amount)]);

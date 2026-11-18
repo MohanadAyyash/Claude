@@ -4,7 +4,7 @@ const ENTITIES = {                     // entity: [read roles, write roles]
   project: [[...READERS, 'qs', ...SITE, 'procurement'], [...OPS, 'qs', 'site_engineer']], party: [READERS, OPS], bill: [READERS, FIN], invoice: [READERS, FIN],
   purchase_order: [[...READERS, 'procurement', 'storekeeper'], [...OPS, 'procurement']], subcontract: [[...READERS, 'qs', 'procurement'], [...OPS, 'qs']],
   client_pc: [[...READERS, 'qs'], [...OPS, 'qs']],
-  employee: [['admin', 'accountant', 'hr'], ['admin', 'hr']], company: [['admin', 'accountant', 'hr'], ['admin', 'accountant']],
+  employee: [['admin', 'accountant', 'hr'], ['admin', 'hr']], expense_claim: [['admin', 'accountant', 'manager'], ['admin', 'accountant', 'manager']], company: [['admin', 'accountant', 'hr'], ['admin', 'accountant']],
 };
 const MIMES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'text/plain', 'text/csv', 'application/msword', 'application/vnd.ms-excel',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];

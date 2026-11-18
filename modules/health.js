@@ -86,6 +86,11 @@ module.exports = ctx => {
       const worst = r.some(x => x.status === 'fail') ? 'fail' : r.some(x => x.status === 'warn') ? 'warn' : 'ok';
       return { status: worst, detail: r.map(x => x.detail).join('; ') };
     }],
+    ['employee_accounts', 'Employee accounts (salaries, advances, expense claims) equal the general ledger', () => {
+      if (!ctx.staffChecks) return ok('module not loaded');
+      const r = ctx.staffChecks(), worst = r.some(x => x.status === 'fail') ? 'fail' : r.some(x => x.status === 'warn') ? 'warn' : 'ok';
+      return { status: worst, detail: r.map(x => x.detail).join('; ') };
+    }],
     ['errors_24h', 'Server errors in the last 24 hours', () => {
       const since = new Date(Date.now() - 864e5).toISOString();
       const rows = db.prepare('SELECT path, message, COUNT(*) n FROM error_log WHERE ts >= ? GROUP BY path, message ORDER BY n DESC LIMIT 20').all(since);
