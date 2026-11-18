@@ -133,7 +133,7 @@ const LOGIN_SCOPES = 'openid profile email User.Read', LINK_SCOPES = 'openid pro
       assert.equal(s1.s, 302, s1.t); assert.equal(s1.loc, '/', 'to the dashboard, no code or token in the address');
       assert.ok(s1.sid && s1.sid.length === 48, 'a new ERP session');
       const localCookieShape = admin.setCookie.replace(/sid=[a-f0-9]+/, 'sid=X'), ssoCookie = s1.setCookie.split(/,\s*(?=\w+=)/).find(x => x.startsWith('sid='));
-      assert.equal(ssoCookie.replace(/sid=[a-f0-9]+/, 'sid=X'), localCookieShape, 'same cookie protections and lifetime as the password login');
+      assert.equal(ssoCookie.replace(/sid=[a-f0-9]+/, 'sid=X'), localCookieShape.replace('Max-Age=2592000', 'Max-Age=43200'), 'same cookie protections as the password login; lifetime 12 hours by default (AUTH_MICROSOFT_SESSION_HOURS)');
       const me1 = ok(await call('GET', 'status', undefined, `sid=${s1.sid}`)).user;
       assert.equal(me1.id, adminId); assert.equal(me1.role, 'admin'); assert.equal(me1.username, 'admin');
       assert.deepEqual(sessions().find(x => x.token === s1.sid), { token: s1.sid, user_id: adminId });

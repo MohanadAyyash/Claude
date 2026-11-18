@@ -242,9 +242,9 @@ module.exports = ctx => {
       // the same session as the password login (new random token, same cookie and lifetime); a session this browser presented is ended (no fixation)
       const old = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
       if (old) db.prepare('DELETE FROM sessions WHERE token=?').run(old[1]);
-      const sid = ctx.createSession(user.id);
+      const sid = ctx.createSession(user.id, 'microsoft');
       auditAs(user.username, 'login', user.id, `signed in with Microsoft (account ${oid})`);
-      res.writeHead(302, { Location: '/', 'Set-Cookie': [ctx.sessionCookie(req, sid), loginBindCookie(req, c, '', 0)], 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+      res.writeHead(302, { Location: '/', 'Set-Cookie': [ctx.sessionCookie(req, sid, Math.floor(ctx.sessionTtl('microsoft') / 1000)), loginBindCookie(req, c, '', 0)], 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
       return res.end(), true;
     } finally { db.prepare('DELETE FROM oauth_login_states WHERE id=?').run(row.id); prune(); }
   }
@@ -333,6 +333,8 @@ module.exports = ctx => {
         return send(res, 200, { available: !STANDALONE, enabled: c.enabled && !STANDALONE, configured: c.enabled && c.configured, missing: c.enabled || STANDALONE ? c.missing : [],
           tenant_id: c.tenant || null, client_id: c.clientId || null, redirect_uri: c.redirect || null, sharepoint_site_id: c.siteId || null, sharepoint_drive_id: c.driveId || null,
           client_secret_set: !!c.secret, encryption_key_set: !!c.key, scopes: SCOPES.split(' '),
+          auth: ctx.authState ? (st => ({ requested: st.requested, mode: st.mode, reason: st.reason, emergency_admins: st.emergency.map(e => ({ username: e.username, ok: e.ok, problems: e.problems })), sessions: st.sessions }))(ctx.authState()) : null,
+          server_started_at: ctx.startedAt || null,
           connection: link ? { email: link.email, display_name: link.display_name, tenant_id: link.tenant_id, linked_at: link.updated_at } : null }), true;
       }
       if (b === 'disconnect' && req.method === 'POST') {
