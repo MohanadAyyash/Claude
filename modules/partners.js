@@ -32,9 +32,14 @@ module.exports = ctx => {
     from_section TEXT, to_section TEXT, reference TEXT, note TEXT, created TEXT, created_by TEXT);
   CREATE TABLE IF NOT EXISTS partner_allocations(id INTEGER PRIMARY KEY, year INTEGER UNIQUE NOT NULL, date TEXT NOT NULL, net_profit REAL NOT NULL, lines TEXT NOT NULL, created TEXT, created_by TEXT);`);
   if (!db.prepare('PRAGMA table_info(payments)').all().some(c => c.name === 'partner_id')) db.exec('ALTER TABLE payments ADD COLUMN partner_id INTEGER');
+  if (!db.prepare('PRAGMA table_info(payments)').all().some(c => c.name === 'created_bill')) db.exec('ALTER TABLE payments ADD COLUMN created_bill INTEGER DEFAULT 0');   // 1 = the bill was created together with this payment
   const seed = db.prepare('INSERT OR IGNORE INTO accounts(code,name,name_ar,type,system) VALUES(?,?,?,?,1)');
-  // loaded after modules/accounting.js (which creates the chart of accounts)
+  // loaded after modules/accounting.js (which creates the chart of accounts). A code the company already used for an account of
+  // its own (system=0, e.g. 2500 "Bank loan") is never taken over: partner movements are refused and the daily check fails.
   seed.run('2500', 'Partner loans', 'قروض الشركاء', 'liability'); seed.run('3110', 'Partner current accounts', 'جاري الشركاء', 'equity'); seed.run('3900', 'Opening balance equity', 'حقوق ملكية افتتاحية', 'equity');
+  const taken = () => db.prepare("SELECT code, name FROM accounts WHERE code IN ('2500','3110','3900') AND COALESCE(system,0)=0").all();
+  const takenMsg = t => `Account ${t.map(x => `${x.code} is already used by your own account "${x.name}"`).join(', ')} — partner accounts cannot be used until that account is given another code (ask your administrator / support)`;
+  const needCodes = () => { const t = taken(); if (t.length) bad(takenMsg(t)); };
 
   const isDate = d => /^\d{4}-\d\d-\d\d$/.test(d || '');
   const lockDate = () => { const d = getSettings().lock_date; return isDate(d) ? d : ''; };
@@ -170,13 +175,15 @@ module.exports = ctx => {
     return { rows, unassigned_capital: rows[0].difference };
   }
   ctx.partnerChecks = () => {
-    const out = [], parts = partnersList();
+    const out = [], parts = partnersList(), t = taken();
+    if (t.length) out.push({ status: 'fail', detail: t.map(x => `account ${x.code} is already used by an account of the company's own, so the partner accounts cannot use it`).join('; ') });
     if (!parts.length) return out;
     const r = reconcile();
     if (r) {
       const loanCur = r.rows.filter(x => x.section !== 'capital' && Math.abs(x.difference) >= 0.01);
       // no amounts here: the daily report may be posted to a GitHub issue
       out.push(loanCur.length ? { status: 'fail', detail: loanCur.map(x => `account ${x.account}: the general ledger and the partner accounts differ`).join('; ') }
+        : r.unassigned_capital <= -0.01 ? { status: 'fail', detail: 'the partners hold more share capital than account 3000 shows — a capital journal entry was changed or removed after it was assigned' }
         : Math.abs(r.unassigned_capital) >= 0.01 ? { status: 'warn', detail: 'part of the share capital (3000) in the books is not assigned to a partner — record it per partner with "already in the books"' }
           : { status: 'ok', detail: 'capital, partner loans and current accounts equal the general ledger' });
     }
@@ -223,9 +230,9 @@ module.exports = ctx => {
     if (method === 'bank') { bank = +x.bank_account_id || null; if (bank && !db.prepare('SELECT 1 FROM bank_accounts WHERE id=?').get(bank)) bad('Unknown bank account'); }
     return { partner_id: p.id, date: x.date, type: x.type, amount, method, bank_account_id: bank, from_section: null, to_section: null };
   }
-  const journalBlock = lines => {                                     // the partner accounts are kept from the Partners page only
-    const used = new Set((lines || []).map(l => String(l.account)));
-    if (used.has('2500') || used.has('3110')) bad('Accounts 2500 (partner loans) and 3110 (partner current accounts) are kept from the Partners page — record the movement there');
+  const journalBlock = lines => {                                     // the partner accounts are kept from the Partners page only (checked on new, edited and deleted journals)
+    const used = new Set((lines || []).map(l => String(l.account))), mine = c => !taken().some(t => t.code === c);
+    if ((used.has('2500') && mine('2500')) || (used.has('3110') && mine('3110'))) bad('Accounts 2500 (partner loans) and 3110 (partner current accounts) are kept from the Partners page — record the movement there');
     if (used.has('3000') && partnersList().length) bad('Share capital (3000) is kept per partner from the Partners page — record the movement there');
   };
   ctx.journalGuard = journalBlock;
@@ -304,6 +311,7 @@ module.exports = ctx => {
             return send(res, 200, { id: Number(r.lastInsertRowid), total_on_date: total, warning: Math.abs(total - 100) > 0.01 ? `Shares on ${x.from_date} now add up to ${total}% — record the other partners' shares from the same date` : null }), true;
           }
           if (m === 'POST' && c === 'expense') {                        // an expense the partner paid for the company: a bill paid from the partner's current account
+            needCodes();
             const x = req._body || await readBody(req), date = x.date || today(); if (!isDate(date)) bad('Enter a valid date'); guardDate(date, 'an expense');
             if (!p.active) bad('This partner is inactive');
             let billId;
@@ -315,12 +323,12 @@ module.exports = ctx => {
               audit(req, 'create', 'partner_expense', Number(r.lastInsertRowid), `${p.name} paid bill #${billId} ${amt}`); return send(res, 200, { payment_id: Number(r.lastInsertRowid), bill_id: billId }), true;
             }
             const amount = round(+x.amount), vat = round(+x.vat_amount || 0);
-            if (!(amount > 0)) bad('Enter the expense amount'); if (vat < 0) bad('VAT cannot be negative'); if (!String(x.description || '').trim()) bad('Enter a description');
+            if (!(amount > 0)) bad('Enter the expense amount'); if (vat < 0) bad('VAT cannot be negative'); if (vat > amount * 0.05 + 0.01) bad('VAT is more than 5% of the amount'); if (!String(x.description || '').trim()) bad('Enter a description');
             if (x.project_id && !db.prepare('SELECT 1 FROM projects WHERE id=?').get(+x.project_id)) bad('Unknown project');
             if (x.party_id && !db.prepare('SELECT 1 FROM parties WHERE id=?').get(+x.party_id)) bad('Unknown supplier');
             const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)').run(date, +x.party_id || null, +x.project_id || null, x.category || 'other', String(x.description).trim(), amount, vat, x.reference || '');
             billId = Number(bill.lastInsertRowid);
-            const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,partner_id,notes) VALUES('out',?,?,'partner',?,?,?,?)").run(date, round(amount + vat), x.reference || '', billId, p.id, 'partner-expense');
+            const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,partner_id,notes,created_bill) VALUES('out',?,?,'partner',?,?,?,?,1)").run(date, round(amount + vat), x.reference || '', billId, p.id, String(x.note || ''));
             audit(req, 'create', 'partner_expense', Number(r.lastInsertRowid), `${p.name} ${String(x.description).trim()} ${round(amount + vat)}`);
             return send(res, 200, { payment_id: Number(r.lastInsertRowid), bill_id: billId }), true;
           }
@@ -335,7 +343,7 @@ module.exports = ctx => {
           guardDate(pay.date, 'an expense');
           db.prepare('DELETE FROM payments WHERE id=?').run(pay.id);
           const bill = pay.bill_id && db.prepare('SELECT * FROM bills WHERE id=?').get(pay.bill_id);
-          if (bill && pay.notes === 'partner-expense' && !db.prepare('SELECT 1 FROM payments WHERE bill_id=?').get(bill.id)) db.prepare('DELETE FROM bills WHERE id=?').run(bill.id);   // the bill this page created goes with it
+          if (bill && pay.created_bill && !db.prepare('SELECT 1 FROM payments WHERE bill_id=?').get(bill.id)) { db.prepare('DELETE FROM bills WHERE id=?').run(bill.id); audit(req, 'delete', 'bills', bill.id, 'created with a partner expense'); }   // the bill this page created goes with it
           audit(req, 'delete', 'partner_expense', pay.id, `${pay.amount}`); return send(res, 200, { ok: 1 }), true;
         }
         return false;
@@ -343,6 +351,7 @@ module.exports = ctx => {
       if (a === 'partner_txns') {
         if (m === 'GET') return send(res, 200, db.prepare('SELECT * FROM partner_txns ORDER BY date DESC, id DESC').all()), true;
         if (m === 'POST' && !b) {
+          needCodes();
           const x = req._body || await readBody(req), t = checkTxn(x); guardDate(t.date, 'a partner movement');
           const r = db.prepare('INSERT INTO partner_txns(partner_id,date,type,amount,method,bank_account_id,from_section,to_section,reference,note,created,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
             .run(t.partner_id, t.date, t.type, t.amount, t.method, t.bank_account_id, t.from_section, t.to_section, x.reference || '', x.note || '', new Date().toISOString(), me.username);
@@ -361,6 +370,7 @@ module.exports = ctx => {
       if (a === 'partner_allocations') {
         if (m === 'GET') return send(res, 200, allocations()), true;
         if (m === 'POST') {
+          needCodes();
           const x = req._body || await readBody(req), pv = allocationPreview(x.year);
           if (!pv.ok) bad(pv.problems.join('. '));
           guardDate(pv.date, 'a profit allocation');

@@ -879,6 +879,15 @@ async function api(req, res, url) {
           }
         }
       }
+      if (a === 'bills') {
+        const cur = enrich().bills.find(x => x.id === id); if (!cur) return send(res, 404, { error: 'not found' });
+        const diff = k => k in row && String(row[k] ?? '') !== String(cur[k] ?? '') && !(row[k] !== '' && row[k] != null && +row[k] === +cur[k]);
+        // a bill paid (partly) by a partner from own money keeps the figures that money was recorded against
+        if (db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='partner'").get(id) && ['amount', 'vat_amount', 'date', 'party_id'].some(diff))
+          bad('This bill was paid by a partner — its amount, VAT, date and supplier cannot be changed here; delete the partner payment from the Partners page first');
+        const total = round(('amount' in row ? +row.amount || 0 : cur.amount) + ('vat_amount' in row ? +row.vat_amount || 0 : cur.vat_amount));
+        if (total < round(cur.paid) - 0.01) bad(`This bill cannot go below what was already paid (${money(cur.paid)})`);
+      }
       if (a === 'payments') {
         const cur = db.prepare('SELECT * FROM payments WHERE id=?').get(id); if (!cur) return send(res, 404, { error: 'not found' });
         if (reconciled(id) && ['kind', 'amount', 'date', 'invoice_id', 'bill_id', 'bank_account_id', 'method'].some(k => k in row && String(row[k] ?? '') !== String(cur[k] ?? '') && +row[k] !== +cur[k])) bad('This payment is matched to a bank statement line — unmatch it first');

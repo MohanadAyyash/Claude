@@ -131,8 +131,9 @@ module.exports = ctx => {
           return JSON.stringify(ls.map(l => ({ account: l.account, debit: +l.debit || 0, credit: +l.credit || 0 })));
         };
         if (m === 'POST') { const x = await readBody(req), lines = check(x); const r = db.prepare('INSERT INTO journal_entries(date,memo,lines,created_by) VALUES(?,?,?,?)').run(x.date, x.memo || '', lines, me.username); audit(req, 'create', 'journal_entries', Number(r.lastInsertRowid), x.memo || ''); return send(res, 200, { id: Number(r.lastInsertRowid) }), true; }
-        if (m === 'PUT') { const x = await readBody(req), lines = check(x); db.prepare('UPDATE journal_entries SET date=?, memo=?, lines=? WHERE id=?').run(x.date, x.memo || '', lines, +b); audit(req, 'update', 'journal_entries', +b); return send(res, 200, { ok: 1 }), true; }
-        if (m === 'DELETE') { db.prepare('DELETE FROM journal_entries WHERE id=?').run(+b); audit(req, 'delete', 'journal_entries', +b); return send(res, 200, { ok: 1 }), true; }
+        const stored = () => { const j = db.prepare('SELECT lines FROM journal_entries WHERE id=?').get(+b); return j ? JSON.parse(j.lines || '[]') : []; };
+        if (m === 'PUT') { if (ctx.journalGuard) ctx.journalGuard(stored()); const x = await readBody(req), lines = check(x); db.prepare('UPDATE journal_entries SET date=?, memo=?, lines=? WHERE id=?').run(x.date, x.memo || '', lines, +b); audit(req, 'update', 'journal_entries', +b); return send(res, 200, { ok: 1 }), true; }
+        if (m === 'DELETE') { if (ctx.journalGuard) ctx.journalGuard(stored()); db.prepare('DELETE FROM journal_entries WHERE id=?').run(+b); audit(req, 'delete', 'journal_entries', +b); return send(res, 200, { ok: 1 }), true; }
       }
       if (a === 'ledger' && m === 'GET') {
         const code = q('account'), from = q('from'), to = q('to'), A = acct();
