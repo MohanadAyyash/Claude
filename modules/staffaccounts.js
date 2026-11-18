@@ -115,6 +115,7 @@ module.exports = ctx => {
       guardDate(c.date, 'an expense');
       const custody = c.paid_from === 'custody';                     // paid from petty cash the employee holds: credit 1010, not owed to him
       if (custody && total(c) > (ctx.custodyHeld ? ctx.custodyHeld(c.employee_id) : 0) + 0.005) bad(`${emp(c.employee_id).name} holds only ${ctx.custodyHeld ? ctx.custodyHeld(c.employee_id) : 0} of petty cash`);
+      if (custody && ctx.custodyLowest) { const lo = ctx.custodyLowest(c.employee_id, { spend: { date: c.date, amount: total(c) } }); if (lo.at) bad(`${emp(c.employee_id).name} did not hold enough petty cash on ${lo.at} for an expense dated ${c.date} — check the date`); }
       const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)').run(c.date, c.party_id, c.project_id, c.category, `${c.description} (${custody ? 'petty cash of' : 'claim of'} ${emp(c.employee_id).name})`, c.amount, c.vat_amount, c.reference || `CLAIM-${c.id}`);
       const billId = Number(bill.lastInsertRowid);
       const pay = db.prepare(`INSERT INTO payments(kind,date,amount,method,reference,bill_id,employee_id,notes) VALUES('out',?,?,'${custody ? 'petty' : 'employee'}',?,?,?,'expense-claim')`).run(c.date, total(c), `CLAIM-${c.id}`, billId, c.employee_id);

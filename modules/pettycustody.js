@@ -41,15 +41,33 @@ module.exports = ctx => {
   const held = eid => round(-ctx.custodyMoves(eid).reduce((s, m) => s + m.amount, 0));          // cash the employee holds
   const pendingSpend = eid => round(db.prepare("SELECT COALESCE(SUM(amount+vat_amount),0) s FROM expense_claims WHERE employee_id=? AND status='pending' AND paid_from='custody'").get(eid).s);
   ctx.custodyHeld = held;
+  // the lowest point the employee's petty cash reaches over time, with a change applied (a spend added, a movement left out) —
+  // a backdated spend or return, or deleting an old hand-over, must never leave the employee holding less than nothing on any day.
+  // Same day: hand-overs first, then spends, then returns.
+  const lowest = (eid, { spend, skip } = {}) => {
+    const ord = { handover: 0, spent: 1, return: 2 };
+    const mv = ctx.custodyMoves(eid).filter(m => !(skip && m.kind !== 'spent' && m.id === skip));
+    if (spend) mv.push({ date: spend.date, kind: spend.kind || 'spent', amount: round(spend.amount) });
+    mv.sort((x, y) => x.date < y.date ? -1 : x.date > y.date ? 1 : ord[x.kind] - ord[y.kind]);
+    let bal = 0, min = 0, at = null;
+    for (const m of mv) { bal = round(bal - m.amount); if (bal < min - 0.005) { min = bal; at = m.date; } }
+    return { min, at };
+  };
+  ctx.custodyLowest = lowest;
   ctx.custodyAvailable = eid => round(held(eid) - pendingSpend(eid));                          // what is left to spend after the claims already waiting
-  // 1010 movements of the general float (no employee): credit − debit, so the daily check can compare the rest with the statements
+  // 1010 movements that are not petty cash held by an employee — the office float, petty-cash payments and receipts with no
+  // employee, manual journal lines on 1010 — as credit − debit, so the daily check can compare the rest with the statements
   ctx.custodyUnassigned = () => {
     const t = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='return' THEN amount ELSE -amount END),0) s FROM petty_topups WHERE employee_id IS NULL").get().s;
-    const p = db.prepare("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE method='petty' AND kind='out' AND employee_id IS NULL AND COALESCE(cheque_status,'')!='bounced'").get().s;
-    return round(t + p);
+    const p = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='in' THEN -amount ELSE amount END),0) s FROM payments WHERE method='petty' AND employee_id IS NULL AND COALESCE(cheque_status,'')!='bounced'").get().s;
+    let j = 0;
+    for (const r of db.prepare('SELECT lines FROM journal_entries').all()) { let ls = []; try { ls = JSON.parse(r.lines || '[]'); } catch {} for (const l of ls) if (String(l.account) === '1010') j += (+l.credit || 0) - (+l.debit || 0); }
+    return round(t + p + j);
   };
 
   // ---------------- requests ----------------
+  // the accountant's limit counts everything of this employee asked for the same day (no splitting a request in two)
+  const reqDayTotal = r => round(db.prepare("SELECT COALESCE(SUM(amount),0) s FROM petty_requests WHERE employee_id=? AND substr(created,1,10)=? AND status!='rejected'").get(r.employee_id, String(r.created || '').slice(0, 10)).s);
   const reqView = r => ({ ...r, employee_name: emp(r.employee_id)?.name || '', held: held(r.employee_id) });
   function createRequest(x, eid, me) {
     if (!emp(eid)) bad('Select the employee');
@@ -76,7 +94,15 @@ module.exports = ctx => {
       if (!rq || rq.employee_id !== e.id) bad('Request not found for this employee'); if (rq.status !== 'approved') bad('This request is not approved (or was already paid)');
       if (amount > rq.amount + 0.005) bad(`More than the approved amount (${rq.amount})`);
     } else if (kind === 'topup' && me.role !== 'admin') bad('Hand over petty cash against an approved request (the administrator may hand it over directly)');
-    if (kind === 'return') { const h = held(e.id), free = round(h - pendingSpend(e.id)); if (amount > h + 0.005) bad(`${e.name} holds ${h} of petty cash`); if (amount > free + 0.005) bad(`${e.name} holds ${h}, of which ${round(h - free)} is in expenses waiting for approval — decide those first`); }
+    // the supplier-payment approval limit (Spend approvals) applies to petty cash handed over too
+    const payLim = +getSettings().pay_approval_limit > 0 ? round(+getSettings().pay_approval_limit) : 0;
+    if (kind === 'topup' && payLim && amount > payLim + 0.005 && me.role !== 'admin') refuse(`Above the payment approval limit (${money(payLim)}) — only the administrator can hand this over`);
+    if (kind === 'return') {
+      const h = held(e.id), free = round(h - pendingSpend(e.id));
+      if (amount > h + 0.005) bad(`${e.name} holds ${h} of petty cash`);
+      if (amount > free + 0.005) bad(`${e.name} holds ${h}, of which ${round(h - free)} is in expenses waiting for approval — decide those first`);
+      const lo = lowest(e.id, { spend: { date, amount, kind: 'return' } }); if (lo.at) bad(`${e.name} did not hold that much petty cash on ${lo.at} — check the date`);
+    }
     const r = db.prepare('INSERT INTO petty_topups(date,amount,note,employee_id,kind,method,bank_account_id,request_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)')
       .run(date, amount, String(x.note || (rq ? rq.purpose : '') || '').slice(0, 300), e.id, kind, method, bank, rq ? rq.id : null, x.reference || '', me.username);
     const id = Number(r.lastInsertRowid);
@@ -126,7 +152,7 @@ module.exports = ctx => {
       if (a === 'petty_requests') {
         if (m === 'GET' && !b) {
           const st = url.searchParams.get('status'), rows = db.prepare(`SELECT * FROM petty_requests ${st ? 'WHERE status=?' : ''} ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, id DESC LIMIT 500`).all(...(st ? [st] : [])).map(reqView);
-          return send(res, 200, rows.map(r => { const why = r.status === 'pending' ? ctx.staffApproval.block(me, r.amount, r.employee_id, r.requested_by_id) : null; return { ...r, can_decide: r.status === 'pending' && !why, block: why }; })), true;
+          return send(res, 200, rows.map(r => { const why = r.status === 'pending' ? ctx.staffApproval.block(me, r.amount, r.employee_id, r.requested_by_id, reqDayTotal(r)) : null; return { ...r, can_decide: r.status === 'pending' && !why, block: why }; })), true;
         }
         if (m === 'POST' && !b) { const x = await readBody(req); const id = createRequest(x, x.employee_id, me); audit(req, 'create', 'petty_requests', id, 'on behalf'); return send(res, 200, { id }), true; }
         const r = b && db.prepare('SELECT * FROM petty_requests WHERE id=?').get(+b); if (!r) return send(res, 404, { error: 'not found' }), true;
@@ -134,7 +160,7 @@ module.exports = ctx => {
           const x = await readBody(req);
           if (r.status !== 'pending') bad('This request was already decided');
           if (!['approved', 'rejected'].includes(x.status)) bad('Decision must be approved or rejected');
-          const why = ctx.staffApproval.block(me, r.amount, r.employee_id, r.requested_by_id); if (why) refuse(why);
+          const why = ctx.staffApproval.block(me, r.amount, r.employee_id, r.requested_by_id, reqDayTotal(r)); if (why) refuse(why);
           if (x.status === 'rejected' && !String(x.note || '').trim()) bad('Write the reason for the rejection');
           db.prepare('UPDATE petty_requests SET status=?, decided_by=?, decided_by_id=?, decided_at=?, decision_note=? WHERE id=?').run(x.status, me.username, me.id, now(), String(x.note || '').trim(), r.id);
           audit(req, x.status, 'petty_requests', r.id, `${r.amount}`);
@@ -163,7 +189,10 @@ module.exports = ctx => {
           if (!FIN(me)) refuse('Only the accounts can delete a petty cash movement');
           const t = db.prepare('SELECT * FROM petty_topups WHERE id=? AND employee_id IS NOT NULL').get(+b); if (!t) return send(res, 404, { error: 'not found' }), true;
           guardDate(t.date, 'a petty cash movement');
-          if (t.kind !== 'return' && held(t.employee_id) - t.amount < -0.005) bad('This petty cash was already spent — the employee would hold less than nothing');
+          if (t.kind !== 'return') {
+            if (held(t.employee_id) - t.amount < -0.005 || lowest(t.employee_id, { skip: t.id }).at) bad('This petty cash was already spent — the employee would hold less than nothing');
+            if (held(t.employee_id) - t.amount - pendingSpend(t.employee_id) < -0.005) bad('Part of this petty cash is in expenses waiting for approval — decide those first');
+          }
           db.prepare('DELETE FROM petty_topups WHERE id=?').run(t.id);
           if (t.request_id) db.prepare("UPDATE petty_requests SET status='approved', topup_id=NULL WHERE id=?").run(t.request_id);
           audit(req, 'delete', 'petty_custody', t.id, `${t.kind} ${t.amount}`); return send(res, 200, { ok: 1 }), true;

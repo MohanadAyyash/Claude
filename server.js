@@ -908,6 +908,7 @@ async function api(req, res, url) {
     if (method === 'DELETE' && id) {
       if (a === 'invoices') return send(res, 409, { error: 'Tax invoices cannot be deleted (sequential numbering). Void it or issue a credit note.' });
       if (a === 'employees' && db.prepare("SELECT (SELECT COUNT(*) FROM expense_claims WHERE employee_id=?) + (SELECT COUNT(*) FROM payments WHERE employee_id=?) n").get(id, id).n) return send(res, 409, { error: 'This employee has expense claims or payments — mark the employee as left instead' });
+      if (a === 'employees' && has('petty_requests') && db.prepare("SELECT (SELECT COUNT(*) FROM petty_topups WHERE employee_id=?) + (SELECT COUNT(*) FROM petty_requests WHERE employee_id=?) n").get(id, id).n) return send(res, 409, { error: 'This employee has petty cash records — mark the employee as left instead' });
       if (a === 'employees' && db.prepare('SELECT COUNT(*) n FROM payroll WHERE employee_id=?').get(id).n) return send(res, 409, { error: 'employee has payroll records — mark as left instead' });
       if (a === 'payments' && reconciled(id)) return send(res, 409, { error: 'This payment is matched to a bank statement line — unmatch it first' });
       if (a === 'payments' && db.prepare("SELECT 1 FROM payments WHERE id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
