@@ -199,7 +199,8 @@ server.listen(0, async () => {
     const E7 = ok(await call('POST', 'employees', { name: 'Owner Seven', join_date: '2026-01-01', basic: 1000, ...WPS })).id;
     const uAdmin = ok(await call('GET', 'users')).find(u => u.username === 'admin').id;
     ok(await call('PUT', `users/${uAdmin}`, { employee_id: E7 }));
-    await as('hr1', async () => { ok(await call('POST', `hr/offboarding/${E7}`, { last_day: '2026-11-30', reason: 'resignation' })); ok(await call('POST', `hr/offboarding/${E7}/complete`, { force: true })); });
+    const offW = await as('hr1', async () => { ok(await call('POST', `hr/offboarding/${E7}`, { last_day: '2026-11-30', reason: 'resignation' })); return ok(await call('POST', `hr/offboarding/${E7}/complete`, { force: true })).warnings; });
+    assert.equal(offW.length, 1); assert.match(offW[0], /administrator account "admin".*still active/, 'the administrator is warned, not locked out');
     ok(await call('GET', 'users'), 'the administrator is still signed in');
     assert.equal(ok(await call('GET', 'users')).find(u => u.id === uAdmin).employee_id, null, 'the administrator account is unlinked');
     // F9: an account code 2260 the company already used is not taken over
@@ -209,6 +210,38 @@ server.listen(0, async () => {
     await as('mgr3', async () => no(await call('POST', `expense_claims/${cF9}/decide`, { status: 'approved' }), /already used/));
     let chk2 = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.equal(chk2.status, 'fail'); assert.match(chk2.detail, /2260 is already used/);
     ctx.db.prepare('UPDATE accounts SET system=?, name=? WHERE code=?').run(a2260.system, a2260.name, '2260');
+
+    // ---- second review
+    const claimFor = async (eid, date, amount) => { const id = ok(await call('POST', 'expense_claims', { employee_id: eid, date, description: 'Item ' + date, amount })).id; ok(await call('POST', `expense_claims/${id}/decide`, { status: 'approved' })); return id; };
+    // 1. a backdated reimbursement must not leave the claims balance below zero on a past day
+    const E8 = ok(await call('POST', 'employees', { name: 'Clerk Eight', join_date: '2026-01-01', basic: 1000, ...WPS })).id;
+    await claimFor(E8, '2026-10-10', 100);
+    ok(await call('POST', 'expense_claims/reimburse', { employee_id: E8, date: '2026-10-20', amount: 100, method: 'bank' }));
+    await claimFor(E8, '2026-11-01', 100);
+    no(await call('POST', 'expense_claims/reimburse', { employee_id: E8, date: '2026-10-15', amount: 100, method: 'bank' }), /paid more than the approved claims on 2026-10-20/);
+    // … nor taking back an old approval that was already paid back
+    const E9 = ok(await call('POST', 'employees', { name: 'Clerk Nine', join_date: '2026-01-01', basic: 1000, ...WPS })).id;
+    const c91 = await claimFor(E9, '2026-10-01', 50);
+    ok(await call('POST', 'expense_claims/reimburse', { employee_id: E9, date: '2026-10-05', amount: 50, method: 'bank' }));
+    const c92 = await claimFor(E9, '2026-10-08', 50);
+    no(await call('POST', `expense_claims/${c91}/undo`), /already reimbursed/);
+    ok(await call('POST', `expense_claims/${c92}/undo`), 'the later claim, not paid back, can be taken back');
+    // 3. a manual journal on 2260 is refused (kept from the claims pages)
+    no(await call('POST', 'journal_entries', { date: '2026-10-31', memo: 'adjust', lines: [{ account: '2260', debit: 10 }, { account: '1020', credit: 10 }] }), /kept from the Expense claims/);
+    chk2 = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.notEqual(chk2.status, 'fail', chk2.detail); assert.doesNotMatch(chk2.detail || '', /2260/);
+    // 4. offboarding with money still open: refused without confirmation, the reason says what is open
+    ok(await call('POST', `hr/offboarding/${E8}`, { last_day: '2026-11-30', reason: 'resignation' }));
+    no(await call('POST', `hr/offboarding/${E8}/complete`, {}), /Money is still open with this employee — approved expense claims not yet paid back: 100/);
+    // 2. offboarding closes every linked account but an administrator's
+    const E10 = ok(await call('POST', 'employees', { name: 'Manager Ten', join_date: '2026-01-01', basic: 1000, ...WPS })).id;
+    ok(await call('POST', 'users', { username: 'mgr10', password: 'pass1234', role: 'manager', employee_id: E10 }));
+    await as('mgr10', async () => ok(await call('POST', 'login', { username: 'mgr10', password: 'pass1234' })));
+    await as('mgr10', async () => ok(await call('GET', 'me/statement')));
+    ok(await call('POST', `hr/offboarding/${E10}`, { last_day: '2026-11-30', reason: 'resignation' }));
+    assert.deepEqual(ok(await call('POST', `hr/offboarding/${E10}/complete`, { force: 1 })).warnings, []);
+    assert.equal(ctx.db.prepare("SELECT disabled FROM users WHERE username='mgr10'").get().disabled, 1, 'the manager account is disabled');
+    await as('mgr10', async () => assert.equal((await call('GET', 'me/statement')).s, 401, 'and signed out'));
+    await as('mgr10x', async () => assert.ok((await call('POST', 'login', { username: 'mgr10', password: 'pass1234' })).s >= 400, 'and cannot sign in'));
 
     console.log('EMPLOYEE ACCOUNTS TESTS PASSED');
   } catch (e) { console.error(e); process.exitCode = 1; } finally { server.close(); process.exit(process.exitCode || 0); }

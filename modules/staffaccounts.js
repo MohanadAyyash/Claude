@@ -139,6 +139,12 @@ module.exports = ctx => {
     for (const x of ctx.custodyMoves ? ctx.custodyMoves(eid) : []) out.push(x);   // petty cash held by the employee (modules/pettycustody.js)
     return out.filter(m => m.date).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (b.amount - a.amount)));
   }
+  // 2260 is kept from the claims pages only: a manual journal on it would make the statements and the ledger differ
+  const prevGuard = ctx.journalGuard;
+  ctx.journalGuard = lines => {
+    if (prevGuard) prevGuard(lines);
+    if ((lines || []).some(l => String(l.account) === '2260') && !taken2260()) bad('Account 2260 (expense claims owed to employees) is kept from the Expense claims pages — record the movement there');
+  };
   const sections = () => ({ ...SEC, ...(ctx.custodySection ? { custody: ctx.custodySection } : {}) });
   function balances(eid, asOf = '9999-12-31') {
     const b = Object.fromEntries(Object.keys(sections()).map(k => [k, 0]));
@@ -162,6 +168,18 @@ module.exports = ctx => {
       eos_provision: prov, partner: partner || null, pending_claims: db.prepare("SELECT COUNT(*) n, COALESCE(SUM(amount+vat_amount),0) t FROM expense_claims WHERE employee_id=? AND status='pending'").get(e.id) };
   }
   const claimsOwed = eid => balances(eid).claims;
+  // the lowest point of what the company owes the employee for claims, over time, with a change applied (a reimbursement added,
+  // an approved claim taken out) — a backdated reimbursement or taking back an old approval must never leave it below zero on
+  // any day, or a past month-end would show the employee owing the company. Same day: claims first, then reimbursements.
+  const claimsLowest = (eid, { pay, skipClaim } = {}) => {
+    const mv = moves(eid).filter(m => m.section === 'claims' && !(skipClaim && m.kind === 'claim' && m.id === skipClaim));
+    if (pay) mv.push({ date: pay.date, kind: 'reimbursement', amount: -round(pay.amount) });
+    mv.sort((x, y) => x.date < y.date ? -1 : x.date > y.date ? 1 : (x.kind === 'claim' ? 0 : 1) - (y.kind === 'claim' ? 0 : 1));
+    let bal = 0;
+    for (const m of mv) { bal = round(bal + m.amount); if (bal < -0.005) return m.date; }
+    return null;
+  };
+  ctx.staffClaimsOwed = claimsOwed;
 
   // ---------------- reconciliation with the general ledger ----------------
   ctx.staffChecks = () => {
@@ -242,6 +260,7 @@ module.exports = ctx => {
           if (payLim && amount > payLim + 0.005 && me.role !== 'admin') refuse(`Above the payment approval limit (${money(payLim)}) — the administrator records this reimbursement`);
           const owed = claimsOwed(e.id); if (amount > owed + 0.005) bad(`Approved claims not yet reimbursed: ${owed}`);
           const owedThen = balances(e.id, date).claims; if (amount > owedThen + 0.005) bad(`Approved claims not yet reimbursed on ${date}: ${owedThen}`);
+          const short = claimsLowest(e.id, { pay: { date, amount } }); if (short) bad(`With this reimbursement dated ${date}, ${e.name} would have been paid more than the approved claims on ${short} — check the date`);
           const method = x.method === 'cash' ? 'cash' : 'bank', bank = method === 'bank' ? (+x.bank_account_id || null) : null;
           if (bank && !db.prepare('SELECT 1 FROM bank_accounts WHERE id=?').get(bank)) bad('Unknown bank account');
           const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,employee_id,bank_account_id,notes) VALUES('out',?,?,?,?,?,?,'claim-reimbursement')").run(date, amount, method, x.reference || `CLAIMS-${e.id}`, e.id, bank);
@@ -262,7 +281,7 @@ module.exports = ctx => {
           if (me.role !== 'admin') refuse('Only the administrator can take back an approval');
           if (cl.status !== 'approved') bad('Only an approved claim can be taken back');
           guardDate(cl.date, 'an expense');
-          if (claimsOwed(cl.employee_id) - total(cl) < -0.005) bad('This employee was already reimbursed for this claim — delete the reimbursement first');
+          if (claimsOwed(cl.employee_id) - total(cl) < -0.005 || (cl.paid_from !== 'custody' && claimsLowest(cl.employee_id, { skipClaim: cl.id }))) bad('This employee was already reimbursed for this claim — delete the reimbursement first');
           db.prepare('DELETE FROM payments WHERE id=?').run(cl.payment_id); db.prepare('DELETE FROM bills WHERE id=?').run(cl.bill_id);
           db.prepare("UPDATE expense_claims SET status='pending', decided_by=NULL, decided_by_id=NULL, decided_at=NULL, decision_note=NULL, bill_id=NULL, payment_id=NULL WHERE id=?").run(cl.id);
           audit(req, 'undo', 'expense_claims', cl.id, ''); return send(res, 200, { ok: 1 }), true;

@@ -1447,7 +1447,7 @@ Open the employee → **Onboarding & offboarding** → **Leaving & final settlem
 1. **Last working day**, **Reason** (Resignation, Termination by the company, End of contract, Other), **Notice given on**, **Other deductions**.
 2. **Start offboarding & calculate**. The system shows: **Salary to the last day**, leave encashment (on basic), end-of-service gratuity (21/30 days), notice-period shortfall (notice must be 30–90 days), **Outstanding advance**, **Deductions** and **Total**.
 3. Change the inputs and press **Recalculate** if needed; tick the offboarding checklist.
-4. **Complete & disable account** — the employee becomes "Left" and their system account is disabled.
+4. **Complete & disable account** — the employee becomes "Left" and every system account linked to them is signed out and disabled. An administrator account is only unlinked, with a warning to disable it or change its password. If approved expense claims are still owed to the employee, or they still hold petty cash, you are told and asked to confirm.
 
 <!--img-->
 
@@ -2109,4 +2109,4 @@ An **expense claim** = an employee paid a company expense from own money (fuel, 
 - The **net**, with the end-of-service gratuity accrued for information. **Print** or **PDF** for any period.
 - Employees see their own statement in **My account & claims**.
 
-**Notes:** the payments of claims are kept from these pages only, and the bill of an approved claim keeps its amount and project on the Expenses page. An employee with claims cannot be deleted (mark them as left). When offboarding is completed, the employee-portal account is closed; another staff account (manager, engineer…) is only unlinked. A closed period blocks approving or paying with a date inside it. The daily check confirms the statements equal the general ledger (a manual journal on 2200 or 1300 shows as a warning). Claims with no supplier are not sent to Zoho (record them there by hand).
+**Notes:** the payments of claims are kept from these pages only, and the bill of an approved claim keeps its amount and project on the Expenses page. An employee with claims cannot be deleted (mark them as left). When offboarding is completed, every linked account is closed except an administrator's, which is unlinked with a warning. A reimbursement, or taking back an approval, cannot leave the employee paid more than the approved claims on any earlier day. A manual journal on 2260 is refused. A closed period blocks approving or paying with a date inside it. The daily check confirms the statements equal the general ledger (a manual journal on 2200 or 1300 shows as a warning). Claims with no supplier are not sent to Zoho (record them there by hand).
