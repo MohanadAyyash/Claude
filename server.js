@@ -471,7 +471,7 @@ async function api(req, res, url) {
   if (!me) return send(res, 401, { error: 'unauthorized' });
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
   const scope = siteScope(me);
-  if (scope) { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }
+  if (scope && a !== 'me') { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }   // own records (me/…) are limited to the user's own employee, not to the assigned projects
   if (ctx.periodGuard) await ctx.periodGuard(req, method, url, parts);          // closed accounting period
   if (ctx.spendGuard) await ctx.spendGuard(req, method, url, parts, me);        // purchase orders / payments above the approval limit
 
