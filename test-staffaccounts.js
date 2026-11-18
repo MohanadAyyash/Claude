@@ -135,6 +135,12 @@ server.listen(0, async () => {
     const doc = await call('GET', `doc/employee_statement/${E1}?to=2026-12-31`); assert.equal(doc.s, 200); assert.match(doc.t, /Employee statement of account/); assert.match(doc.t, /Worker One/); assert.match(doc.t, /2,700\.00/);
     await as('worker1', async () => { const me = ok(await call('GET', 'me/statement?to=2026-12-31')); assert.equal(me.total, 2700); assert.equal(me.employee.id, E1); });
     await as('eng2', async () => { ok(await call('GET', 'me/statement')); ok(await call('GET', 'me/claims')); });   // any role linked to an employee
+    // a site role (here not assigned to any project) still sees its own claims: own records are not filtered by the assigned projects
+    await as('eng2', async () => {
+      const id = ok(await call('POST', 'me/claims', { date: '2026-09-18', description: 'Marker spray', amount: 25, project_id: prj })).id;
+      const mine = ok(await call('GET', 'me/claims')); assert.ok(mine.some(c => c.id === id), 'own claim visible to the site engineer');
+      ok(await call('DELETE', `me/claims/${id}`));
+    });
     await as('acc', async () => { const r = await call('POST', 'me/claims', { description: 'x', amount: 1 }); assert.equal(r.s, 403); assert.match(r.t, /not linked/); });
 
     // ---- ledger = statements
