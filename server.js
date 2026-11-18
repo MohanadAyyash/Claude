@@ -253,6 +253,7 @@ function compliance() {
   if (ctx.chequeAlerts) ctx.chequeAlerts(add);
   if (ctx.treasuryAlerts) ctx.treasuryAlerts(add);
   if (ctx.spendAlerts) ctx.spendAlerts(add);
+  if (ctx.m365Alerts) ctx.m365Alerts(add);                               // documents that keep failing to reach SharePoint
   if (ctx.siteAlerts) ctx.siteAlerts(add);
   if (ctx.hiredAlerts) ctx.hiredAlerts(add);                                // rented equipment past its return date or standing idle                                  // equipment service due, programme activities past their finish date                          // guarantees expiring, projects over budget, cash shortfall ahead                              // post-dated cheques due this week / past their date
   if (ctx.backupStatus && fs.existsSync(path.join(DATA_DIR, 'backups'))) { const bk = ctx.backupStatus(); if (bk.stale) add('bad', 'backup_stale', { days: bk.age_days }); if (bk.last_copy && !bk.last_copy.ok) add('bad', 'backup_copy', { who: bk.last_copy.dir }); }
@@ -375,6 +376,7 @@ const { money } = require('./lib/render');
 const SETTING_KEYS = ['print_arabic','sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
+  if (ctx.hooks.afterWrite) try { ctx.hooks.afterWrite(); } catch { /* a listener never breaks the action */ }   // e.g. SharePoint sync looks again
 }
 const monthOk = m => /^\d{4}-(0[1-9]|1[0-2])$/.test(m || '');
 function payrollRows(month) {
