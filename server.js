@@ -484,7 +484,7 @@ async function api(req, res, url) {
   if (a === 'users') {
     const admins = () => db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n;
     const hrOnly = me.role === 'hr';
-    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,COALESCE(u.totp_on,0) two_step,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all()
+    if (method === 'GET') return send(res, 200, db.prepare(`SELECT u.id,u.username,u.role,u.employee_id,COALESCE(u.totp_on,0) two_step,EXISTS(SELECT 1 FROM m365_connections c WHERE c.user_id=u.id) m365_linked,e.name employee_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id ${hrOnly ? "WHERE u.role='employee'" : ''} ORDER BY u.id`).all()
       .map(u => ({ ...u, projects: db.prepare('SELECT project_id FROM user_projects WHERE user_id=?').all(u.id).map(r => r.project_id) })));
     const body = ['POST', 'PUT'].includes(method) ? await readBody(req) : {};
     if (method === 'POST') {

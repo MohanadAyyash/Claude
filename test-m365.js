@@ -1,4 +1,4 @@
-// Microsoft 365 Phase 1: off by default, admin only, fails closed, OAuth 2.0 Authorization Code + PKCE against a LOCAL mock of
+// Microsoft 365 Phase 1 (+1C: every user links their own account): off by default, fails closed, OAuth 2.0 Authorization Code + PKCE against a LOCAL mock of
 // Entra ID (token endpoint + JWKS) and Graph — no internet. id_tokens are really signed (RS256) and verified with jose; every forged,
 // expired or mismatched answer is refused without touching m365_connections. Also: one Microsoft identity per ERP user, hashed
 // single-use state, encrypted tokens and their rotation, and backups that never carry credentials: node --no-warnings test-m365.js
@@ -105,10 +105,14 @@ const CODE = 'mock-auth-code-CODE-444';
       ok(await call('POST', 'users', { username: 'admin2', password: 'secret12', role: 'admin' }));
       for (const role of roles) {
         roleCookies[role] = await login('u_' + role);
-        for (const [m, u] of [['GET', 'm365/status'], ['POST', 'm365/disconnect'], ['POST', 'm365/check']]) assert.equal((await call(m, u, m === 'POST' ? {} : undefined, roleCookies[role])).s, 403, `${role} ${u}`);
+        // Phase 1C: every role manages its OWN link; it never sees the server's Microsoft settings
+        const own = ok(await call('GET', 'm365/status', undefined, roleCookies[role]), `${role} status`);
+        assert.deepEqual(Object.keys(own).sort(), ['available', 'configured', 'connection', 'enabled'], `${role}: own link state only (no tenant / client ID / settings)`);
+        assert.equal(ok(await call('POST', 'm365/disconnect', {}, roleCookies[role])).removed, 0, `${role}: nothing of its own to remove`);
+        assert.equal((await call('POST', 'm365/check', {}, roleCookies[role])).s, 503, `${role}: check while off`);
       }
       const admin2 = await login('admin2');
-      console.log('✔ 1–4: starts with no M365 settings; every M365 API: 401 unauthenticated, 403 for all 9 non-admin roles; off by default');
+      console.log('✔ 1–4: starts with no M365 settings; every M365 API: 401 unauthenticated; non-admin roles see only their own link state; off by default');
 
       // ---- 5. enabled but incomplete → fails closed
       Object.assign(process.env, { M365_ENABLED: '1', M365_TENANT_ID: TENANT, M365_CLIENT_SECRET: SECRET, M365_REDIRECT_URI: `${base}/auth/microsoft/callback` });
@@ -130,7 +134,7 @@ const CODE = 'mock-auth-code-CODE-444';
       console.log('✔ 5: enabled but incomplete / common tenant / http redirect fail closed (names only, never values); configuration changes audited');
 
       // ---- 6. authorization start
-      assert.equal((await nav('/auth/microsoft', '')).s, 401, 'not signed in'); assert.equal((await nav('/auth/microsoft', roleCookies.accountant)).s, 403, 'not an administrator');
+      assert.equal((await nav('/auth/microsoft', '')).s, 401, 'not signed in'); { const ra = await nav('/auth/microsoft', roleCookies.accountant); assert.equal(ra.s, 302, 'any active user may link their own account (Phase 1C)'); assert.equal(q('SELECT user_id FROM oauth_states')[0].user_id, q("SELECT id FROM users WHERE username='u_accountant'")[0].id, 'for that user'); exec('DELETE FROM oauth_states'); }
       const before = Date.now(), f1 = await start(), p = f1.auth.searchParams;
       assert.equal(f1.auth.origin + f1.auth.pathname, `${process.env.M365_LOGIN_BASE}/${TENANT}/oauth2/v2.0/authorize`, 'tenant-specific endpoint');
       assert.equal(p.get('response_type'), 'code'); assert.equal(p.get('client_id'), CLIENT); assert.equal(p.get('code_challenge_method'), 'S256');
@@ -151,13 +155,13 @@ const CODE = 'mock-auth-code-CODE-444';
       assert.equal((await cb(`code=${CODE}&state=${f1.state}`, f1.bind)).s, 400, 'a state is used up even when its callback failed (no replay)');
       const fe = await start(); r = await cb(`error=access_denied&error_description=user+said+no&state=${fe.state}`, fe.bind); assert.equal(r.s, 400); assert.match(r.t, /did not allow/);
       const fx = await start(); exec("UPDATE oauth_states SET expires_at='2000-01-01T00:00:00.000Z' WHERE used_at IS NULL"); r = await cb(`code=${CODE}&state=${fx.state}`, fx.bind); assert.equal(r.s, 400); assert.match(r.t, /expired/);
-      const fd = await start(admin2); ok(await call('PUT', 'users/' + q("SELECT id FROM users WHERE username='admin2'")[0].id, { role: 'accountant' }));
-      r = await cb(`code=${CODE}&state=${fd.state}`, fd.bind); assert.equal(r.s, 400, 'demoted before the callback'); assert.match(r.t, /administrator|not known/, 'its pending sign-in is dropped with the role');
-      ok(await call('PUT', 'users/' + q("SELECT id FROM users WHERE username='admin2'")[0].id, { role: 'admin' }));
+      const fd = await start(admin2); exec('UPDATE users SET disabled=1 WHERE username=?', 'admin2');
+      r = await cb(`code=${CODE}&state=${fd.state}`, fd.bind); assert.equal(r.s, 400, 'disabled before the callback'); assert.match(r.t, /active Trigon ERP user|not known/, 'its pending sign-in is dropped');
+      exec('UPDATE users SET disabled=0 WHERE username=?', 'admin2');
       const f5 = await start(), wrongHost = await new Promise((ok_, no) => http.get({ host: '127.0.0.1', port, path: `/auth/microsoft/callback?code=${CODE}&state=${f5.state}`, headers: { cookie: `m365_flow=${f5.bind}`, host: 'evil.example' } }, rr => { rr.resume(); ok_(rr.statusCode); }).on('error', no));
       assert.equal(wrongHost, 400, 'Host header must match the registered redirect URI'); exec('DELETE FROM oauth_states');
       assert.equal(mock.tokenCalls.length, 0, 'no rejected callback reached Microsoft'); assert.equal(links().length, 0);
-      console.log('✔ 7: missing / mismatched / wrong-browser / expired / reused state, missing code, authorization error, demoted admin, wrong host — all refused, nothing linked');
+      console.log('✔ 7: missing / mismatched / wrong-browser / expired / reused state, missing code, authorization error, user disabled mid-flow, wrong host — all refused, nothing linked');
 
       // ---- id_token verification (signed with jose; every bad one refused, m365_connections untouched)
       mock.jwks = 'down'; await refused('JWKS unavailable', null, /keys could not be checked/);
@@ -249,22 +253,24 @@ const CODE = 'mock-auth-code-CODE-444';
       console.log('✔ backups (download, automatic, script): no tokens, no state / verifier, integrity ok, 0600, restorable; a failure publishes nothing and keeps the previous backup');
 
       // ---- 9. disconnect: administrator only, local only, audited
-      assert.equal((await call('POST', 'm365/disconnect', {}, roleCookies.hr)).s, 403);
+      assert.equal(ok(await call('POST', 'm365/disconnect', {}, roleCookies.hr)).removed, 0, 'another user\'s disconnect removes only its own (nothing)'); assert.equal(links().length, 1, 'the admin\'s link is untouched');
       const dc = ok(await call('POST', 'm365/disconnect', {})); assert.equal(dc.removed, 1); assert.equal(dc.revoked_at_microsoft, false, 'does not claim a revocation at Microsoft');
       assert.equal(links().length, 0); assert.equal(q('SELECT COUNT(*) n FROM oauth_states')[0].n, 0);
       assert.match(q("SELECT detail FROM audit_log WHERE tbl='m365' AND action='disconnect' AND user='admin'")[0].detail, /Trigon ERP \(Microsoft consent not revoked\)/);
-      // deleting / disabling / demoting a linked user removes the link (cascade + prune)
+      // deleting / disabling a linked user removes the link (cascade + prune); a role change keeps it (Phase 1C)
       r = await attempt(null); assert.equal(r.s, 302); r = await attempt(null, admin2); assert.equal(r.s, 400, 'still one identity per user');
       const a2id = q("SELECT id FROM users WHERE username='admin2'")[0].id;
       mock.me = { id: OID2, displayName: 'Admin Two', mail: 'two@example.test' }; r = await attempt(() => sign({ oid: OID2 }), admin2); assert.equal(r.s, 302, r.t); mock.me = { id: OID, displayName: 'Test Admin', mail: 'admin@example.test' };
       assert.equal(links().length, 2);
       ok(await call('PUT', 'users/' + a2id, { role: 'accountant' })); ok(await call('GET', 'm365/status'));
-      assert.equal(links().length, 1, 'demoted user: link removed'); assert.ok(q("SELECT * FROM audit_log WHERE tbl='m365' AND action='disconnect' AND user='system'").length === 1, 'and audited');
-      ok(await call('PUT', 'users/' + a2id, { role: 'admin' })); const admin2b = await login('admin2');
+      assert.equal(links().length, 2, 'role change: link kept (the user just has the new role\'s rights)');
+      exec('UPDATE users SET disabled=1 WHERE id=?', a2id); ok(await call('GET', 'm365/status'));
+      assert.equal(links().length, 1, 'disabled user: link removed'); assert.ok(q("SELECT * FROM audit_log WHERE tbl='m365' AND action='disconnect' AND user='system'").length === 1, 'and audited');
+      exec('UPDATE users SET disabled=0 WHERE id=?', a2id); ok(await call('PUT', 'users/' + a2id, { role: 'admin' })); const admin2b = await login('admin2');
       mock.me = { id: OID2, displayName: 'Admin Two', mail: 'two@example.test' }; r = await attempt(() => sign({ oid: OID2 }), admin2b); assert.equal(r.s, 302, r.t); mock.me = { id: OID, displayName: 'Test Admin', mail: 'admin@example.test' };
       assert.equal(links().length, 2);
       ok(await call('DELETE', 'users/' + a2id)); assert.equal(links().length, 1, 'deleted user: link removed (ON DELETE CASCADE)');
-      console.log('✔ 9: disconnect admin only, local removal only (revoked_at_microsoft:false), audited; demoted or deleted users lose their link');
+      console.log('✔ 9: disconnect removes only the caller\'s own link, locally (revoked_at_microsoft:false), audited; disabled or deleted users lose their link, a role change keeps it');
 
       // ---- 8. nothing secret anywhere
       noSecret(JSON.stringify(q('SELECT * FROM audit_log')), 'the audit log'); noSecret(JSON.stringify(q('SELECT * FROM error_log')), 'the error log'); noSecret(logged.join('\n'), 'the console');

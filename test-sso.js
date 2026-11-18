@@ -260,11 +260,10 @@ const LOGIN_SCOPES = 'openid profile email User.Read', LINK_SCOPES = 'openid pro
         assert.equal((await call('GET', 'users', undefined, `sid=${s2.sid}`)).s, 200);
         ok(await call('PUT', 'users/' + admin2Id, { role: 'viewer' }, admin.cookie));
         assert.equal(ok(await call('GET', 'status', undefined, `sid=${s2.sid}`)).user.role, 'viewer'); assert.equal((await call('GET', 'users', undefined, `sid=${s2.sid}`)).s, 403, 'viewer rights now');
-        await refused('demoted (link removed)', await ssoAs(OID_ADMIN2), /not linked/);
-        // and a non-admin row put there by hand cannot sign in in this phase
-        linkRow(accId, TENANT, OID_STRANGER);
-        await refused('non-admin link row', await ssoAs(OID_STRANGER), /not linked/);
-        exec('DELETE FROM m365_connections WHERE user_id=?', accId);
+        // Phase 1C: the link survives a role change; the next Microsoft sign-in is simply a viewer
+        const s2b = await ssoAs(OID_ADMIN2); assert.equal(s2b.s, 302, s2b.t);
+        assert.equal(ok(await call('GET', 'status', undefined, `sid=${s2b.sid}`)).user.role, 'viewer'); assert.equal((await call('GET', 'users', undefined, `sid=${s2b.sid}`)).s, 403);
+        ok(await call('PUT', 'users/' + admin2Id, { role: 'admin' }, admin.cookie));
       }
       console.log('✔ 15: ACL answers are identical for a Microsoft and a password session; role changes apply at once');
 
