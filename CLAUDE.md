@@ -9,6 +9,7 @@ Arabic and English UI. Treat it like financial software: a silent wrong number i
 - `lib/acl.js`: role permissions, enforced on the server. `lib/compliance.js`: UAE rules (VAT, payroll, EOS, validators).
 - `modules/accounting.js`: the general ledger is *derived* from documents and manual journals. It is never stored.
 - `modules/health.js`: `/api/health`, error log, daily integrity checks. `lib/opsreport.js`: daily-check report → GitHub issue.
+- `modules/microsoft365.js` (Entra link / sign-in), `modules/authmode.js` (AUTH_MODE, /auth/emergency), `modules/m365business.js` (SharePoint, Outlook, Teams) and `lib/m365graph.js` (the only Graph HTTP layer). See `M365.md`.
 - `public/`: browser UI (plain JS). `standalone/`: the same server bundled for the browser (sql.js) for GitHub Pages.
 - Database: built-in `node:sqlite` (Node ≥ 22.5). Schema changes go through `CREATE TABLE IF NOT EXISTS` and `addCol` (idempotent, additive only).
 
