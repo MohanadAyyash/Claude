@@ -10,20 +10,26 @@ const fileToData = f => new Promise((ok, no) => { const r = new FileReader(); r.
 const size = n => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
 // ---- attachments panel (used inside project page and record modals) -------------------------------
+// the structured document type of an attachment (fixed list, bilingual): with SharePoint on, it decides the attachment's folder there.
+// The free-text field stays as a description (licence, passport…) and, for older attachments without a type, as a hint.
+const DOC_KINDS = [['drawing', 'مخطط', 'Drawing'], ['delivery_note', 'سند تسليم', 'Delivery Note'], ['supplier_invoice', 'فاتورة مورد', 'Supplier Invoice'], ['contract', 'عقد', 'Contract'],
+  ['rfi', 'RFI', 'RFI'], ['submittal', 'تقديم فني', 'Submittal'], ['hse', 'HSE', 'HSE'], ['site_photo', 'صورة موقع', 'Site Photo'], ['other', 'أخرى', 'Other']];
+const docKindLabel = k => { const x = DOC_KINDS.find(d => d[0] === k); return x ? tr(x[1], x[2]) : ''; };
+const SYNCED_ENTITIES = ['project', 'party', 'purchase_order', 'subcontract', 'bill', 'invoice', 'client_pc'];   // attachments that can go to SharePoint
 window.docsPanel = async (el, entity, id, canWrite) => {
   let box = el;
   if (el.classList.contains('overlay')) { box = document.createElement('div'); box.className = 'card'; const mod = el.querySelector('.modal'); mod.insertBefore(box, mod.querySelector('.acts')); }
   const draw = async () => {
     const rows = await api('GET', `documents?entity=${entity}&entity_id=${id}`).catch(() => []);
     box.innerHTML = `<h2>${tr('المستندات المرفقة', 'Attached documents')}</h2>
-      <table><tbody>${rows.map(d => `<tr><td><a href="/api/documents/${d.id}/download">${esc(d.name)}</a> <span class="pill">${esc(d.category || '')}</span></td><td class="muted">${size(d.size)}</td><td>${d.expiry_date ? `${tr('ينتهي', 'Expires')} ${esc(d.expiry_date)}` : ''}</td><td>${canWrite ? `<button class="btn sec sm" data-dd="${d.id}">×</button>` : ''}</td></tr>`).join('') || `<tr><td class="muted">${tr('لا توجد مستندات', 'No documents')}</td></tr>`}</tbody></table>
-      ${canWrite ? `<div class="f2" style="margin-top:8px"><div class="f"><input type="file" class="dfile"></div><div class="f"><input class="dcat" placeholder="${tr('النوع (عقد، رخصة، فاتورة…)', 'Type (contract, licence, invoice…)')}"></div><div class="f"><label>${tr('تاريخ الانتهاء (اختياري)', 'Expiry date (optional)')}</label><input type="date" class="dexp"></div><div class="f"><button type="button" class="btn sm dup" style="margin-top:18px">${tr('رفع', 'Upload')}</button></div></div>` : ''}`;
+      <table><tbody>${rows.map(d => `<tr><td><a href="/api/documents/${d.id}/download">${esc(d.name)}</a> ${d.doc_type ? `<span class="pill">${esc(docKindLabel(d.doc_type))}</span> ` : ''}${d.category ? `<span class="pill">${esc(d.category)}</span>` : ''}</td><td class="muted">${size(d.size)}</td><td>${d.expiry_date ? `${tr('ينتهي', 'Expires')} ${esc(d.expiry_date)}` : ''}</td><td>${canWrite ? `<button class="btn sec sm" data-dd="${d.id}">×</button>` : ''}</td></tr>`).join('') || `<tr><td class="muted">${tr('لا توجد مستندات', 'No documents')}</td></tr>`}</tbody></table>
+      ${canWrite ? `<div class="f2" style="margin-top:8px"><div class="f"><input type="file" class="dfile"></div>${SYNCED_ENTITIES.includes(entity) ? `<div class="f"><select class="dkind"><option value="">${tr('نوع المستند…', 'Document type…')}</option>${DOC_KINDS.map(([k]) => `<option value="${k}">${esc(docKindLabel(k))}</option>`).join('')}</select></div>` : ''}<div class="f"><input class="dcat" placeholder="${tr('الوصف (رخصة، جواز…)', 'Description (licence, passport…)')}"></div><div class="f"><label>${tr('تاريخ الانتهاء (اختياري)', 'Expiry date (optional)')}</label><input type="date" class="dexp"></div><div class="f"><button type="button" class="btn sm dup" style="margin-top:18px">${tr('رفع', 'Upload')}</button></div></div>` : ''}`;
     box.querySelectorAll('[data-dd]').forEach(b => b.onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'documents/' + b.dataset.dd); draw(); } }));
     const up = box.querySelector('.dup');
     if (up) up.onclick = guard(async () => {
       const f = box.querySelector('.dfile').files[0]; if (!f) throw new Error(tr('اختر ملفاً', 'Choose a file'));
       if (f.size > 8 * 1024 * 1024) throw new Error(tr('الملف أكبر من ٨ ميجابايت', 'File is larger than 8 MB'));
-      await api('POST', 'documents', { entity, entity_id: id, name: f.name, category: box.querySelector('.dcat').value, expiry_date: box.querySelector('.dexp').value, data: await fileToData(f) });
+      await api('POST', 'documents', { entity, entity_id: id, name: f.name, category: box.querySelector('.dcat').value, doc_type: box.querySelector('.dkind') ? box.querySelector('.dkind').value : '', expiry_date: box.querySelector('.dexp').value, data: await fileToData(f) });
       toast(tr('تم الرفع', 'Uploaded')); draw();
     });
   };

@@ -167,6 +167,10 @@ server.listen(0, async () => {
     await as('acc', async () => ok(await call('POST', 'petty_requests', { employee_id: E5, amount: 20, purpose: 'Water' })));
     assert.equal((await call('DELETE', `employees/${E5}`)).s, 409, 'a petty cash request alone also keeps the employee');
 
+    // offboarding an employee who still holds petty cash asks for confirmation
+    ok(await call('POST', `hr/offboarding/${E1}`, { last_day: '2026-11-30', reason: 'resignation' }));
+    no(await call('POST', `hr/offboarding/${E1}/complete`, {}), /petty cash still held by the employee: 85/);
+
     console.log('PETTY CASH PER EMPLOYEE TESTS PASSED');
   } catch (e) { console.error(e); process.exitCode = 1; } finally { server.close(); process.exit(process.exitCode || 0); }
 });
