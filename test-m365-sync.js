@@ -318,6 +318,45 @@ ctx.pdf = async html => { pdfCalls++; if (pdfBroken) throw new Error('no browser
       delete process.env.M365_SHAREPOINT_AUTO_FROM; await tick(); assert.equal(row('quotes', qDraft).status, 'uploaded');
       console.log('✔ M365_SHAREPOINT_AUTO_FROM leaves older records out');
 
+      // ---- TESTING-ONLY fault switch (TRIGON_M365_FAULT=sharepoint): fault ON → retry queue → fault OFF → recovery ----
+      {
+        const filesBefore = JSON.stringify([...mock.files].map(([k, v]) => [k, v.toString('base64')])), putsBefore = mock.puts.length;
+        process.env.TRIGON_M365_FAULT = 'sharepoint';
+        const poF = await mkPo('sent'), poRowF = () => JSON.stringify(q('SELECT * FROM purchase_orders WHERE id=?', poF));
+        const erpBefore = poRowF();
+        await tick(); let d = row('purchase_orders', poF); const docId = d.id;
+        assert.equal(d.status, 'failed'); assert.equal(d.fails, 1); assert.match(d.error, /unavailable.*TEST FAULT/); assert.ok(minsAhead(d.next_attempt_at) > 0.5, 'next attempt scheduled');
+        const sy1 = ok(await call('GET', 'm365/sync', undefined, admin)); assert.ok(sy1.failures.some(f => f.entity === 'purchase_orders' && f.entity_id === poF && f.next_attempt_at), 'shown as retrying in Settings');
+        for (const n of [2, 3]) { exec("UPDATE m365_documents SET next_attempt_at='2000-01-01T00:00:00.000Z' WHERE id=?", docId); await tick(); d = row('purchase_orders', poF); assert.equal(d.fails, n); assert.ok(d.next_attempt_at); }
+        const al = ok(await call('GET', 'dashboard', undefined, admin)).alerts;
+        assert.ok(al.some(x => x.key === 'm365_sync_failed' && x.count === 1), 'warning after 3 failures ' + JSON.stringify(al)); assert.ok(al.some(x => x.key === 'm365_fault'), 'test-mode alert');
+        assert.equal(mock.puts.length, putsBefore, 'nothing reached SharePoint'); assert.equal(JSON.stringify([...mock.files].map(([k, v]) => [k, v.toString('base64')])), filesBefore, 'existing SharePoint files untouched');
+        assert.equal(poRowF(), erpBefore, 'the ERP record is unchanged');
+        // fault OFF → Retry all failed → the same document uploads and its failure state clears
+        delete process.env.TRIGON_M365_FAULT;
+        assert.ok(ok(await call('POST', 'm365/sync/retry', {}, admin)).requeued >= 1);
+        for (let i = 0; i < 50 && row('purchase_orders', poF).status !== 'uploaded'; i++) await new Promise(r => setTimeout(r, 100));   // run by the retry request itself
+        d = row('purchase_orders', poF);
+        assert.equal(d.id, docId, 'the same queued document'); assert.equal(d.status, 'uploaded'); assert.equal(d.fails, 0); assert.equal(d.error, null); assert.equal(d.next_attempt_at, null);
+        assert.ok(paths().includes(`${V}/Purchase Orders/${num('purchase_orders', poF)}.pdf`)); assert.equal(poRowF(), erpBefore);
+        assert.ok(!ok(await call('GET', 'dashboard', undefined, admin)).alerts.some(x => x.key === 'm365_sync_failed' || x.key === 'm365_fault'), 'warnings gone');
+        // the same with "Run now" after the natural wait
+        process.env.TRIGON_M365_FAULT = 'sharepoint'; const poG = await mkPo('sent'); await tick(); assert.equal(row('purchase_orders', poG).status, 'failed');
+        delete process.env.TRIGON_M365_FAULT; exec("UPDATE m365_documents SET next_attempt_at='2000-01-01T00:00:00.000Z' WHERE entity='purchase_orders' AND entity_id=?", poG);
+        ok(await call('POST', 'm365/sync/run', {}, admin));
+        for (let i = 0; i < 50 && row('purchase_orders', poG).status !== 'uploaded'; i++) await new Promise(r => setTimeout(r, 100));
+        assert.equal(row('purchase_orders', poG).status, 'uploaded'); assert.equal(row('purchase_orders', poG).fails, 0);
+        // any other value is not the fault switch
+        process.env.TRIGON_M365_FAULT = 'outlook'; const poH = await mkPo('sent'); await tick(); assert.equal(row('purchase_orders', poH).status, 'uploaded'); delete process.env.TRIGON_M365_FAULT;
+        // startup: an obvious warning while it is set, nothing when it is not
+        const { spawnSync } = require('child_process');
+        const boot = extra => spawnSync(process.execPath, ['--no-warnings', '-e', "require('./server.js'); setTimeout(() => process.exit(0), 50)"], { cwd: __dirname, encoding: 'utf8', timeout: 30000,
+          env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('M365_') && k !== 'TRIGON_M365_FAULT')), DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'erp-fault-')), ...extra } });
+        const on = boot({ TRIGON_M365_FAULT: 'sharepoint' }), off = boot({});
+        assert.match(on.stderr + on.stdout, /WARNING: TRIGON_M365_FAULT=sharepoint is set/); assert.doesNotMatch(off.stderr + off.stdout, /TRIGON_M365_FAULT/);
+      }
+      console.log('✔ test fault switch: uploads fail as 503 → failed / retrying, fails 1-2-3, next attempt, dashboard warning after 3; nothing sent, existing files and the ERP record untouched; fault off → Retry all failed / Run now → the same document uploads and clears; startup warning only when set');
+
       // ---- the background worker: a change in the ERP reaches SharePoint within seconds, with no button ----
       Object.assign(process.env, { M365_SYNC_NO_WORKER: '0', M365_SYNC_NUDGE_MS: '100' });
       const poW = await mkPo('sent'); let w;

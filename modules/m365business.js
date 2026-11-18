@@ -59,6 +59,14 @@ module.exports = ctx => {
   const env = () => (typeof process !== 'undefined' && process.env) || {};
   const sysAudit = (user, action, rec, detail) => db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(now(), user || '', action, 'm365', rec || 0, String(detail).slice(0, 500));
   const fail = (status, msg, code) => Object.assign(new Error(msg), { status, code });
+  // TESTING ONLY: TRIGON_M365_FAULT=sharepoint makes every SharePoint *upload* fail as if Microsoft answered 503 (retryable), before
+  // anything is sent, so the retry queue can be tested on a real installation. Nothing else is affected: ERP data, sign-in, Outlook,
+  // Teams, the SharePoint connection test and the files already in SharePoint. Off unless set; loudly reported while on.
+  const faultOn = () => String(env().TRIGON_M365_FAULT || '').trim().toLowerCase() === 'sharepoint';
+  if (faultOn()) {
+    console.warn('\n*** WARNING: TRIGON_M365_FAULT=sharepoint is set — TEST FAULT INJECTION: every SharePoint upload will fail (simulated HTTP 503). ***\n*** Remove it from .env and restart. Never leave it on in production. ***\n');
+    db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(now(), 'system', 'fault-injection-on', 'm365', 0, 'TRIGON_M365_FAULT=sharepoint: SharePoint uploads fail on purpose (testing only)');
+  }
 
   // ---------- configuration (from .env, like the rest of Microsoft 365; read on every call) ----------
   function bizCfg() {
@@ -192,6 +200,7 @@ module.exports = ctx => {
     const took = db.prepare("UPDATE m365_documents SET status='uploading', attempts=attempts+1, updated_at=? WHERE id=? AND (status!='uploading' OR updated_at<?)").run(now(), d.id, new Date(Date.now() - 120e3).toISOString());
     if (!took.changes) throw fail(409, 'This document is being uploaded right now — try again in a minute', 'busy');
     try {
+      if (faultOn()) throw G.gerr('graph_unavailable', 'Microsoft 365 is unavailable — try again later (TEST FAULT: TRIGON_M365_FAULT=sharepoint)');   // simulated 503
       const drive = G.seg(c.sp.driveId, G.validDriveId), target = G.encPath([...path, name]);
       const item = content.length > MAX_UPLOAD ? await sessionUpload(c, drive, target, content, conflict)
         : await appGraph(c, 'PUT', `/drives/${drive}/root:/${target}:/content?@microsoft.graph.conflictBehavior=${conflict === 'rename' ? 'rename' : 'replace'}`,
@@ -366,6 +375,7 @@ module.exports = ctx => {
   if (!STANDALONE) { const t = setInterval(run, envNum('M365_SYNC_INTERVAL_SECONDS', 30, 5, 3600) * 1000); if (t.unref) t.unref(); }
   // documents that keep failing are an alert on the dashboard (administrators and accountants)
   ctx.m365Alerts = add => {
+    if (faultOn()) add('bad', 'm365_fault', {});                     // testing switch left on: always visible
     if (!autoCfg().on) return;
     const n = db.prepare("SELECT COUNT(*) n FROM m365_documents WHERE status='failed' AND (fails>=3 OR next_attempt_at IS NULL)").get().n;
     if (n) add('warn', 'm365_sync_failed', { count: n });
@@ -455,7 +465,7 @@ module.exports = ctx => {
     const c = bizCfg(); noteBizConfig(c);
     const linked = db.prepare('SELECT 1 FROM m365_connections WHERE user_id=?').get(me.id), granted = linked && ctx.m365Granted ? ctx.m365Granted(me.id) : [];
     const mine = { linked: !!linked, can_send_mail: c.outlook.enabled && !!linked && granted.includes('Mail.Send'), needs_reconnect_for_mail: c.outlook.enabled && !!linked && !granted.includes('Mail.Send') };
-    const pub = { sharepoint: { enabled: c.sp.enabled, configured: c.sp.configured, auto: autoCfg(c).on }, outlook: { enabled: c.outlook.enabled }, teams: { enabled: c.teams.enabled }, me: mine };
+    const pub = { sharepoint: { enabled: c.sp.enabled, configured: c.sp.configured, auto: autoCfg(c).on, ...(faultOn() ? { test_fault: true } : {}) }, outlook: { enabled: c.outlook.enabled }, teams: { enabled: c.teams.enabled }, me: mine };
     if (me.role !== 'admin') return pub;
     const h = health(), names = (() => { try { return JSON.parse(db.prepare("SELECT value FROM settings WHERE key='m365_sp_names'").get()?.value || '{}'); } catch { return {}; } })();
     const counts = db.prepare("SELECT status, COUNT(*) n FROM m365_documents GROUP BY status").all().reduce((o, x) => (o[x.status] = x.n, o), {});

@@ -147,6 +147,7 @@ window.m365IntegrationsCard = async el => {
   const hl = h => h ? `<span class="muted">${h.ok_at ? `${tr('آخر نجاح', 'last OK')} ${esc(h.ok_at.slice(0, 16).replace('T', ' '))}` : ''}${h.fail_at ? ` · ${tr('آخر خطأ', 'last error')} ${esc(h.fail_at.slice(0, 16).replace('T', ' '))}: ${esc(h.error || '')}` : ''}</span>` : '';
   const admin = ME.role === 'admin', sp = st.sharepoint, ol = st.outlook, tm = st.teams;
   el.innerHTML = `<div class="card"><h2>${tr('تكامل Microsoft 365', 'Microsoft 365 integration')}</h2>
+    ${sp.test_fault ? `<p class="neg"><b>⚠ ${tr('وضع اختبار: TRIGON_M365_FAULT=sharepoint — كل الحفظ في SharePoint يفشل عمداً', 'TEST MODE: TRIGON_M365_FAULT=sharepoint — every SharePoint upload fails on purpose')}</b></p>` : ''}
     <p><b>SharePoint</b>: ${sp.enabled ? (sp.configured ? on(true, tr('مضبوط', 'Configured')) : `<span class="neg">✖ ${tr('ناقص', 'Incomplete')}${admin && sp.missing ? ': ' + esc(sp.missing.join(', ')) : ''}</span>`) : on(false)}
       ${admin && sp.configured ? `<br><span class="muted">${tr('الموقع', 'Site')}: ${esc(sp.site_name || '—')} · ${tr('المكتبة', 'Library')}: ${esc(sp.library_name || '—')} · ${tr('المجلد', 'Folder')}: ${esc(sp.root || '')} · ${tr('محفوظ', 'saved')} ${sp.documents?.uploaded || 0}, ${tr('فشل', 'failed')} ${sp.documents?.failed || 0}</span><br>${hl(sp.health)}` : ''}
       ${admin && sp.configured && sp.sync ? m365SyncLine(sp.sync) : ''}

@@ -338,6 +338,22 @@ ctx.pdf = async html => Buffer.from(`%PDF-1.4\n% fake ${crypto.createHash('sha25
       assert.deepEqual(mock.puts.at(-1).filePath, ['Trigon Civil Projects', 'P-101 - Villa', 'Drawings', 'drawing A-101.pdf']);
       const run2 = ok(await call('POST', 'm365/migrate', { execute: true }, admin)); assert.equal(run2.uploaded, 0, 'resume: nothing twice'); assert.ok(run2.unchanged >= 2);
       assert.equal(q('SELECT COUNT(*) n FROM documents WHERE id IN (?,?)', att, att2)[0].n, 2, 'sources never deleted');
+      // TESTING-ONLY fault switch: only SharePoint uploads fail; sign-in, Outlook, Teams, the SharePoint connection test and ERP writes are untouched
+      process.env.TRIGON_M365_FAULT = 'sharepoint';
+      { const nPut = mock.puts.length, nMail = mock.mails.length, nTeams = mock.teams.length;
+        exec("UPDATE purchase_orders SET notes='Changed during the fault test' WHERE id=?", poSent); const poBefore = JSON.stringify(poRow(poSent));
+        const f1 = await upload('purchase_orders', poSent, admin); assert.equal(JSON.stringify(poRow(poSent)), poBefore, 'the ERP record is unchanged'); assert.equal(f1.s, 502); assert.match(f1.j.error, /TEST FAULT/); assert.equal(mock.puts.length, nPut, 'nothing sent to SharePoint');
+        ok(await call('POST', 'm365/sharepoint/test', {}, admin), 'SharePoint connection test unaffected');
+        ok(await call('POST', `m365/mail/quotes/${quote}`, { to: 'fault-test@example.test', confirm_resend: true }, admin), 'Outlook unaffected'); assert.equal(mock.mails.length, nMail + 1);
+        ok(await call('POST', 'm365/teams/test', {}, admin), 'Teams unaffected'); assert.equal(mock.teams.length, nTeams + 1);
+        assert.equal((await call('POST', 'login', { username: 'viewer', password: 'secret12' })).s, 200, 'sign-in unaffected');
+        ok(await call('POST', 'quotes', { client_id: cl, project_name: 'Villa', status: 'draft', items: [{ description: 'Fault-time write', qty: 1, rate: 1 }] }, admin), 'ERP writes unaffected');
+        const st = ok(await call('GET', 'm365/integrations', undefined, admin)); assert.equal(st.sharepoint.test_fault, true, 'shown to administrators');
+        assert.ok(ok(await call('GET', 'dashboard', undefined, admin)).alerts.some(x => x.key === 'm365_fault' && x.level === 'bad'), 'dashboard alert while the test fault is on'); }
+      delete process.env.TRIGON_M365_FAULT;
+      ok(await upload('purchase_orders', poSent, admin), 'uploads work again once removed');
+      assert.ok(!ok(await call('GET', 'dashboard', undefined, admin)).alerts.some(x => x.key === 'm365_fault')); assert.ok(!('test_fault' in ok(await call('GET', 'm365/integrations', undefined, admin)).sharepoint));
+      console.log('✔ test fault switch: only SharePoint uploads fail (simulated 503); sign-in, Outlook, Teams, connection test and ERP writes unaffected; visible while on');
       console.log('✔ migration: dry run uploads nothing; execute uploads, resumes without duplicates, never deletes the ERP files');
 
       // ================= no secrets anywhere =================
