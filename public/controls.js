@@ -69,17 +69,22 @@ window.twoStepCard = async el => {
 
 // Settings → Microsoft 365 link (administrator). Shown only when the server has the integration switched on.
 window.m365Card = async el => {
-  if (ME.role !== 'admin') return;
+  // every user, own account only (Phase 1C). No tenant or object IDs, tokens or server settings here; e-mail / name for information only.
   const s = await api('GET', 'm365/status').catch(() => null); if (!s || !s.enabled) { el.innerHTML = ''; return; }
-  const head = `<h2>${tr('الربط مع Microsoft 365', 'Microsoft 365 link')}</h2>`;
-  if (!s.configured) { el.innerHTML = `<div class="card">${head}<p class="neg">⛔ ${tr('الربط مفعّل لكن إعدادات الخادم ناقصة', 'The link is switched on but the server settings are incomplete')}: <span dir="ltr">${esc(s.missing.join(', '))}</span></p><p class="muted">${tr('تُضبط في ملف .env على جهاز الخادم ثم يُعاد تشغيل النظام.', 'They are set in the .env file on the server PC, then the system is restarted.')}</p></div>`; return; }
+  const head = `<h2>${tr('حساب Microsoft 365', 'Microsoft 365 account')}</h2>`;
+  if (!s.configured) {
+    el.innerHTML = ME.role === 'admin'
+      ? `<div class="card">${head}<p class="neg">⛔ ${tr('الربط مفعّل لكن إعدادات الخادم ناقصة', 'The link is switched on but the server settings are incomplete')}: <span dir="ltr">${esc((s.missing || []).join(', '))}</span></p><p class="muted">${tr('تُضبط في ملف .env على جهاز الخادم ثم يُعاد تشغيل النظام.', 'They are set in the .env file on the server PC, then the system is restarted.')}</p></div>`
+      : '';                                                                    // users: nothing to do until the administrator finishes the set-up
+    return;
+  }
   const c = s.connection;
   el.innerHTML = `<div class="card">${head}
-    <p class="muted">${tr('يربط حسابك في النظام بحساب Microsoft الخاص بك (تسجيل الدخول للنظام لا يتغير). الصلاحيات المطلوبة: قراءة ملفك الشخصي فقط.', 'Links your account in the system to your Microsoft account (signing in to the system does not change). Permissions asked: read your own profile only.')}</p>
-    ${c ? `<p class="ok">✔ ${tr('مربوط بـ', 'Linked to')} <b dir="ltr">${esc(c.email || '')}</b>${c.display_name ? ' — ' + esc(c.display_name) : ''} <span class="muted">(${esc((c.linked_at || '').slice(0, 16).replace('T', ' '))})</span></p>
-      <button class="btn sec" id="m365chk">${tr('فحص الربط', 'Check the link')}</button> <button class="btn bad" id="m365off">${tr('إزالة الربط من النظام', 'Remove the link from Trigon ERP')}</button>
-      <p class="muted" style="margin-top:8px">${tr('إزالة الربط تحذف الربط ورموز الدخول من نظام تريجون فقط. موافقتك على التطبيق تبقى في Microsoft حتى تزيلها من حساب Microsoft (My Apps) أو يزيلها مسؤول Entra.', 'Removing the link deletes the link and its tokens from Trigon ERP only. Your consent to the app stays in Microsoft until you remove it in your Microsoft account (My Apps) or an Entra administrator removes it.')}</p>`
-      : `<p>${tr('غير مربوط', 'Not linked')}</p><a class="btn" href="/auth/microsoft" style="text-decoration:none;display:inline-block">${tr('ربط حساب Microsoft', 'Connect Microsoft account')}</a>`}</div>`;
+    <p class="muted">${tr('اربط حسابك في النظام بحساب Microsoft الخاص بك لتتمكن من الدخول بزر «تسجيل الدخول باستخدام Microsoft». صلاحياتك في النظام لا تتغير، والدخول بكلمة المرور يبقى متاحاً. الصلاحية المطلوبة من Microsoft: قراءة ملفك الشخصي فقط.', 'Link your account in the system to your own Microsoft account to use "Sign in with Microsoft". Your permissions in the system do not change and the password sign-in stays available. Microsoft permission asked: read your profile only.')}</p>
+    ${c ? `<p class="ok">✔ ${tr('مرتبط', 'Connected')}: <b dir="ltr">${esc(c.email || '')}</b>${c.display_name ? ' — ' + esc(c.display_name) : ''} <span class="muted">(${esc((c.linked_at || '').slice(0, 16).replace('T', ' '))})</span></p>
+      <button class="btn sec" id="m365chk">${tr('فحص الربط', 'Check the link')}</button> <button class="btn bad" id="m365off">${tr('فصل الربط', 'Disconnect')}</button>
+      <p class="muted" style="margin-top:8px">${tr('فصل الربط يحذفه مع رموز الدخول من نظام تريجون فوراً (لن يعمل الدخول باستخدام Microsoft لحسابك بعده). موافقتك على التطبيق تبقى في Microsoft حتى تزيلها من حساب Microsoft (My Apps) أو يزيلها مسؤول Entra.', 'Disconnecting removes the link and its tokens from Trigon ERP at once ("Sign in with Microsoft" stops working for your account). Your consent to the app stays in Microsoft until you remove it in your Microsoft account (My Apps) or an Entra administrator does.')}</p>`
+      : `<p>${tr('غير مرتبط', 'Not connected')}</p><a class="btn" href="/auth/microsoft" style="text-decoration:none;display:inline-block">${tr('ربط حساب Microsoft', 'Connect Microsoft account')}</a>`}</div>`;
   if ($('#m365chk', el)) $('#m365chk', el).onclick = guard(async () => { const r = await api('POST', 'm365/check', {}); toast(`✔ ${r.email || r.display_name || 'OK'}`); });
-  if ($('#m365off', el)) $('#m365off', el).onclick = guard(async () => { if (!confirm(tr('إزالة ربط Microsoft 365 من نظام تريجون؟ (الموافقة في Microsoft لا تُلغى من هنا)', 'Remove the Microsoft 365 link from Trigon ERP? (Consent in Microsoft is not revoked from here)'))) return; await api('POST', 'm365/disconnect', {}); toast(tr('أُزيل الربط من النظام', 'Link removed from Trigon ERP')); m365Card(el); });
+  if ($('#m365off', el)) $('#m365off', el).onclick = guard(async () => { if (!confirm(tr('فصل حساب Microsoft عن حسابك في نظام تريجون؟ (الموافقة في Microsoft لا تُلغى من هنا)', 'Disconnect the Microsoft account from your Trigon ERP account? (Consent in Microsoft is not revoked from here)'))) return; await api('POST', 'm365/disconnect', {}); toast(tr('تم فصل الربط', 'Disconnected')); m365Card(el); });
 };

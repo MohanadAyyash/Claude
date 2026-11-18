@@ -1909,7 +1909,8 @@ Extra protection for an account: even with the password, nobody signs in without
 
 When the administrator has switched on the Microsoft 365 link, the sign-in page also shows **Sign in with Microsoft**.
 
-- It works only for an ERP account that has already been **linked** to that Microsoft account (in this phase: administrators, from **Settings → Microsoft 365 link → Connect**). Nobody gets a new ERP account this way.
+- It works only for an ERP account that has already been **linked** to that Microsoft account. Every user links their own account: sign in with the password, then **Settings → Microsoft 365 account → Connect Microsoft account**. Nobody gets a new ERP account this way, and nobody can link another user's account.
+- **Disconnect** on the same card removes the link at once (the password sign-in keeps working). The administrator sees in **Settings → Users** who is linked ("· Microsoft").
 - Microsoft checks who you are, including its own two-step check (MFA) if your organisation requires it; the ERP then opens **your existing account with its usual role and permissions**.
 - The ERP's own two-step code is not asked when you sign in with Microsoft. Your organisation's Microsoft sign-in rules apply instead.
 - A disabled ERP account, a removed link or a different Microsoft account cannot sign in.

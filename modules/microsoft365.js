@@ -1,6 +1,6 @@
-// Microsoft 365 (Entra ID) — Phase 1: link an ERP administrator to their Microsoft account with OAuth 2.0 Authorization Code + PKCE.
-// The ERP login stays the only way in; this only links an already signed-in administrator. Off unless M365_ENABLED=1, and fails
-// closed when enabled but incomplete. Secrets come from the environment only (never the database, the code, the browser or logs).
+// Microsoft 365 (Entra ID) — Phase 1: an ERP user links THEIR OWN account to their Microsoft account (OAuth 2.0 Authorization Code +
+// PKCE), while signed in with their password. Phase 1C: any active ERP user, any role (it was administrators only); the ERP user is
+// always the one who started the flow, never chosen by the request. Off unless M365_ENABLED=1, and fails closed when enabled but incomplete. Secrets come from the environment only (never the database, the code, the browser or logs).
 // The id_token is verified with `jose` against the tenant's published Entra signing keys (JWKS): RS256 only, issuer, audience,
 // tenant, nonce, exp / nbf / iat. Tokens and the PKCE verifier are encrypted at rest with M365_ENCRYPTION_KEY (AES-256-GCM); the
 // OAuth state is stored as a hash, single use, 10 minutes, and removed once the callback has finished. One Microsoft identity
@@ -9,7 +9,8 @@
 // Phase 1B: sign-in WITH Microsoft (/auth/microsoft/login → /auth/microsoft/login/callback), separate from the link flow above: its own
 // state table (oauth_login_states, no user yet), binding cookie, nonce prefix and redirect URI. Microsoft proves the identity; the ERP
 // finds the already linked, active ERP user by tenant + object ID only (never by e-mail / UPN / name) and starts the same session as
-// the password login. Roles, ACL, disabled state and project access stay the ERP's. No account is ever created here.
+// the password login. Roles, ACL, disabled state and project access stay the ERP's (Microsoft / Entra properties are never read for
+// them). No account is ever created here.
 const crypto = require('node:crypto');
 
 const SCOPES = 'openid profile email offline_access User.Read';
@@ -69,11 +70,12 @@ module.exports = ctx => {
     db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)').run('m365_config_fp', fp);
     if (old !== undefined || c.enabled) audit(sysReq, 'config-change', 'm365', 0, `enabled=${c.enabled} configured=${c.configured}${c.missing.length ? ' missing=' + c.missing.join(',') : ''}`);
   }
-  // links and sign-ins only for active administrators: users deleted, disabled or no longer administrator lose them
+  // links and pending link sign-ins only for active users (any role): users deleted or disabled lose them. A role change keeps the link:
+  // the user simply has the new role's rights (the ERP decides what a user may do, on every request).
   function prune() {
-    const gone = db.prepare("SELECT c.user_id, u.username FROM m365_connections c LEFT JOIN users u ON u.id=c.user_id WHERE u.id IS NULL OR COALESCE(u.disabled,0)=1 OR u.role!='admin'").all();
+    const gone = db.prepare("SELECT c.user_id, u.username FROM m365_connections c LEFT JOIN users u ON u.id=c.user_id WHERE u.id IS NULL OR COALESCE(u.disabled,0)=1").all();
     for (const g of gone) { db.prepare('DELETE FROM m365_connections WHERE user_id=?').run(g.user_id); auditAs('system', 'disconnect', g.user_id, `link removed from Trigon ERP: ${g.username || 'user'} is no longer an active administrator`); }
-    db.prepare("DELETE FROM oauth_states WHERE expires_at < ? OR used_at IS NOT NULL OR user_id NOT IN (SELECT id FROM users WHERE COALESCE(disabled,0)=0 AND role='admin')").run(now());
+    db.prepare("DELETE FROM oauth_states WHERE expires_at < ? OR used_at IS NOT NULL OR user_id NOT IN (SELECT id FROM users WHERE COALESCE(disabled,0)=0)").run(now());
     db.prepare('DELETE FROM oauth_login_states WHERE expires_at < ? OR used_at IS NOT NULL').run(now());
   }
   prune();
@@ -179,7 +181,7 @@ module.exports = ctx => {
   const BIND = 'm365_flow';
   const bindCookie = (req, c, v, age) => `${BIND}=${v}; HttpOnly; SameSite=Lax; Path=/auth/microsoft; Max-Age=${age}${secureCookie(req, c) ? '; Secure' : ''}`;   // Lax: it must come back on Microsoft's top-level redirect
   const readBind = req => (/(?:^|;\s*)m365_flow=([A-Za-z0-9_-]{43})(?:;|$)/.exec(req.headers.cookie || '') || [])[1] || '';
-  const isActiveAdmin = id => !!db.prepare("SELECT 1 FROM users WHERE id=? AND COALESCE(disabled,0)=0 AND role='admin'").get(id);
+  const isActiveUser = id => !!db.prepare('SELECT 1 FROM users WHERE id=? AND COALESCE(disabled,0)=0').get(id);
 
   // ---------- Phase 1B: sign in WITH Microsoft (no ERP session needed; its own state, cookie, nonce and redirect URI) ----------
   const LBIND = 'm365_login';
@@ -237,7 +239,6 @@ module.exports = ctx => {
       const user = db.prepare('SELECT id, username, role, COALESCE(disabled,0) disabled FROM users WHERE id=?').get(link.user_id);
       if (!user) return refuse('', link.user_id, `ERP user of Microsoft account ${oid} no longer exists`, 'This Microsoft account is not linked to a Trigon ERP user. Ask the administrator.');
       if (user.disabled) return refuse(user.username, user.id, `ERP user is disabled (Microsoft account ${oid})`, 'This Trigon ERP account is disabled.');
-      if (user.role !== 'admin') return refuse(user.username, user.id, `only administrators can have a Microsoft link in this phase (Microsoft account ${oid})`, 'This Microsoft account is not linked to a Trigon ERP user. Ask the administrator.');
       // the same session as the password login (new random token, same cookie and lifetime); a session this browser presented is ended (no fixation)
       const old = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
       if (old) db.prepare('DELETE FROM sessions WHERE token=?').run(old[1]);
@@ -262,8 +263,8 @@ module.exports = ctx => {
 
     if (url.pathname === '/auth/microsoft') {
       const me = ctx.sessionUser(req);
-      if (!me) return html(res, 401, 'Sign in first', 'Sign in to Trigon ERP as an administrator, then use Connect in Settings.'), true;
-      if (me.role !== 'admin') return html(res, 403, 'Administrators only', 'Only an administrator can link Microsoft 365 in this phase.'), true;
+      if (!me) return html(res, 401, 'Sign in first', 'Sign in to Trigon ERP with your username and password, then use Connect in Settings.'), true;
+      // the account linked is always the signed-in user's own (me.id from the session; nothing in the request can name another user)
       const state = b64u(crypto.randomBytes(32)), verifier = b64u(crypto.randomBytes(48)), binding = b64u(crypto.randomBytes(32));
       const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
       db.prepare('INSERT INTO oauth_states(user_id,provider,state_hash,verifier_encrypted,expires_at,created_at) VALUES(?,?,?,?,?,?)')
@@ -287,7 +288,7 @@ module.exports = ctx => {
     try {
       if (Date.parse(row.expires_at) < Date.now()) return reject('This sign-in request has expired (10 minutes). Start again from Settings.');
       const user = db.prepare('SELECT id, username, role FROM users WHERE id=? AND COALESCE(disabled,0)=0').get(row.user_id);
-      if (!user || user.role !== 'admin') return reject('Only an active administrator can link Microsoft 365.');
+      if (!user) return reject('Only an active Trigon ERP user can link a Microsoft account.');
       if (url.searchParams.get('error')) { auditAs(user.username, 'connect-failed', user.id, `Microsoft returned ${String(url.searchParams.get('error')).replace(/[^\w.-]/g, '').slice(0, 60)}`); return reject('Microsoft did not allow the link. Start again from Settings.'); }
       if (!code || code.length > 4000) return reject('Microsoft did not send an authorisation code.');
       let verifier; try { verifier = open(c.key, row.verifier_encrypted); } catch { return reject('This sign-in request could not be read. Start again from Settings.'); }
@@ -299,7 +300,7 @@ module.exports = ctx => {
         const oid = String(claims.oid).toLowerCase(), gid = String(me && me.id || '').toLowerCase();
         if (!GUID.test(gid)) throw fail(400, 'Microsoft Graph did not identify the account');
         if (gid !== oid) throw fail(400, 'The Microsoft account changed during sign-in');
-        if (!isActiveAdmin(user.id)) throw fail(400, 'Only an active administrator can link Microsoft 365.');
+        if (!isActiveUser(user.id)) throw fail(400, 'Only an active Trigon ERP user can link a Microsoft account.');
         const taken = db.prepare('SELECT user_id FROM m365_connections WHERE tenant_id=? AND microsoft_user_id=? AND user_id!=?').get(c.tenant, oid, user.id);
         if (taken) throw fail(409, 'This Microsoft account is already linked to another user of the system.');
         const email = me.mail || me.userPrincipalName || claims.preferred_username || null, ts = now(), exp = new Date(Date.now() + (+t.expires_in || 3600) * 1000).toISOString();
@@ -322,10 +323,13 @@ module.exports = ctx => {
   return {
     async handle(req, res, url, [a, b], me) {
       if (a !== 'm365') return false;
-      if (me.role !== 'admin') return send(res, 403, { error: 'your role does not allow this action' }), true;    // also enforced in lib/acl.js
+      // every signed-in user, any role (lib/acl.js lets m365 through as self-service): each call acts on the caller's OWN link (me.id) only
       const c = cfg(); noteConfig(c); prune();
       if (b === 'status' && req.method === 'GET') {
         const link = db.prepare('SELECT email, display_name, tenant_id, expires_at, updated_at FROM m365_connections WHERE user_id=?').get(me.id);
+        if (me.role !== 'admin')                                              // users: their own link state only (no tenant / object IDs, no server settings)
+          return send(res, 200, { available: !STANDALONE, enabled: c.enabled && !STANDALONE, configured: c.enabled && c.configured,
+            connection: link ? { email: link.email, display_name: link.display_name, linked_at: link.updated_at } : null }), true;
         return send(res, 200, { available: !STANDALONE, enabled: c.enabled && !STANDALONE, configured: c.enabled && c.configured, missing: c.enabled || STANDALONE ? c.missing : [],
           tenant_id: c.tenant || null, client_id: c.clientId || null, redirect_uri: c.redirect || null, sharepoint_site_id: c.siteId || null, sharepoint_drive_id: c.driveId || null,
           client_secret_set: !!c.secret, encryption_key_set: !!c.key, scopes: SCOPES.split(' '),
