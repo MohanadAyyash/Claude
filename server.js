@@ -885,6 +885,9 @@ async function api(req, res, url) {
         // a bill paid (partly) by a partner from own money keeps the figures that money was recorded against
         if (db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='partner'").get(id) && ['amount', 'vat_amount', 'date', 'party_id'].some(diff))
           bad('This bill was paid by a partner — its amount, VAT, date and supplier cannot be changed here; delete the partner payment from the Partners page first');
+        // the bill of an approved employee expense claim keeps the claim's figures
+        if (db.prepare('SELECT 1 FROM payments WHERE bill_id=? AND employee_id IS NOT NULL').get(id) && ['amount', 'vat_amount', 'date', 'party_id', 'project_id'].some(diff))
+          bad('This bill comes from an approved expense claim — its amount, VAT, date, supplier and project cannot be changed here; take the approval back from Expense claims first');
         const total = round(('amount' in row ? +row.amount || 0 : cur.amount) + ('vat_amount' in row ? +row.vat_amount || 0 : cur.vat_amount));
         if (total < round(cur.paid) - 0.01) bad(`This bill cannot go below what was already paid (${money(cur.paid)})`);
       }
@@ -903,6 +906,7 @@ async function api(req, res, url) {
     }
     if (method === 'DELETE' && id) {
       if (a === 'invoices') return send(res, 409, { error: 'Tax invoices cannot be deleted (sequential numbering). Void it or issue a credit note.' });
+      if (a === 'employees' && db.prepare("SELECT (SELECT COUNT(*) FROM expense_claims WHERE employee_id=?) + (SELECT COUNT(*) FROM payments WHERE employee_id=?) n").get(id, id).n) return send(res, 409, { error: 'This employee has expense claims or payments — mark the employee as left instead' });
       if (a === 'employees' && db.prepare('SELECT COUNT(*) n FROM payroll WHERE employee_id=?').get(id).n) return send(res, 409, { error: 'employee has payroll records — mark as left instead' });
       if (a === 'payments' && reconciled(id)) return send(res, 409, { error: 'This payment is matched to a bank statement line — unmatch it first' });
       if (a === 'payments' && db.prepare("SELECT 1 FROM payments WHERE id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });

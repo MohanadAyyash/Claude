@@ -335,7 +335,11 @@ module.exports = ctx => {
           db.prepare("UPDATE employees SET status='left', end_date=? WHERE id=?").run(ob.last_day, e.id);
           if (ctx.hooks.onOffboard) ctx.hooks.onOffboard(e, ob.last_day, settlement(e, ob).gratuity);   // settle the end-of-service provision
           db.prepare("UPDATE hr_offboarding SET status='completed', completed=? WHERE employee_id=?").run(today(), e.id);
-          for (const u of db.prepare('SELECT id FROM users WHERE employee_id=?').all(e.id)) { db.prepare('UPDATE users SET disabled=1 WHERE id=?').run(u.id); db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id); }
+          // the employee-portal account is closed; a staff account (administrator, manager…) linked to this employee record is only unlinked
+          for (const u of db.prepare('SELECT id, role FROM users WHERE employee_id=?').all(e.id)) {
+            if (u.role === 'employee') { db.prepare('UPDATE users SET disabled=1 WHERE id=?').run(u.id); db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id); }
+            else db.prepare('UPDATE users SET employee_id=NULL WHERE id=?').run(u.id);
+          }
           audit(req, 'complete', 'offboarding', e.id, ob.last_day);
           return send(res, 200, { ok: 1 }), true;
         }

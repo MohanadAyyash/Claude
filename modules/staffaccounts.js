@@ -23,6 +23,8 @@ module.exports = ctx => {
     decided_by TEXT, decided_by_id INTEGER, decided_at TEXT, decision_note TEXT, bill_id INTEGER, payment_id INTEGER)`);
   if (!db.prepare('PRAGMA table_info(payments)').all().some(c => c.name === 'employee_id')) db.exec('ALTER TABLE payments ADD COLUMN employee_id INTEGER');
   db.prepare('INSERT OR IGNORE INTO accounts(code,name,name_ar,type,system) VALUES(?,?,?,?,1)').run('2260', 'Employee expense claims payable', 'مطالبات مصاريف الموظفين المستحقة', 'liability');
+  const taken2260 = () => db.prepare("SELECT name FROM accounts WHERE code='2260' AND COALESCE(system,0)=0").get();   // the company's own account with this code is never taken over
+  const need2260 = () => { const t = taken2260(); if (t) bad(`Account 2260 is already used by your own account "${t.name}" — expense claims paid back to employees cannot be booked until that account is given another code (ask your administrator / support)`); };
 
   const isDate = d => /^\d{4}-\d\d-\d\d$/.test(d || '');
   const now = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().replace('T', ' ').slice(0, 16); };
@@ -37,13 +39,19 @@ module.exports = ctx => {
   // ---------------- approval rule ----------------
   const accLimit = () => { const v = +getSettings().staff_approval_accountant_limit; return v > 0 ? round(v) : 0; };
   // why `me` may not approve an amount for an employee (null = may approve)
-  function approvalBlock(me, amount, employeeId, requestedById) {
+  // dayTotal: everything of this employee of the same day (claims of the same date, requests made the same day) — the accountant's
+  // limit applies to that total, so an amount cannot be split to stay under it
+  function approvalBlock(me, amount, employeeId, requestedById, dayTotal) {
     if (me.employee_id && +me.employee_id === +employeeId) return 'Nobody can approve a request of their own';
-    if (me.role === 'admin' || me.role === 'manager') return null;
-    if (me.role === 'accountant') {
-      if (requestedById && +requestedById === +me.id) return 'The accountant cannot approve a claim he entered — the manager or the administrator approves it';
-      const l = accLimit(); return l && amount <= l + 0.005 ? null : l ? `Above the accountant's approval limit (${money(l)}) — the manager or the administrator approves it` : 'The accountant\'s approval limit is not set (Settings) — the manager or the administrator approves it'; }
-    return 'Your role cannot approve';
+    if (me.role === 'admin') return null;
+    if (!['manager', 'accountant'].includes(me.role)) return 'Your role cannot approve';
+    if (!me.employee_id) return 'Link your account to your employee record (Settings → Users → Employee) before approving — so a request of your own can never be approved by you';
+    if (me.role === 'manager') return null;
+    if (requestedById && +requestedById === +me.id) return 'The accountant cannot approve a claim he entered — the manager or the administrator approves it';
+    const l = accLimit(), seen = round(Math.max(amount, +dayTotal || 0));
+    if (!l) return 'The accountant\'s approval limit is not set (Settings) — the manager or the administrator approves it';
+    if (seen > l + 0.005) return seen > amount + 0.005 ? `With this employee's other requests of the same day (${money(seen)}) it is above the accountant's approval limit (${money(l)}) — the manager or the administrator approves it` : `Above the accountant's approval limit (${money(l)}) — the manager or the administrator approves it`;
+    return null;
   }
   ctx.staffApproval = { block: approvalBlock, accountantLimit: accLimit };
   const approverIds = amount => db.prepare("SELECT id, role FROM users WHERE COALESCE(disabled,0)=0 AND role IN ('admin','manager','accountant')").all()
@@ -52,6 +60,7 @@ module.exports = ctx => {
 
   // ---------------- claims ----------------
   const total = c => round((+c.amount || 0) + (+c.vat_amount || 0));
+  const claimDayTotal = c => round(db.prepare("SELECT COALESCE(SUM(amount+vat_amount),0) s FROM expense_claims WHERE employee_id=? AND date=? AND status!='rejected'").get(c.employee_id, c.date).s);
   const claimView = c => {
     const e = emp(c.employee_id), pr = c.project_id ? db.prepare('SELECT name, code FROM projects WHERE id=?').get(c.project_id) : null;
     const receipts = db.prepare("SELECT id, name, mime, size, created FROM documents WHERE entity='expense_claim' AND entity_id=? ORDER BY id").all(c.id);
@@ -70,6 +79,8 @@ module.exports = ctx => {
     return { employee_id: +employeeId, date, description: String(x.description).trim().slice(0, 300), amount, vat_amount: vat, category, project_id: +x.project_id || null, party_id: +x.party_id || null, reference: String(x.reference || '').slice(0, 100) };
   }
   function createClaim(x, employeeId, me) {
+    const sc = ctx.siteScope ? ctx.siteScope(me) : null;
+    if (sc && x.project_id && !sc.projects.has(+x.project_id)) refuse('This project is not assigned to you — leave the project empty or ask for the project to be assigned');
     const c = checkClaim(x, employeeId);
     const r = db.prepare('INSERT INTO expense_claims(employee_id,date,description,amount,vat_amount,category,project_id,party_id,reference,status,requested_by,requested_by_id,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(c.employee_id, c.date, c.description, c.amount, c.vat_amount, c.category, c.project_id, c.party_id, c.reference, 'pending', me.username, me.id, now());
@@ -89,11 +100,12 @@ module.exports = ctx => {
   function decide(c, me, x, req) {
     if (c.status !== 'pending') bad('This claim was already decided');
     if (!['approved', 'rejected'].includes(x.status)) bad('Decision must be approved or rejected');
-    const why = approvalBlock(me, total(c), c.employee_id, c.requested_by_id); if (why) refuse(why);
+    const why = approvalBlock(me, total(c), c.employee_id, c.requested_by_id, claimDayTotal(c)); if (why) refuse(why);
     if (x.status === 'rejected') {
       if (!String(x.note || '').trim()) bad('Write the reason for the rejection');
       db.prepare("UPDATE expense_claims SET status='rejected', decided_by=?, decided_by_id=?, decided_at=?, decision_note=? WHERE id=?").run(me.username, me.id, now(), String(x.note).trim(), c.id);
     } else {
+      if (c.paid_from !== 'custody') need2260();
       guardDate(c.date, 'an expense');
       const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)').run(c.date, c.party_id, c.project_id, c.category, `${c.description} (claim of ${emp(c.employee_id).name})`, c.amount, c.vat_amount, c.reference || `CLAIM-${c.id}`);
       const billId = Number(bill.lastInsertRowid);
@@ -154,6 +166,7 @@ module.exports = ctx => {
   // ---------------- reconciliation with the general ledger ----------------
   ctx.staffChecks = () => {
     if (!ctx.financials) return [];
+    if (taken2260()) return [{ status: 'fail', detail: "account 2260 is already used by an account of the company's own, so expense claims cannot use it" }];
     const tb = ctx.financials('0000-01-01', '9999-12-31').trial_balance, bal = code => { const r = tb.find(x => x.code === code); return r ? round(r.credit - r.debit) : 0; };
     const sub = Object.fromEntries(Object.keys(sections()).map(k => [k, 0]));
     for (const e of db.prepare('SELECT id FROM employees').all()) { const b = balances(e.id); for (const k of Object.keys(sub)) sub[k] = round(sub[k] + (b[k] || 0)); }
@@ -216,7 +229,7 @@ module.exports = ctx => {
       if (a === 'expense_claims') {
         if (m === 'GET' && !b) {
           const st = q('status'), rows = listClaims(st ? 'WHERE status=?' : '', st ? [st] : []);
-          return send(res, 200, { rows: rows.map(r => ({ ...r, can_decide: r.status === 'pending' && !approvalBlock(me, r.total, r.employee_id, r.requested_by_id), block: r.status === 'pending' ? approvalBlock(me, r.total, r.employee_id, r.requested_by_id) : null })), accountant_limit: accLimit() }), true;
+          return send(res, 200, { rows: rows.map(r => { const why = r.status === 'pending' ? approvalBlock(me, r.total, r.employee_id, r.requested_by_id, claimDayTotal(r)) : null; return { ...r, can_decide: r.status === 'pending' && !why, block: why }; }), accountant_limit: accLimit() }), true;
         }
         if (m === 'POST' && !b) { const x = await readBody(req); const id = createClaim(x, x.employee_id, me); audit(req, 'create', 'expense_claims', id, 'on behalf'); return send(res, 200, { id }), true; }
         if (m === 'POST' && b === 'reimburse') {                       // pay the employee what the approved claims owe him
@@ -224,7 +237,11 @@ module.exports = ctx => {
           const x = await readBody(req), e = emp(x.employee_id); if (!e) bad('Select the employee');
           const date = x.date || today(); if (!isDate(date)) bad('Enter a valid date'); guardDate(date, 'a reimbursement');
           const amount = round(+x.amount); if (!(amount > 0)) bad('Enter the amount');
+          need2260();
+          const payLim = +getSettings().pay_approval_limit > 0 ? round(+getSettings().pay_approval_limit) : 0;   // the supplier-payment approval limit (Spend approvals) applies to staff money too
+          if (payLim && amount > payLim + 0.005 && me.role !== 'admin') refuse(`Above the payment approval limit (${money(payLim)}) — the administrator records this reimbursement`);
           const owed = claimsOwed(e.id); if (amount > owed + 0.005) bad(`Approved claims not yet reimbursed: ${owed}`);
+          const owedThen = balances(e.id, date).claims; if (amount > owedThen + 0.005) bad(`Approved claims not yet reimbursed on ${date}: ${owedThen}`);
           const method = x.method === 'cash' ? 'cash' : 'bank', bank = method === 'bank' ? (+x.bank_account_id || null) : null;
           if (bank && !db.prepare('SELECT 1 FROM bank_accounts WHERE id=?').get(bank)) bad('Unknown bank account');
           const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,employee_id,bank_account_id,notes) VALUES('out',?,?,?,?,?,?,'claim-reimbursement')").run(date, amount, method, x.reference || `CLAIMS-${e.id}`, e.id, bank);
