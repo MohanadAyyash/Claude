@@ -84,10 +84,12 @@ ctx.pdf = async html => { pdfCalls++; if (pdfBroken) throw new Error('no browser
     try {
       ok(await call('POST', 'setup', { username: 'admin', password: 'secret12', company: 'Test Co' }));
       const admin = await login('admin');
-      for (const [u, role] of [['proc', 'procurement'], ['acc', 'accountant']]) ok(await call('POST', 'users', { username: u, password: 'secret12', role }, admin));
+      for (const [u, role] of [['proc', 'procurement'], ['acc', 'accountant'], ['site', 'site_engineer'], ['viewer', 'viewer']]) ok(await call('POST', 'users', { username: u, password: 'secret12', role }, admin));
       const cl = ok(await call('POST', 'parties', { type: 'client', name: 'Client One' }, admin)).id;
       const sup = ok(await call('POST', 'parties', { type: 'supplier', name: 'Supplier One' }, admin)).id;
       const P1 = ok(await call('POST', 'projects', { name: 'Villa', code: 'P-101', client_id: cl, status: 'active' }, admin)).id;
+      const P2 = ok(await call('POST', 'projects', { name: 'Tower', code: 'P-202', client_id: cl, status: 'active' }, admin)).id;
+      ok(await call('PUT', 'users/' + q("SELECT id FROM users WHERE username='site'")[0].id, { projects: [P1] }, admin));   // the site engineer works on P1 only
       ok(await call('PUT', 'settings', { po_approval_limit: 10000, trn: '100123456700003' }, admin));
       const mkPo = async (status, rate = 100) => ok(await call('POST', 'purchase_orders', { party_id: sup, project_id: P1, status, items: [{ description: 'Rebar', unit: 't', qty: 1, rate }], vat_pct: 5 }, admin)).id;
       const poSent = await mkPo('sent'), poDraft = await mkPo('draft'), poCancel = await mkPo('cancelled');
@@ -258,6 +260,57 @@ ctx.pdf = async html => { pdfCalls++; if (pdfBroken) throw new Error('no browser
       assert.equal(q("SELECT COUNT(*) n FROM m365_documents WHERE entity='documents' AND entity_id=?", aOff)[0].n, 0); assert.equal(row('purchase_orders', poY).status, 'uploaded');
       delete process.env.M365_SHAREPOINT_ATTACHMENTS; await tick(); assert.equal(where(aOff), 'Drawings');
       console.log('✔ attachments go to the folder of their type (EN / AR words, images → Site Photos, supplier invoices, clients / suppliers); same names kept side by side; > 4 MB via upload session in 320 KiB chunks without the token; foreign upload address refused; re-typed → new folder; deleted → leaves the queue; can be switched off');
+
+      // ---- the structured document type (fixed bilingual list) decides the folder; words in the category are only a fallback ----
+      const typed = async (entity, id, name, doc_type, category = '', mime = 'application/pdf', ck = admin) => {
+        const r = await call('POST', 'documents', { entity, entity_id: id, name, category, doc_type, data: dataUri(mime, mime === 'image/png' ? png : Buffer.from('%PDF ' + name)) }, ck); return ok(r, name).id; };
+      const folderOf = id => { const d = q("SELECT doc_type, file_name, status FROM m365_documents WHERE entity='documents' AND entity_id=? ORDER BY id DESC", id)[0]; assert.equal(d && d.status, 'uploaded', 'attachment ' + id); return d.doc_type; };
+      // each type → its folder, inside the attachment's own project
+      const KINDS = { drawing: 'Drawings', delivery_note: 'Delivery Notes', supplier_invoice: 'Supplier Invoices', contract: 'Contracts', rfi: 'RFIs', submittal: 'Submittals', hse: 'HSE', site_photo: 'Site Photos', other: 'Documents' };
+      const kindIds = {}; for (const k of Object.keys(KINDS)) kindIds[k] = await typed('project', P1, `typed-${k}.pdf`, k);
+      await tick();
+      for (const [k, folder] of Object.entries(KINDS)) {
+        assert.equal(q('SELECT doc_type FROM documents WHERE id=?', kindIds[k])[0].doc_type, k, 'stored as chosen');
+        assert.equal(folderOf(kindIds[k]), folder, k); assert.ok(paths().includes(`${V}/${folder}/typed-${k}.pdf`), `${k} → ${V}/${folder}/`);
+      }
+      // the chosen type always wins over the words of the category and over the file kind
+      const o1 = await typed('project', P1, 'scan-01.pdf', 'drawing', 'فاتورة مورد / supplier invoice'), o2 = await typed('project', P1, 'pic.png', 'contract', '', 'image/png');
+      const o3 = await typed('party', sup, 'po-copy.pdf', 'delivery_note', 'Invoice'), o4 = await typed('purchase_order', poSent, 'x.pdf', 'other', 'Delivery note');
+      await tick();
+      assert.deepEqual([o1, o2, o3, o4].map(folderOf), ['Drawings', 'Contracts', 'Delivery Notes', 'Documents']);
+      assert.ok(paths().includes('Trigon Civil Projects/Suppliers/Supplier One/Delivery Notes/po-copy.pdf'), 'supplier attachment: supplier folder, chosen type');
+      // an invalid / unknown type is stored as Other (Documents); a crafted value cannot name a folder
+      const bad = {};
+      for (const v of ['Payroll', 'Drawings', '../../HR/Salaries', 'drawing/../../..', ' DRAWING ', 123, '<script>']) bad[JSON.stringify(v)] = await typed('project', P1, `bad-${Object.keys(bad).length}.pdf`, v);
+      await tick();
+      for (const [v, id] of Object.entries(bad)) {
+        const want = v === '" DRAWING "' ? ['drawing', 'Drawings'] : ['other', 'Documents'];
+        assert.equal(q('SELECT doc_type FROM documents WHERE id=?', id)[0].doc_type, want[0], `stored type for ${v}`); assert.equal(folderOf(id), want[1], `folder for ${v}`);
+      }
+      exec("UPDATE documents SET doc_type='legacy-weird' WHERE id=?", kindIds.other); const lw = await typed('project', P1, 'lw.pdf', '', 'Drawing'); exec("UPDATE documents SET doc_type='../../x' WHERE id=?", lw);   // (its words alone would say Drawings)
+      await tick(); assert.equal(folderOf(lw), 'Documents', 'an unknown value already in the database also maps to Other');
+      // attachments without a structured type (all older ones) still go by the words of the category / the file kind
+      assert.equal(q('SELECT doc_type FROM documents WHERE id=?', a3)[0].doc_type, null); assert.equal(folderOf(a3), 'Delivery Notes'); assert.equal(folderOf(a2), 'Site Photos'); assert.equal(folderOf(a4), 'Supplier Invoices');
+      const nt = await typed('project', P1, 'nt.pdf', '', 'مخطط معماري'); await tick(); assert.equal(q('SELECT doc_type FROM documents WHERE id=?', nt)[0].doc_type, null); assert.equal(folderOf(nt), 'Drawings');
+      // choosing a type later moves the next copy to that folder (the earlier copy is left, never deleted)
+      ok(await call('PUT', 'documents/' + nt, { doc_type: 'hse' }, admin)); await tick(); assert.equal(folderOf(nt), 'HSE'); assert.ok(paths().includes(`${V}/HSE/nt.pdf`));
+      // no way out of the attachment's own place: every copy is under the root, in its project / party folder, in a fixed type folder
+      const FOLDERS = ['Drawings', 'Delivery Notes', 'Supplier Invoices', 'Contracts', 'RFIs', 'Submittals', 'HSE', 'Site Photos', 'Documents', 'Supplier Documents', 'Purchase Orders', 'Invoices', 'Payment Certificates', 'Payment Applications', 'Quotations'];
+      for (const p of mock.puts.map(x => x.filePath)) {
+        assert.equal(p[0], 'Trigon Civil Projects'); assert.ok(p.every(s => s && s !== '..' && s !== '.' && !/[\\/]/.test(s)), 'no traversal: ' + p.join('/'));
+        assert.ok(FOLDERS.includes(p.at(-2)), 'type folder from the fixed list: ' + p.join('/'));
+      }
+      assert.ok(!paths().some(p => /HR|Salaries|script/.test(p)), 'no folder named by a request');
+      // ERP rights and project scope are unchanged: the type does not widen them
+      const siteCk = await login('site'), viewerCk = await login('viewer');
+      const p2doc = await typed('project', P2, 'tower.pdf', 'drawing'); await tick(); assert.ok(paths().includes('Trigon Civil Projects/P-202 - Tower/Drawings/tower.pdf'), 'P2 attachment in P2');
+      assert.equal((await call('GET', `m365/attachments/${p2doc}`, undefined, siteCk)).s, 404, 'a site engineer of P1 cannot see a P2 attachment\'s copy');
+      assert.equal((await call('POST', `m365/attachments/${p2doc}/upload`, {}, siteCk)).s, 404, '…nor upload it');
+      const sDoc = await typed('project', P1, 'site-photo.png', 'site_photo', '', 'image/png', siteCk); await tick(); assert.ok(paths().includes(`${V}/Site Photos/site-photo.png`), 'the site engineer\'s own upload lands in P1');
+      assert.equal((await call('PUT', 'documents/' + sDoc, { doc_type: 'contract' }, viewerCk)).s, 403, 'a viewer cannot change the type');
+      assert.equal((await call('POST', 'documents', { entity: 'project', entity_id: P1, name: 'v.pdf', doc_type: 'drawing', data: dataUri('application/pdf', Buffer.from('%PDF v')) }, viewerCk)).s, 403, 'a viewer cannot upload');
+      assert.equal(q('SELECT doc_type FROM documents WHERE id=?', sDoc)[0].doc_type, 'site_photo');
+      console.log('✔ structured type: each of the 9 types → its folder; the chosen type beats category words and file kind; unknown / crafted values → Other (Documents); untyped attachments still inferred; re-typing moves the next copy; no path escape; ACL and project scope unchanged');
 
       // ---- M365_SHAREPOINT_AUTO_FROM: older records are left out (the migration / manual button can still send them) ----
       exec("UPDATE quotes SET date='2020-01-01' WHERE id=?", qDraft); exec("UPDATE quotes SET status='sent' WHERE id=?", qDraft);

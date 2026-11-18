@@ -29,6 +29,11 @@ const TYPE_WORDS = [
   ['RFQs', /\brfqs?\b|request for quot|طلب تسعير/i], ['Quotations', /quotation|\bquotes?\b|عرض سعر|عرض أسعار|عروض أسعار/i], ['Purchase Orders', /purchase order|\bl?pos?\b|أمر شراء|امر شراء|أوامر شراء/i],
   ['Invoices', /invoice|فاتورة|فواتير/i], ['Contracts', /contract|agreement|عقد|عقود|اتفاقية/i], ['Site Photos', /photo|picture|صور|صورة/i],
 ];
+// the structured type chosen on upload (documents.doc_type) → its folder. It always wins over the words of the category;
+// a value not on the list (old data, a crafted request) is 'Other' → Documents. Only these fixed folder names can come out of it.
+const STRUCTURED = { drawing: 'Drawings', delivery_note: 'Delivery Notes', supplier_invoice: 'Supplier Invoices', contract: 'Contracts', rfi: 'RFIs',
+  submittal: 'Submittals', hse: 'HSE', site_photo: 'Site Photos', other: 'Documents' };
+const structuredFolder = t => (t == null || String(t).trim() === '') ? null : (Object.prototype.hasOwnProperty.call(STRUCTURED, t) ? STRUCTURED[t] : STRUCTURED.other);
 const docTypeOf = (category, mime) => {
   const c = String(category || '').trim(), exact = DOC_TYPES.find(t => t.toLowerCase() === c.toLowerCase());
   if (exact) return exact;
@@ -225,7 +230,9 @@ module.exports = ctx => {
   const partyFolder = id => { const p = db.prepare('SELECT name, type FROM parties WHERE id=?').get(id); return [p && p.type === 'client' ? 'Clients' : 'Suppliers', (p && p.name) || `Party ${id}`]; };
   const supplierSide = t => t === 'Invoices' ? 'Supplier Invoices' : t;      // an invoice attached to a supplier / bill / PO / subcontract is the supplier's
   const projOfRow = (table, id) => db.prepare(`SELECT project_id FROM ${table} WHERE id=?`).get(id)?.project_id;
-  const ATT = {
+  // the folder of an attachment: [place (project / supplier), document type]. The place always comes from the record the attachment
+  // belongs to in the ERP (never from the type); the type is the structured one when chosen, else inferred (older attachments)
+  const ATT_BY_WORDS = {
     party: r => [...partyFolder(r.entity_id), supplierSide(docTypeOf(r.category, r.mime)) || 'Supplier Documents'],
     project: r => [projectFolder(r.entity_id), docTypeOf(r.category, r.mime) || 'Documents'],
     purchase_order: r => [projectFolder(projOfRow('purchase_orders', r.entity_id)), supplierSide(docTypeOf(r.category, r.mime)) || 'Purchase Orders'],
@@ -234,8 +241,9 @@ module.exports = ctx => {
     invoice: r => [projectFolder(projOfRow('invoices', r.entity_id)), docTypeOf(r.category, r.mime) || 'Invoices'],
     client_pc: r => [projectFolder(projOfRow('client_pcs', r.entity_id)), docTypeOf(r.category, r.mime) || 'Payment Certificates'],
   };
+  const ATT = Object.fromEntries(Object.entries(ATT_BY_WORDS).map(([e, fn]) => [e, r => { const parts = fn(r), s = structuredFolder(r.doc_type); return s ? [...parts.slice(0, -1), s] : parts; }]));
   const attTarget = r => { const parts = ATT[r.entity](r); return { folders: parts, docType: parts[parts.length - 1] }; };   // the last folder is the document type
-  const attFp = r => fpOf([r.entity, r.entity_id, r.category, r.name, r.size, r.mime]);
+  const attFp = r => fpOf([r.entity, r.entity_id, r.category, r.name, r.size, r.mime, ...(r.doc_type ? [r.doc_type] : [])]);   // (unchanged for attachments without a structured type)
   function attachment(me, docId, write) {
     const r = /^\d+$/.test(String(docId)) ? db.prepare('SELECT * FROM documents WHERE id=?').get(+docId) : null;
     if (!r || !ATT[r.entity]) throw fail(404, 'not found');
@@ -302,7 +310,7 @@ module.exports = ctx => {
     }
     if (a.attachments) {
       const ents = Object.keys(ATT);
-      for (const r of db.prepare(`SELECT id, entity, entity_id, category, name, mime, size, created FROM documents WHERE entity IN (${ents.map(() => '?').join(',')})`).all(...ents)) {
+      for (const r of db.prepare(`SELECT id, entity, entity_id, category, doc_type, name, mime, size, created FROM documents WHERE entity IN (${ents.map(() => '?').join(',')})`).all(...ents)) {
         if (a.from && String(r.created || '9999') < a.from) continue;
         if (!r.size || r.size > MAX_SESSION) continue;
         want('documents', r.id, attTarget(r).docType, attFp(r), true);
@@ -317,7 +325,7 @@ module.exports = ctx => {
     let fp = null;
     try {
       if (d.entity === 'documents') {
-        const r = a.attachments ? db.prepare('SELECT id, entity, entity_id, category, name, mime, size FROM documents WHERE id=?').get(d.entity_id) : null;
+        const r = a.attachments ? db.prepare('SELECT id, entity, entity_id, category, doc_type, name, mime, size FROM documents WHERE id=?').get(d.entity_id) : null;
         if (!r || !ATT[r.entity] || attTarget(r).docType !== d.doc_type) return drop(), 'dropped';
         fp = attFp(r); await attachmentJob(c, r, SYS.username);
       } else {
