@@ -148,7 +148,7 @@ function enrich() {
   return { parties, projects, invoices, bills, quotes, payments };
 }
 // cash that has really moved: pending/bounced cheques excluded
-const inCash = p => p.method !== 'offset' && (p.method !== 'cheque' || p.cheque_status === 'cleared' || !p.cheque_status);
+const inCash = p => p.method !== 'offset' && p.method !== 'partner' && (p.method !== 'cheque' || p.cheque_status === 'cleared' || !p.cheque_status);
 const payrollCost = (from, to) => db.prepare("SELECT * FROM payroll WHERE status='final' AND month>=? AND month<=?").all((from || '0000-00').slice(0, 7), (to || '9999-99').slice(0, 7));
 
 function projectRows() {
@@ -421,7 +421,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode'), require('./modules/m365business')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/partners'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode'), require('./modules/m365business')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -793,6 +793,8 @@ async function api(req, res, url) {
     // receipts and payments: a real amount against a live document, never more than what is open; reconciled ones are locked
     const checkPayment = (row, cur) => {
       const p = { ...(cur || {}), ...row };
+      if (cur && cur.method === 'partner') bad('This expense was paid by a partner — change or delete it from the Partners page');
+      if (p.method === 'partner') bad('Expenses paid by a partner are recorded from the Partners page');
       if (!['in', 'out'].includes(p.kind)) bad('Payment kind must be in or out');
       if (!(Number.isFinite(+p.amount) && +p.amount > 0)) bad('Amount must be greater than zero');
       if (p.date && !/^\d{4}-\d\d-\d\d$/.test(p.date)) bad('Invalid date');
@@ -882,6 +884,8 @@ async function api(req, res, url) {
       if (a === 'invoices') return send(res, 409, { error: 'Tax invoices cannot be deleted (sequential numbering). Void it or issue a credit note.' });
       if (a === 'employees' && db.prepare('SELECT COUNT(*) n FROM payroll WHERE employee_id=?').get(id).n) return send(res, 409, { error: 'employee has payroll records — mark as left instead' });
       if (a === 'payments' && reconciled(id)) return send(res, 409, { error: 'This payment is matched to a bank statement line — unmatch it first' });
+      if (a === 'payments' && db.prepare("SELECT 1 FROM payments WHERE id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
+      if (a === 'bills' && db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
       if (a === 'bills') {                                                    // a bill raised by a certificate or a purchase order belongs to it
         const sc = has('sub_certs') && db.prepare('SELECT number FROM sub_certs WHERE bill_id=?').get(id), po = has('purchase_orders') && db.prepare('SELECT number FROM purchase_orders WHERE bill_id=?').get(id);
         if (sc) return send(res, 409, { error: `This bill belongs to payment certificate ${sc.number} — it cannot be deleted on its own` });

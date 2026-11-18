@@ -32,7 +32,7 @@ module.exports = ctx => {
 
   const mk = (acc, dr = 0, cr = 0) => { dr = round(dr); cr = round(cr); if (dr < 0) { cr = round(cr - dr); dr = 0; } if (cr < 0) { dr = round(dr - cr); cr = 0; } return { account: acc, debit: dr, credit: cr }; };
   const monthEnd = ym => `${ym}-${String(C.daysInMonth(ym)).padStart(2, '0')}`;
-  const bankAcct = (p, kind) => p.method === 'cash' ? '1020' : p.method === 'petty' ? '1010' : p.method === 'offset' ? '1400' : p.method === 'cheque' && p.cheque_status === 'pending' ? (kind === 'in' ? '1050' : '2050') : codeOf(p.bank_account_id);
+  const bankAcct = (p, kind) => p.method === 'cash' ? '1020' : p.method === 'petty' ? '1010' : p.method === 'partner' ? '3110' : p.method === 'offset' ? '1400' : p.method === 'cheque' && p.cheque_status === 'pending' ? (kind === 'in' ? '1050' : '2050') : codeOf(p.bank_account_id);
 
   function entries() {
     const out = [], e = enrich();
@@ -50,6 +50,7 @@ module.exports = ctx => {
     const rep = Object.fromEntries(db.prepare('SELECT payroll_id, SUM(amount) a FROM loan_repayments GROUP BY payroll_id').all().map(x => [x.payroll_id, round(x.a)]));
     for (const l of db.prepare('SELECT l.*, e.name FROM loans l JOIN employees e ON e.id=l.employee_id').all()) add(l.created.slice(0, 10), `ADV-${l.id}`, `Salary advance — ${l.name}`, 'payroll', [mk('1300', l.amount), mk(l.method === 'cash' ? '1020' : '1000', 0, l.amount)]);
     for (const x of ctx.eosEntries ? ctx.eosEntries() : []) add(x.date, x.ref, x.memo, 'payroll', x.lines.map(l => mk(...l)));
+    for (const x of ctx.partnerEntries ? ctx.partnerEntries() : []) add(x.date, x.ref, x.memo, 'partner', x.lines.map(l => mk(...l)));   // modules/partners.js
     for (const r of db.prepare("SELECT * FROM payroll WHERE status='final'").all()) {
       add(monthEnd(r.month), `PAY-${r.month}`, `Payroll ${r.month}`, 'payroll', [mk(r.project_id ? '5200' : '6200', r.gross),   // site staff → direct labour; no project → head-office overhead
          mk('2200', 0, r.net), mk('2250', 0, round(r.deductions - (rep[r.id] || 0))), mk('1300', 0, rep[r.id] || 0)]);   // advance instalments reduce the advance
@@ -125,6 +126,7 @@ module.exports = ctx => {
           for (const l of ls) { if (!A[l.account]) bad(`Unknown account ${l.account}`); if ((+l.debit || 0) < 0 || (+l.credit || 0) < 0 || ((+l.debit || 0) && (+l.credit || 0))) bad('Each line must have either a debit or a credit amount'); }
           const d = round(ls.reduce((s, l) => s + (+l.debit || 0), 0)), k = round(ls.reduce((s, l) => s + (+l.credit || 0), 0));
           if (!d || Math.abs(d - k) > 0.005) bad(`Entry is not balanced (debit ${d}, credit ${k})`);
+          if (ctx.journalGuard) ctx.journalGuard(ls);                              // partner accounts are kept from the Partners page
           return JSON.stringify(ls.map(l => ({ account: l.account, debit: +l.debit || 0, credit: +l.credit || 0 })));
         };
         if (m === 'POST') { const x = await readBody(req), lines = check(x); const r = db.prepare('INSERT INTO journal_entries(date,memo,lines,created_by) VALUES(?,?,?,?)').run(x.date, x.memo || '', lines, me.username); audit(req, 'create', 'journal_entries', Number(r.lastInsertRowid), x.memo || ''); return send(res, 200, { id: Number(r.lastInsertRowid) }), true; }

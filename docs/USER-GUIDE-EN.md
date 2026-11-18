@@ -58,6 +58,7 @@
 42. [Project programme (Gantt)](#42-project-programme-gantt)
 43. [Hired labour and rented equipment](#43-hired-labour-and-rented-equipment)
 44. [Microsoft 365: SharePoint, Outlook and Teams](#44-microsoft-365-sharepoint-outlook-and-teams)
+45. [Partners: capital, loans and current accounts](#45-partners-capital-loans-and-current-accounts)
 
 ---
 
@@ -2037,3 +2038,43 @@ These appear only when the administrator has switched them on. Trigon ERP stays 
 **Teams.** The administrator can connect one Teams channel. It receives a card when a purchase order needs approval, when it is approved, and for overdue deliveries, with **Open in Trigon ERP**. Approvals are still made in the ERP.
 
 **Administrator:** Settings → **Microsoft 365 integration** shows SharePoint, Outlook and Teams, with **Test connection**, **Send a test notification**, **Send overdue purchase orders** and the **attachment migration plan** (a dry run that uploads nothing).
+
+---
+
+## 45. Partners: capital, loans and current accounts
+
+Menu: **Accounting → Partners** (administrator and accountant only).
+
+Each partner has three separate accounts:
+- **Capital** (account 3000): what the partner paid in as capital.
+- **Partner loan** (account 2500): money the partner lent the company, to be paid back. It is a liability of the company, not capital.
+- **Current account** (account 3110): deposits and withdrawals, expenses the partner paid for the company from own money, and the share of profit when allocated.
+
+Positive amounts are **in the partner's favour**; amounts in brackets are **owed by the partner** to the company (for example withdrawals above the balance).
+
+**Getting started:**
+1. **+ Partner**: name (and Arabic name if you like) → **Save**.
+2. Open the partner → **+ Share**: percentage and the date it applies from. Record all partners' shares from the same date (total 100%). When shares change, add a new share for every partner from the date of the change; a 0% share means the partner left.
+3. Old balances: **+ Partner movement** → paid by **Opening balance** (a balance that existed before the system was used).
+4. If capital was recorded earlier with a journal entry on account 3000, the page shows "capital not assigned". Record it per partner: **Capital paid in** → paid by **Already in the books**. The amount is only assigned to the partner, not posted again.
+
+**Movements** (**+ Partner movement**): capital paid in, capital returned, loan to the company, loan repaid to the partner, deposit, withdrawal, and transfer between the partner's accounts (for example the current account balance into capital). Choose bank or cash, the bank account, and a reference.
+- Capital and loans cannot go below zero. A current account can (withdrawals above the balance are owed by the partner).
+
+**Expense paid by a partner from own money:** **+ Expense paid by a partner**:
+- **A new expense**: description, amount, VAT, category, project → booked on the project like any expense (with input VAT), and the amount is credited to the partner's current account.
+- **A recorded supplier bill**: choose the bill → it is paid from the partner's account.
+- No company bank or cash money moves and it is not in the cash flow. Change or delete it from the Partners page (the Payments page does not allow it).
+
+**Allocate a year's profit (optional):** **Allocate a year's profit** → year → **Preview** → **Allocate**.
+- The year's net profit (or loss) moves from retained earnings to each partner's current account by share. If shares changed during the year, they are weighted by days.
+- Nothing is paid out: a payout is a **withdrawal** from the current account.
+- If the year's figures change after the allocation (a late expense, for example), the system checks show a warning: delete the allocation and allocate again.
+
+**Partner statement:** click a partner → a statement in three parts (capital, loan, current account) with opening and closing balance for any period → **Print** or **PDF**.
+
+**Notes:**
+- Accounts 3000, 2500 and 3110 are kept from the Partners page only: manual journal entries on them are refused (3000 once the first partner is added).
+- The daily check confirms the partner accounts add up to the general ledger.
+- A closed period blocks adding or deleting any movement dated inside it.
+- A partner who works and draws a salary stays a normal employee in payroll; the partner account is separate.
