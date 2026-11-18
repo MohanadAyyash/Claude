@@ -49,7 +49,7 @@ async function boot() {
   }
   document.documentElement.lang = lang; document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   if (st.setup) return setupScreen(st.token_required);
-  if (!st.user) return loginScreen();
+  if (!st.user) return loginScreen(st);
   ME = st.user; document.body.dataset.role = ME.role; route = location.hash.slice(1) || landing();
   if (!allowedNav().some(n => n[0] === route.split('/')[0])) route = landing();
   const [s, br] = await Promise.all([api('GET', 'settings'), api('GET', 'brand').catch(() => [])]);   // in parallel: faster start on mobile data
@@ -57,11 +57,11 @@ async function boot() {
   document.title = S.company_name || tr('نظام إدارة المقاولات', 'Contractor ERP');
   shell();
 }
-function authBox(title, extra, btn, onsubmit) {
+function authBox(title, extra, btn, onsubmit, after = '') {
   $('#app').innerHTML = `<form class="login"><img class="logo" src="/api/brand/logo" alt="" onerror="this.remove()"><h2>${title}</h2>
     <div class="f"><label>${tr('اسم المستخدم', 'Username')}</label><input name="username" required autofocus></div>
     <div class="f"><label>${tr('كلمة المرور', 'Password')}</label><input name="password" type="password" required minlength="6"></div>${extra}
-    <div class="err" id="err"></div><button class="btn" style="width:100%">${btn}</button>
+    <div class="err" id="err"></div><button class="btn" style="width:100%">${btn}</button>${after}
     <p style="text-align:center"><a href="#" id="lg" class="muted">${lang === 'ar' ? 'English' : 'عربي'}</a></p></form>`;
   $('#lg').onclick = e => { e.preventDefault(); lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('form').onsubmit = async e => {
@@ -70,7 +70,9 @@ function authBox(title, extra, btn, onsubmit) {
     catch (x) { $('#err').textContent = x.message; if (x.data && x.data.need_code && $('#codef')) { $('#codef').style.display = ''; $('[name=code]').value = ''; $('[name=code]').focus(); } }
   };
 }
-const loginScreen = () => authBox(tr('تسجيل الدخول', 'Sign in'), `<div class="f" id="codef" style="display:none"><label>${tr('رمز التحقق من تطبيق المصادقة', 'Code from your authenticator app')}</label><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" dir="ltr"></div>`, tr('دخول', 'Sign in'), d => api('POST', 'login', d));
+// Microsoft sign-in (Phase 1B): a plain navigation to the server (never through the service worker); the password login stays as it is
+const msButton = st => st && st.m365_login ? `<a class="btn sec" id="mslogin" href="/auth/microsoft/login" style="width:100%;display:block;text-align:center;margin-top:10px;box-sizing:border-box;text-decoration:none">${tr('تسجيل الدخول باستخدام Microsoft', 'Sign in with Microsoft')}</a>` : '';
+const loginScreen = st => authBox(tr('تسجيل الدخول', 'Sign in'), `<div class="f" id="codef" style="display:none"><label>${tr('رمز التحقق من تطبيق المصادقة', 'Code from your authenticator app')}</label><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" dir="ltr"></div>`, tr('دخول', 'Sign in'), d => api('POST', 'login', d), msButton(st));
 const setupScreen = needToken => authBox(tr('إعداد النظام لأول مرة', 'First-time setup'),
   `<div class="f"><label>${tr('اسم الشركة', 'Company name')}</label><input name="company"></div>${needToken ? `<div class="f"><label>${tr('رمز الإعداد السري (من ملف .env على الخادم)', 'Setup token (from the .env file on the server)')}</label><input name="token" required></div>` : ''}`, tr('إنشاء الحساب', 'Create account'), d => api('POST', 'setup', d));
 
