@@ -453,6 +453,7 @@ async function docModal(kind, row, preset = {}) {
     closeModal(); render();
   });
   if (row) {
+    if (window.m365DocPanel) m365DocPanel(m, kind, row.id).catch(() => {});   // SharePoint copy / Outlook (quotations, invoices)
     if ($('#print', m)) { $('#print', m).onclick = () => printDoc(kind, row); $('#pdf', m).onclick = () => pdfDoc(kind, row); }
     if ($('#ipc', m)) { $('#ipc', m).onclick = () => printDoc('ipc', row); $('#ipcpdf', m).onclick = () => pdfDoc('ipc', row); }
     if (isQ) $('#del', m).onclick = guard(async () => { if (confirmDel()) { await api('DELETE', `${kind}/${row.id}`); closeModal(); render(); } });

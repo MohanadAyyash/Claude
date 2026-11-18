@@ -57,6 +57,7 @@
 41. [Equipment log](#41-equipment-log)
 42. [Project programme (Gantt)](#42-project-programme-gantt)
 43. [Hired labour and rented equipment](#43-hired-labour-and-rented-equipment)
+44. [Microsoft 365: SharePoint, Outlook and Teams](#44-microsoft-365-sharepoint-outlook-and-teams)
 
 ---
 
@@ -2017,3 +2018,22 @@ Menu: **Hired labour & rentals**. For workers who are not on the payroll (from a
 2. Pay daily workers for the daily ones; match the invoice for the supply company.
 
 <!--/img-->
+
+---
+
+## 44. Microsoft 365: SharePoint, Outlook and Teams
+
+These appear only when the administrator has switched them on. Trigon ERP stays the record of numbers, totals, VAT and approvals; Microsoft 365 receives copies and messages.
+
+**SharePoint copy of a document.** On a purchase order, quotation, invoice or subcontract, the **Microsoft 365** box shows *Not in SharePoint*, *Saved in SharePoint* (with **Open**) or *SharePoint upload failed* (with the reason).
+- **Save to SharePoint** stores the record's PDF in the company's SharePoint library, in the project's folder (for example `Trigon Civil Projects / P-101 - Villa / Purchase Orders / PO-0007.pdf`).
+- A purchase order can be saved once it is issued (sent / received / closed) and, if above the approval limit, approved. Draft quotations are not saved.
+- After changing the record, **Update the copy** (SharePoint keeps the earlier versions). If it failed, **Retry**. A failure never changes the record in the ERP.
+
+**Send via Outlook.** Sends the record's PDF from **your own** mailbox (it appears in your Sent Items).
+- The first time: Settings → **Microsoft 365 account** → Disconnect, then Connect again, to allow sending.
+- Enter one or more addresses (comma-separated) and an optional message. Sending the same record to the same people again asks you to confirm.
+
+**Teams.** The administrator can connect one Teams channel. It receives a card when a purchase order needs approval, when it is approved, and for overdue deliveries, with **Open in Trigon ERP**. Approvals are still made in the ERP.
+
+**Administrator:** Settings → **Microsoft 365 integration** shows SharePoint, Outlook and Teams, with **Test connection**, **Send a test notification**, **Send overdue purchase orders** and the **attachment migration plan** (a dry run that uploads nothing).

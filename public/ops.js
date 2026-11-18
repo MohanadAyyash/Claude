@@ -122,6 +122,7 @@ window.poModal = guard(async (id, preset = {}) => {
   $('#addrow', m).onclick = () => { $('#items', m).insertAdjacentHTML('beforeend', line()); calc(); }; calc();
   const readLines = () => [...m.querySelectorAll('#items tr')].map(t => ({ code: $('[data-k=code]', t).value, description: $('[data-k=description]', t).value, unit: $('[data-k=unit]', t).value, qty: +$('[data-k=qty]', t).value || 0, rate: +$('[data-k=rate]', t).value || 0, disc: +$('[data-k=disc]', t).value || 0, vat: $('[data-k=vat]', t).value })).filter(i => i.description || i.rate);
   if (row && window.docsPanel) docsPanel(m, 'purchase_order', row.id, canOps('purchase_orders'));
+  if (row && window.m365DocPanel) m365DocPanel(m, 'purchase_orders', row.id).catch(() => {});   // SharePoint copy / Outlook
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
     const b = { items: readLines() }; head.forEach(f => b[f.k] = val(m, f.k)); b.terms = val(m, 'terms'); b.notes = val(m, 'notes');
@@ -142,6 +143,7 @@ PAGES.po = async () => {
   ${rows.map(r => `<tr class="click" data-id="${r.id}"><td>${esc(r.number)}</td><td>${esc(r.date)}</td><td>${esc(r.supplier_name || '')}</td><td>${esc(r.project_name || '')}</td><td class="n">${money(r.total)}</td><td>${tag(r.status)}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد أوامر شراء', 'No purchase orders yet')}</td></tr>`}</tbody></table></div>`);
   if ($('#add')) $('#add').onclick = () => poModal();
   document.querySelectorAll('tr.click').forEach(t => t.onclick = () => poModal(+t.dataset.id));
+  const want = +route.split('/')[1]; if (want && rows.some(r => r.id === want)) poModal(want);   // #po/123: a link from Teams / e-mail opens that order
 };
 
 // ---- subcontracts & payment certificates -------------------------------------------------------------
@@ -157,7 +159,7 @@ PAGES.subcontracts = async () => {
       { k: 'variations', ar: 'أوامر التغيير المعتمدة (مجموع)', en: 'Approved variations (total)', type: 'number', def: 0 },
       { k: 'vat_basis', ar: 'أساس الضريبة في الشهادات', en: 'VAT basis on certificates', type: 'select', def: 'net', options: [['net', tr('على الصافي بعد المحتجزات والخصومات', 'On the net after retention and contra charges')], ['gross', tr('على قيمة الأعمال', 'On the work value')]] },
       { k: 'contra_uplift', ar: 'نسبة الإضافة على الخصومات Contra % (مثل 12)', en: 'Contra charge uplift % (e.g. 12)', type: 'number', def: 0 }],
-    onModal: (m, row) => row && docsPanel(m, 'subcontract', row.id, canOps('subcontracts')),
+    onModal: (m, row) => { if (!row) return; docsPanel(m, 'subcontract', row.id, canOps('subcontracts')); if (window.m365DocPanel) m365DocPanel(m, 'subcontracts', row.id).catch(() => {}); },
     cols: [{ ar: 'المقاول', en: 'Subcontractor', k: 'party_name' }, { ar: 'المشروع', en: 'Project', k: 'project_name' }, { ar: 'النطاق', en: 'Scope', k: 'description' }, { ar: 'قيمة العقد', en: 'Contract', n: 1, f: r => money(r.contract_value) },
       { ar: 'المعتمد', en: 'Certified', n: 1, f: r => money(r.certified) }, { ar: 'محتجزات', en: 'Retention held', n: 1, f: r => money(r.retention_held) }, { ar: 'شهادات', en: 'Certs', n: 1, k: 'certs' }, { ar: 'الحالة', en: 'Status', f: r => tag(r.status) }] });
   c.setRow(id => subDetail(rows.find(r => r.id === id), c.edit));

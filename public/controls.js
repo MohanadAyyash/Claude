@@ -89,6 +89,62 @@ window.m365Card = async el => {
       <button class="btn sec" id="m365chk">${tr('فحص الربط', 'Check the link')}</button> <button class="btn bad" id="m365off">${tr('فصل الربط', 'Disconnect')}</button>
       <p class="muted" style="margin-top:8px">${tr('فصل الربط يحذفه مع رموز الدخول من نظام تريجون فوراً (لن يعمل الدخول باستخدام Microsoft لحسابك بعده). موافقتك على التطبيق تبقى في Microsoft حتى تزيلها من حساب Microsoft (My Apps) أو يزيلها مسؤول Entra.', 'Disconnecting removes the link and its tokens from Trigon ERP at once ("Sign in with Microsoft" stops working for your account). Your consent to the app stays in Microsoft until you remove it in your Microsoft account (My Apps) or an Entra administrator does.')}</p>`
       : `<p>${tr('غير مرتبط', 'Not connected')}</p><a class="btn" href="/auth/microsoft" style="text-decoration:none;display:inline-block">${tr('ربط حساب Microsoft', 'Connect Microsoft account')}</a>`}</div>`;
+  { const ib = document.createElement('div'); el.appendChild(ib); if (window.m365IntegrationsCard) m365IntegrationsCard(ib).catch(() => {}); }   // SharePoint / Outlook / Teams
   if ($('#m365chk', el)) $('#m365chk', el).onclick = guard(async () => { const r = await api('POST', 'm365/check', {}); toast(`✔ ${r.email || r.display_name || 'OK'}`); });
   if ($('#m365off', el)) $('#m365off', el).onclick = guard(async () => { if (!confirm(tr('فصل حساب Microsoft عن حسابك في نظام تريجون؟ (الموافقة في Microsoft لا تُلغى من هنا)', 'Disconnect the Microsoft account from your Trigon ERP account? (Consent in Microsoft is not revoked from here)'))) return; await api('POST', 'm365/disconnect', {}); toast(tr('تم فصل الربط', 'Disconnected')); m365Card(el); });
+};
+
+// ---- Microsoft 365 business integration (SharePoint copy / Outlook) inside a record, and the integrations in Settings ----
+// Everything is decided on the server (role, project, record state); the browser only shows the state and asks.
+let m365IntCache = null;
+const m365Ints = async (fresh) => (!fresh && m365IntCache) || (m365IntCache = await api('GET', 'm365/integrations').catch(() => null));
+window.m365DocPanel = async (el, entity, id) => {
+  const st = await m365Ints(); if (!st || window.STANDALONE) return;
+  const canMail = st.outlook.enabled && ['purchase_orders', 'rfqs', 'quotes', 'invoices'].includes(entity), canSp = st.sharepoint.configured && entity !== 'rfqs';
+  if (!canMail && !canSp) return;
+  let box = el; if (el.classList.contains('overlay')) { box = document.createElement('div'); box.className = 'card'; const mod = el.querySelector('.modal'); mod.insertBefore(box, mod.querySelector('.acts')); }
+  const draw = async () => {
+    const d = canSp ? await api('GET', `m365/documents/${entity}/${id}`).catch(() => null) : null;
+    const stLine = !d ? '' : d.status === 'uploaded' ? `<p class="ok">✔ ${tr('محفوظ في SharePoint', 'Saved in SharePoint')}${d.web_url ? ` — <a href="${esc(d.web_url)}" target="_blank" rel="noopener noreferrer">${tr('فتح', 'Open')}</a>` : ''} <span class="muted">${esc((d.uploaded_at || '').slice(0, 16).replace('T', ' '))} · ${esc(d.uploaded_by || '')}</span></p>`
+      : d.status === 'failed' ? `<p class="neg">✖ ${tr('فشل الحفظ في SharePoint', 'SharePoint upload failed')}: ${esc(d.error || '')}</p>`
+      : d.status === 'uploading' ? `<p class="muted">${tr('جارٍ الحفظ…', 'Uploading…')}</p>` : `<p class="muted">${tr('غير محفوظ في SharePoint', 'Not in SharePoint')}</p>`;
+    const upBtn = d && d.can_upload ? (d.ready ? `<button type="button" class="btn sec sm" id="m365up">${d.status === 'failed' ? tr('إعادة المحاولة', 'Retry') : d.status === 'uploaded' ? tr('تحديث النسخة', 'Update the copy') : tr('حفظ في SharePoint', 'Save to SharePoint')}</button>` : `<span class="muted">${esc(d.why_not || '')}</span>`) : '';
+    const mailBtn = canMail ? (st.me.can_send_mail ? `<button type="button" class="btn sec sm" id="m365mail">${tr('إرسال عبر Outlook', 'Send via Outlook')}</button>`
+      : `<span class="muted">${st.me.linked ? tr('للإرسال عبر Outlook: افصل حساب Microsoft ثم اربطه من جديد في الإعدادات.', 'To send through Outlook: Disconnect and Connect your Microsoft account again in Settings.') : tr('للإرسال عبر Outlook اربط حساب Microsoft في الإعدادات.', 'To send through Outlook, connect your Microsoft account in Settings.')}</span>`) : '';
+    box.innerHTML = `<h2>Microsoft 365</h2>${stLine}<div>${upBtn} ${mailBtn}</div>`;
+    if ($('#m365up', box)) $('#m365up', box).onclick = guard(async () => { await api('POST', `m365/documents/${entity}/${id}/upload`, {}); toast(tr('تم الحفظ في SharePoint', 'Saved in SharePoint')); draw(); });
+    if ($('#m365mail', box)) $('#m365mail', box).onclick = guard(async () => {
+      const to = prompt(tr('أرسل إلى (بريد أو أكثر، مفصولة بفاصلة):', 'Send to (one or more e-mail addresses, comma-separated):'), ''); if (!to) return;
+      const message = prompt(tr('رسالة (اختياري):', 'Message (optional):'), '') || '';
+      const go = confirm_resend => api('POST', `m365/mail/${entity}/${id}`, { to, message, confirm_resend });
+      try { await go(false); } catch (x) {
+        if (!(x.data && x.data.code === 'already_sent')) throw x;
+        if (!confirm(x.message + '\n\n' + tr('إرسال مرة أخرى؟', 'Send it again?'))) return; await go(true);
+      }
+      toast(tr('أُرسل من بريدك في Outlook', 'Sent from your Outlook mailbox'));
+    });
+  };
+  await draw();
+};
+// Settings → Microsoft 365: the integrations (administrators see the configuration status and can test; users see their own mail status)
+window.m365IntegrationsCard = async el => {
+  const st = await m365Ints(true); if (!st || window.STANDALONE || !el) return;
+  const on = (b, t) => b ? `<span class="ok">✔ ${t || tr('مفعّل', 'On')}</span>` : `<span class="muted">${tr('غير مفعّل', 'Off')}</span>`;
+  const hl = h => h ? `<span class="muted">${h.ok_at ? `${tr('آخر نجاح', 'last OK')} ${esc(h.ok_at.slice(0, 16).replace('T', ' '))}` : ''}${h.fail_at ? ` · ${tr('آخر خطأ', 'last error')} ${esc(h.fail_at.slice(0, 16).replace('T', ' '))}: ${esc(h.error || '')}` : ''}</span>` : '';
+  const admin = ME.role === 'admin', sp = st.sharepoint, ol = st.outlook, tm = st.teams;
+  el.innerHTML = `<div class="card"><h2>${tr('تكامل Microsoft 365', 'Microsoft 365 integration')}</h2>
+    <p><b>SharePoint</b>: ${sp.enabled ? (sp.configured ? on(true, tr('مضبوط', 'Configured')) : `<span class="neg">✖ ${tr('ناقص', 'Incomplete')}${admin && sp.missing ? ': ' + esc(sp.missing.join(', ')) : ''}</span>`) : on(false)}
+      ${admin && sp.configured ? `<br><span class="muted">${tr('الموقع', 'Site')}: ${esc(sp.site_name || '—')} · ${tr('المكتبة', 'Library')}: ${esc(sp.library_name || '—')} · ${tr('المجلد', 'Folder')}: ${esc(sp.root || '')} · ${tr('محفوظ', 'saved')} ${sp.documents?.uploaded || 0}, ${tr('فشل', 'failed')} ${sp.documents?.failed || 0}</span><br>${hl(sp.health)}` : ''}
+      ${admin && sp.configured ? `<br><button class="btn sec sm" id="m365sptest">${tr('اختبار الاتصال', 'Test connection')}</button> <button class="btn sec sm" id="m365mig">${tr('خطة نقل المرفقات (بدون تنفيذ)', 'Attachment migration plan (dry run)')}</button>` : ''}</p>
+    <p><b>Outlook</b>: ${on(ol.enabled)} ${ol.enabled ? (st.me.can_send_mail ? `· <span class="ok">${tr('يمكنك الإرسال من بريدك', 'You can send from your mailbox')}</span>` : st.me.linked ? `· <span class="neg">${tr('أعد ربط حساب Microsoft للسماح بالإرسال', 'Reconnect your Microsoft account to allow sending')}</span>` : `· <span class="muted">${tr('اربط حساب Microsoft أولاً', 'Connect your Microsoft account first')}</span>`) : ''}
+      ${admin && ol.health ? `<br>${hl(ol.health)}` : ''}${ol.enabled && st.me.linked ? `<br><button class="btn sec sm" id="m365oltest">${tr('اختبار (لا يرسل بريداً)', 'Test (sends nothing)')}</button>` : ''}</p>
+    <p><b>Teams</b>: ${tm.enabled ? (admin ? (tm.destination_ok ? on(true, esc(tm.destination_host || '')) : `<span class="neg">✖ ${tr('عنوان القناة غير صالح', 'Invalid channel address')}</span>`) : on(true)) : on(false)}
+      ${admin && tm.enabled ? `<br><span class="muted">${tm.amounts_shown ? tr('المبالغ تظهر في الإشعارات', 'Amounts are shown in notifications') : tr('المبالغ لا تظهر في الإشعارات', 'Amounts are not shown in notifications')}</span> ${hl(tm.health)}
+        <br><button class="btn sec sm" id="m365tmtest">${tr('إرسال إشعار تجريبي', 'Send a test notification')}</button> <button class="btn sec sm" id="m365tmov">${tr('إرسال أوامر الشراء المتأخرة', 'Send overdue purchase orders')}</button>` : ''}</p></div>`;
+  const b = (id, fn) => { const x = $(id, el); if (x) x.onclick = guard(fn); };
+  b('#m365sptest', async () => { const r = await api('POST', 'm365/sharepoint/test', {}); toast(`✔ ${r.site_name} / ${r.library_name}`); m365IntegrationsCard(el); });
+  b('#m365mig', async () => { const r = await api('POST', 'm365/migrate', { execute: false }); alert(`${tr('خطة فقط — لم يُرفع شيء', 'Plan only — nothing was uploaded')}\n${tr('للرفع', 'To upload')}: ${r.planned}\n${tr('موجود مسبقاً', 'Already there')}: ${r.unchanged}\n${tr('متجاوز', 'Skipped')}: ${r.skipped.length}`); });
+  b('#m365oltest', async () => { const r = await api('POST', 'm365/outlook/test', {}); toast(`✔ ${r.mailbox || ''} ${r.can_send ? '' : '(' + tr('الإرسال غير مسموح بعد', 'sending not allowed yet') + ')'}`); });
+  b('#m365tmtest', async () => { await api('POST', 'm365/teams/test', {}); toast(tr('أُرسل الإشعار التجريبي', 'Test notification sent')); m365IntegrationsCard(el); });
+  b('#m365tmov', async () => { const r = await api('POST', 'm365/teams/overdue', {}); toast(`${r.count} ${tr('أمر شراء متأخر', 'overdue purchase orders')}`); });
 };

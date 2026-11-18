@@ -112,3 +112,11 @@ daily-check.js ── فشل؟ ──► issue بعلامة ops-report ──►
 - تشغيلة إصلاح وحدة تكلّف تقريباً من سنتات إلى دولار أو دولارين، حسب حجم المشكلة.
 - مع المراجعة الأسبوعية والأعطال القليلة، المتوقع بضعة دولارات بالشهر.
 - الحد الشهري في Anthropic Console هو صمام الأمان.
+
+## Microsoft 365 (التشغيل / operations)
+- كل الإعدادات في `.env` وتفاصيلها في `M365.md`: الدخول (hybrid / microsoft-first + مسؤول الطوارئ)، SharePoint، Outlook، Teams.
+- بعد أي تعديل على `.env`: أعد التشغيل بطريقة «Restart that really applies .env» في `M365.md` (PID جديد + `/api/status`).
+- الحالة: الإعدادات ← حساب Microsoft 365 / تكامل Microsoft 365 (آخر نجاح / آخر خطأ لكل ميزة، بدون أسرار).
+- نقل المرفقات القديمة إلى SharePoint: `node --no-warnings scripts/m365-migrate.js` (تجربة فقط) ثم `--execute` بعد المراجعة؛ لا يحذف شيئاً.
+- سجل التدقيق: `m365` (`sharepoint-upload`, `outlook-send`, `config-change`, `teams-*`) و `auth` (`auth-mode`, `emergency-login…`).
+- إيقاف أي ميزة: صفرها في `.env` وأعد التشغيل؛ بيانات النظام لا تتأثر.

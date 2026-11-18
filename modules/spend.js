@@ -94,6 +94,7 @@ module.exports = ctx => {
     const need_pay = ly ? e.bills.filter(b => b.balance > ly && !pendingPay.has(b.id) && round(approvedPay(b.id) - paidOut(b.id)) < ly).map(b => ({ id: b.id, label: `${b.party_name || 'Expense'} — ${b.description || b.reference || '#' + b.id}`, project_name: b.project_name || '', total: b.total, balance: b.balance, approved_left: Math.max(0, round(approvedPay(b.id) - paidOut(b.id))) })) : [];
     return { limits: { po: lp, payment: ly }, can_decide: me.role === 'admin', rows, need_po, need_pay, pending: rows.filter(r => r.status === 'pending').length };
   }
+  ctx.poSpendState = id => { const po = poRow(id); return po ? poState(po) : null; };   // none | approved | pending | rejected | required (for Microsoft 365 documents / mail)
   ctx.spendAlerts = add => { const n = db.prepare("SELECT COUNT(*) n FROM spend_approvals WHERE status='pending'").get().n; if (n) add('warn', 'spend_pending', { count: n }); };
 
   return {
@@ -117,6 +118,7 @@ module.exports = ctx => {
         const r = db.prepare('INSERT INTO spend_approvals(kind,ref_id,amount,note,requested_by,requested_by_id,requested_at) VALUES(?,?,?,?,?,?,?)').run(kind, id, amount, String(x.note || '').slice(0, 500), me.username, me.id, now());
         audit(req, 'request', 'spend_approvals', Number(r.lastInsertRowid), `${label} ${money(amount)}`);
         notify({ roles: ['admin'] }, 'طلب اعتماد صرف / Spend approval requested', `${label} — ${money(amount)} (${me.username})`);
+        if (ctx.hooks.onSpendRequest) try { ctx.hooks.onSpendRequest({ id: Number(r.lastInsertRowid), kind, ref_id: id, amount, requested_by: me.username }); } catch { /* notifications never block the request */ }
         return send(res, 200, { id: Number(r.lastInsertRowid) }), true;
       }
       if (m === 'PUT' && b) {                                                // decide (administrator)
@@ -126,6 +128,7 @@ module.exports = ctx => {
         if (r.kind === 'po' && x.status === 'approved') { const po = poRow(r.ref_id); if (!po) bad('The purchase order no longer exists'); if (Math.abs(po.total - r.amount) > 0.011) bad(`The purchase order changed after the request (now ${money(po.total)}) — ask for approval again`); }
         db.prepare('UPDATE spend_approvals SET status=?, decided_by=?, decided_at=?, decision_note=? WHERE id=?').run(x.status, me.username, now(), String(x.note || '').slice(0, 500), r.id);
         audit(req, x.status === 'approved' ? 'approve' : 'reject', 'spend_approvals', r.id, `${r.kind} #${r.ref_id} ${money(r.amount)}`);
+        if (ctx.hooks.onSpendDecision) try { ctx.hooks.onSpendDecision({ ...r, status: x.status, decided_by: me.username }); } catch { /* notifications never block the decision */ }
         if (r.requested_by_id) notify(r.requested_by_id, x.status === 'approved' ? 'تم اعتماد طلب الصرف / Spend request approved' : 'تم رفض طلب الصرف / Spend request rejected', `${money(r.amount)}${x.note ? ' — ' + x.note : ''}`);
         return send(res, 200, { ok: 1 }), true;
       }
