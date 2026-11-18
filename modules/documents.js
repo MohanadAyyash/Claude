@@ -14,6 +14,7 @@ module.exports = ctx => {
   const { db, send, bad, audit, readBody, today } = ctx;
   db.exec(`CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, entity TEXT, entity_id INTEGER DEFAULT 0, category TEXT, name TEXT, mime TEXT, size INTEGER, data BLOB, expiry_date TEXT, uploaded_by TEXT, created TEXT)`);
   const allowed = (role, entity, write) => !!ENTITIES[entity] && (role === 'admin' || ENTITIES[entity][write ? 1 : 0].includes(role));
+  ctx.docAllowed = allowed;                                                  // (the same rule for Microsoft 365 copies of attachments)
   return {
     async handle(req, res, url, [a, b, c], me) {
       if (a !== 'documents') return false;
