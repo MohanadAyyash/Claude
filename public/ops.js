@@ -10,6 +10,10 @@ const fileToData = f => new Promise((ok, no) => { const r = new FileReader(); r.
 const size = n => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
 // ---- attachments panel (used inside project page and record modals) -------------------------------
+// suggested attachment types: with SharePoint switched on, each attachment is copied to the folder of its type (free text still allowed)
+const docTypeList = () => `<datalist id="doctypes">${[['Drawings', 'مخططات'], ['Delivery Notes', 'سندات تسليم'], ['Submittals', 'طلبات اعتماد مواد'], ['RFIs', 'استيضاحات فنية'], ['HSE', 'سلامة وصحة مهنية'],
+  ['Site Photos', 'صور الموقع'], ['Contracts', 'عقود'], ['Invoices', 'فواتير'], ['Quotations', 'عروض أسعار'], ['Purchase Orders', 'أوامر شراء'], ['Payment Certificates', 'شهادات دفع / مستخلصات'],
+  ['Supplier Documents', 'مستندات المورد'], ['Documents', 'مستندات أخرى']].map(([v, ar]) => `<option value="${v}">${tr(ar, v)}</option>`).join('')}</datalist>`;
 window.docsPanel = async (el, entity, id, canWrite) => {
   let box = el;
   if (el.classList.contains('overlay')) { box = document.createElement('div'); box.className = 'card'; const mod = el.querySelector('.modal'); mod.insertBefore(box, mod.querySelector('.acts')); }
@@ -17,7 +21,7 @@ window.docsPanel = async (el, entity, id, canWrite) => {
     const rows = await api('GET', `documents?entity=${entity}&entity_id=${id}`).catch(() => []);
     box.innerHTML = `<h2>${tr('المستندات المرفقة', 'Attached documents')}</h2>
       <table><tbody>${rows.map(d => `<tr><td><a href="/api/documents/${d.id}/download">${esc(d.name)}</a> <span class="pill">${esc(d.category || '')}</span></td><td class="muted">${size(d.size)}</td><td>${d.expiry_date ? `${tr('ينتهي', 'Expires')} ${esc(d.expiry_date)}` : ''}</td><td>${canWrite ? `<button class="btn sec sm" data-dd="${d.id}">×</button>` : ''}</td></tr>`).join('') || `<tr><td class="muted">${tr('لا توجد مستندات', 'No documents')}</td></tr>`}</tbody></table>
-      ${canWrite ? `<div class="f2" style="margin-top:8px"><div class="f"><input type="file" class="dfile"></div><div class="f"><input class="dcat" placeholder="${tr('النوع (عقد، رخصة، فاتورة…)', 'Type (contract, licence, invoice…)')}"></div><div class="f"><label>${tr('تاريخ الانتهاء (اختياري)', 'Expiry date (optional)')}</label><input type="date" class="dexp"></div><div class="f"><button type="button" class="btn sm dup" style="margin-top:18px">${tr('رفع', 'Upload')}</button></div></div>` : ''}`;
+      ${canWrite ? `<div class="f2" style="margin-top:8px"><div class="f"><input type="file" class="dfile"></div><div class="f"><input class="dcat" list="doctypes" placeholder="${tr('النوع (عقد، رخصة، فاتورة…)', 'Type (contract, licence, invoice…)')}">${docTypeList()}</div><div class="f"><label>${tr('تاريخ الانتهاء (اختياري)', 'Expiry date (optional)')}</label><input type="date" class="dexp"></div><div class="f"><button type="button" class="btn sm dup" style="margin-top:18px">${tr('رفع', 'Upload')}</button></div></div>` : ''}`;
     box.querySelectorAll('[data-dd]').forEach(b => b.onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'documents/' + b.dataset.dd); draw(); } }));
     const up = box.querySelector('.dup');
     if (up) up.onclick = guard(async () => {

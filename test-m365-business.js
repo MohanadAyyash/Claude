@@ -8,6 +8,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-m365biz-'));
 process.env.ZOHO_NO_SCHEDULER = '1'; process.env.SALES_NO_SCHEDULER = '1'; process.env.BACKUP_NO_SCHEDULER = '1';
 for (const k of Object.keys(process.env)) if (k.startsWith('M365_') || k.startsWith('AUTH_')) delete process.env[k];
 process.env.TRUST_PROXY = '1'; delete process.env.SECURE_COOKIES;
+process.env.M365_SYNC_NO_WORKER = '1';          // the automatic SharePoint queue is tested in test-m365-sync.js; here only the manual paths run
 
 const logged = [];
 for (const m of ['log', 'error', 'warn', 'info']) { const o = console[m].bind(console); console[m] = (...a) => { logged.push(a.map(x => (x && x.stack) || String(x)).join(' ')); o(...a); }; }
@@ -221,8 +222,8 @@ ctx.pdf = async html => Buffer.from(`%PDF-1.4\n% fake ${crypto.createHash('sha25
       // invalid file: empty or too large
       const realPdf = ctx.pdf; ctx.pdf = async () => Buffer.alloc(0);
       { const r = await upload('purchase_orders', poT, ck.proc); assert.equal(r.s, 503); assert.match(r.j.error, /PDF/); }
-      ctx.pdf = async () => Buffer.alloc(4 * 1024 * 1024 + 1, 65);
-      { const r = await upload('purchase_orders', poT, ck.proc); assert.equal(r.s, 413); assert.match(r.j.error, /larger than 4 MB/); }
+      ctx.pdf = async () => Buffer.alloc(60 * 1024 * 1024 + 1, 65);      // above 4 MB an upload session is used (test-m365-sync.js); above 60 MB nothing is sent
+      { const before = mock.puts.length, r = await upload('purchase_orders', poT, ck.proc); assert.equal(r.s, 413); assert.match(r.j.error, /larger than 60 MB/); assert.equal(mock.puts.length, before); }
       ctx.pdf = realPdf;
       console.log('✔ SharePoint failures (503 / 403 / 404 / unreadable / no item id / timeout / bad library ID / empty / too large) leave the PO unchanged, record "failed" with a safe reason; retry succeeds');
 

@@ -105,10 +105,14 @@ window.m365DocPanel = async (el, entity, id) => {
   let box = el; if (el.classList.contains('overlay')) { box = document.createElement('div'); box.className = 'card'; const mod = el.querySelector('.modal'); mod.insertBefore(box, mod.querySelector('.acts')); }
   const draw = async () => {
     const d = canSp ? await api('GET', `m365/documents/${entity}/${id}`).catch(() => null) : null;
-    const stLine = !d ? '' : d.status === 'uploaded' ? `<p class="ok">✔ ${tr('محفوظ في SharePoint', 'Saved in SharePoint')}${d.web_url ? ` — <a href="${esc(d.web_url)}" target="_blank" rel="noopener noreferrer">${tr('فتح', 'Open')}</a>` : ''} <span class="muted">${esc((d.uploaded_at || '').slice(0, 16).replace('T', ' '))} · ${esc(d.uploaded_by || '')}</span></p>`
-      : d.status === 'failed' ? `<p class="neg">✖ ${tr('فشل الحفظ في SharePoint', 'SharePoint upload failed')}: ${esc(d.error || '')}</p>`
-      : d.status === 'uploading' ? `<p class="muted">${tr('جارٍ الحفظ…', 'Uploading…')}</p>` : `<p class="muted">${tr('غير محفوظ في SharePoint', 'Not in SharePoint')}</p>`;
-    const upBtn = d && d.can_upload ? (d.ready ? `<button type="button" class="btn sec sm" id="m365up">${d.status === 'failed' ? tr('إعادة المحاولة', 'Retry') : d.status === 'uploaded' ? tr('تحديث النسخة', 'Update the copy') : tr('حفظ في SharePoint', 'Save to SharePoint')}</button>` : `<span class="muted">${esc(d.why_not || '')}</span>`) : '';
+    const at = x => esc((x || '').slice(0, 16).replace('T', ' ')), retry = d && d.next_attempt_at ? ` · ${tr('محاولة تلقائية', 'next automatic try')} ${at(d.next_attempt_at)}` : '';
+    const stLine = !d ? '' : d.status === 'uploaded' ? `<p class="ok">✔ ${tr('محفوظ في SharePoint', 'Saved in SharePoint')}${d.web_url ? ` — <a href="${esc(d.web_url)}" target="_blank" rel="noopener noreferrer">${tr('فتح', 'Open')}</a>` : ''} <span class="muted">${at(d.uploaded_at)} · ${esc(d.uploaded_by || '')}</span></p>`
+      : d.status === 'failed' ? `<p class="neg">✖ ${tr('فشل الحفظ في SharePoint', 'SharePoint upload failed')}: ${esc(d.error || '')}<span class="muted">${retry || (d.auto ? ' · ' + tr('لا إعادة تلقائية — راجع السبب', 'no automatic retry — check the reason') : '')}</span></p>`
+      : d.status === 'queued' ? `<p class="muted">⏳ ${tr('في قائمة الحفظ التلقائي في SharePoint', 'Queued: will be saved to SharePoint automatically')}${d.error ? ` · ${tr('المحاولة السابقة', 'last attempt')}: ${esc(d.error)}` : ''}${retry}</p>`
+      : d.status === 'uploading' ? `<p class="muted">${tr('جارٍ الحفظ…', 'Uploading…')}</p>`
+      : `<p class="muted">${d.auto && d.ready ? '⏳ ' + tr('سيُحفظ في SharePoint تلقائياً خلال دقائق', 'Will be saved to SharePoint automatically within minutes') : tr('غير محفوظ في SharePoint', 'Not in SharePoint')}</p>`;
+    const upLabel = d && (d.status === 'failed' ? tr('إعادة المحاولة الآن', 'Retry now') : d.status === 'uploaded' ? tr('تحديث النسخة', 'Update the copy') : d.auto ? tr('حفظ الآن', 'Save now') : tr('حفظ في SharePoint', 'Save to SharePoint'));
+    const upBtn = d && d.can_upload ? (d.ready ? `<button type="button" class="btn sec sm" id="m365up">${upLabel}</button>` : `<span class="muted">${esc(d.why_not || '')}</span>`) : '';
     const mailBtn = canMail ? (st.me.can_send_mail ? `<button type="button" class="btn sec sm" id="m365mail">${tr('إرسال عبر Outlook', 'Send via Outlook')}</button>`
       : `<span class="muted">${st.me.linked ? tr('للإرسال عبر Outlook: افصل حساب Microsoft ثم اربطه من جديد في الإعدادات.', 'To send through Outlook: Disconnect and Connect your Microsoft account again in Settings.') : tr('للإرسال عبر Outlook اربط حساب Microsoft في الإعدادات.', 'To send through Outlook, connect your Microsoft account in Settings.')}</span>`) : '';
     box.innerHTML = `<h2>Microsoft 365</h2>${stLine}<div>${upBtn} ${mailBtn}</div>`;
@@ -126,6 +130,16 @@ window.m365DocPanel = async (el, entity, id) => {
   };
   await draw();
 };
+// the automatic SharePoint queue (administrators): on/off, waiting, retrying, stopped, the latest failures, run now / retry all
+const m365Names = { purchase_orders: ['أمر شراء', 'Purchase order'], quotes: ['عرض سعر', 'Quotation'], invoices: ['فاتورة', 'Invoice'], subcontracts: ['عقد مقاول باطن', 'Subcontract'],
+  sub_certs: ['شهادة دفع مقاول باطن', 'Subcontractor certificate'], pay_apps: ['طلب دفع', 'Payment application'], ipc: ['شهادة دفع مرحلية', 'Interim payment certificate'], documents: ['مرفق', 'Attachment'] };
+const m365SyncLine = y => {
+  const q = y.queue || {}, t = x => esc((x || '').slice(0, 16).replace('T', ' '));
+  return `<br><b>${tr('الحفظ التلقائي', 'Automatic saving')}</b>: ${y.on ? `<span class="ok">✔ ${tr('مفعّل', 'On')}</span>${y.attachments ? '' : ' · ' + tr('بدون المرفقات', 'without attachments')}${y.from ? ` · ${tr('من', 'from')} ${esc(y.from)}` : ''}` : `<span class="muted">${tr('متوقف', 'Off')}</span>`}
+    <br><span class="muted">${tr('بالانتظار', 'waiting')} ${q.queued || 0} · ${tr('إعادة محاولة', 'retrying')} ${q.retrying || 0} · ${tr('متوقف لخطأ', 'stopped')} ${q.stopped || 0} · ${tr('محفوظ', 'saved')} ${q.uploaded || 0}${y.last_run ? ` · ${tr('آخر تشغيل', 'last run')} ${t(y.last_run.at)}` : ''}</span>
+    ${(y.failures || []).length ? `<div class="tw"><table><tbody>${y.failures.map(f => `<tr><td>${tr(...(m365Names[f.entity] || [f.entity, f.entity]))} #${f.entity_id}</td><td>${esc(f.doc_type)}</td><td class="neg">${esc(f.error || '')}</td><td class="muted">${f.next_attempt_at ? `${tr('المحاولة التالية', 'next try')} ${t(f.next_attempt_at)}` : tr('لا إعادة تلقائية', 'no automatic retry')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${y.on ? `<br><button class="btn sec sm" id="m365syncnow">${tr('تشغيل الحفظ الآن', 'Run now')}</button>${(q.retrying || q.stopped) ? ` <button class="btn sec sm" id="m365retry">${tr('إعادة محاولة كل الفاشل', 'Retry all failed')}</button>` : ''}` : ''}`;
+};
 // Settings → Microsoft 365: the integrations (administrators see the configuration status and can test; users see their own mail status)
 window.m365IntegrationsCard = async el => {
   const st = await m365Ints(true); if (!st || window.STANDALONE || !el) return;
@@ -135,6 +149,7 @@ window.m365IntegrationsCard = async el => {
   el.innerHTML = `<div class="card"><h2>${tr('تكامل Microsoft 365', 'Microsoft 365 integration')}</h2>
     <p><b>SharePoint</b>: ${sp.enabled ? (sp.configured ? on(true, tr('مضبوط', 'Configured')) : `<span class="neg">✖ ${tr('ناقص', 'Incomplete')}${admin && sp.missing ? ': ' + esc(sp.missing.join(', ')) : ''}</span>`) : on(false)}
       ${admin && sp.configured ? `<br><span class="muted">${tr('الموقع', 'Site')}: ${esc(sp.site_name || '—')} · ${tr('المكتبة', 'Library')}: ${esc(sp.library_name || '—')} · ${tr('المجلد', 'Folder')}: ${esc(sp.root || '')} · ${tr('محفوظ', 'saved')} ${sp.documents?.uploaded || 0}, ${tr('فشل', 'failed')} ${sp.documents?.failed || 0}</span><br>${hl(sp.health)}` : ''}
+      ${admin && sp.configured && sp.sync ? m365SyncLine(sp.sync) : ''}
       ${admin && sp.configured ? `<br><button class="btn sec sm" id="m365sptest">${tr('اختبار الاتصال', 'Test connection')}</button> <button class="btn sec sm" id="m365mig">${tr('خطة نقل المرفقات (بدون تنفيذ)', 'Attachment migration plan (dry run)')}</button>` : ''}</p>
     <p><b>Outlook</b>: ${on(ol.enabled)} ${ol.enabled ? (st.me.can_send_mail ? `· <span class="ok">${tr('يمكنك الإرسال من بريدك', 'You can send from your mailbox')}</span>` : st.me.linked ? `· <span class="neg">${tr('أعد ربط حساب Microsoft للسماح بالإرسال', 'Reconnect your Microsoft account to allow sending')}</span>` : `· <span class="muted">${tr('اربط حساب Microsoft أولاً', 'Connect your Microsoft account first')}</span>`) : ''}
       ${admin && ol.health ? `<br>${hl(ol.health)}` : ''}${ol.enabled && st.me.linked ? `<br><button class="btn sec sm" id="m365oltest">${tr('اختبار (لا يرسل بريداً)', 'Test (sends nothing)')}</button>` : ''}</p>
@@ -142,6 +157,8 @@ window.m365IntegrationsCard = async el => {
       ${admin && tm.enabled ? `<br><span class="muted">${tm.amounts_shown ? tr('المبالغ تظهر في الإشعارات', 'Amounts are shown in notifications') : tr('المبالغ لا تظهر في الإشعارات', 'Amounts are not shown in notifications')}</span> ${hl(tm.health)}
         <br><button class="btn sec sm" id="m365tmtest">${tr('إرسال إشعار تجريبي', 'Send a test notification')}</button> <button class="btn sec sm" id="m365tmov">${tr('إرسال أوامر الشراء المتأخرة', 'Send overdue purchase orders')}</button>` : ''}</p></div>`;
   const b = (id, fn) => { const x = $(id, el); if (x) x.onclick = guard(fn); };
+  b('#m365syncnow', async () => { await api('POST', 'm365/sync/run', {}); toast(tr('بدأ الحفظ التلقائي الآن', 'Automatic saving started')); setTimeout(() => m365IntegrationsCard(el), 4000); });
+  b('#m365retry', async () => { const r = await api('POST', 'm365/sync/retry', {}); toast(`${r.requeued} ${tr('مستند أُعيد إلى القائمة', 'document(s) queued again')}`); setTimeout(() => m365IntegrationsCard(el), 4000); });
   b('#m365sptest', async () => { const r = await api('POST', 'm365/sharepoint/test', {}); toast(`✔ ${r.site_name} / ${r.library_name}`); m365IntegrationsCard(el); });
   b('#m365mig', async () => { const r = await api('POST', 'm365/migrate', { execute: false }); alert(`${tr('خطة فقط — لم يُرفع شيء', 'Plan only — nothing was uploaded')}\n${tr('للرفع', 'To upload')}: ${r.planned}\n${tr('موجود مسبقاً', 'Already there')}: ${r.unchanged}\n${tr('متجاوز', 'Skipped')}: ${r.skipped.length}`); });
   b('#m365oltest', async () => { const r = await api('POST', 'm365/outlook/test', {}); toast(`✔ ${r.mailbox || ''} ${r.can_send ? '' : '(' + tr('الإرسال غير مسموح بعد', 'sending not allowed yet') + ')'}`); });

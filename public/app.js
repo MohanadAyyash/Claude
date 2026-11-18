@@ -703,6 +703,7 @@ const ALERT = {
   service_overdue: a => `${tr('صيانة معدة متأخرة', 'Equipment service overdue')}: ${a.who}`,
   service_soon: a => `${tr('صيانة معدة قريبة', 'Equipment service due soon')}: ${a.who}${a.date ? ' (' + a.date + ')' : ''}`,
   schedule_late: a => `${tr('أنشطة تجاوزت تاريخ انتهائها في الجدول الزمني', 'Programme activities past their finish date')}: ${a.who} (${a.count})`,
+  m365_sync_failed: a => `${a.count} ${tr('مستند لم يُحفظ في SharePoint رغم إعادة المحاولة — راجع الإعدادات ← Microsoft 365', 'document(s) could not be saved to SharePoint after retrying — see Settings → Microsoft 365')}`,
   spend_pending: a => `${a.count} ${tr('طلب اعتماد صرف بانتظار قرارك', 'spend approval request(s) waiting')}`,
   backup_copy: a => `${tr('تعذّر نسخ النسخة الاحتياطية إلى المجلد الثاني', 'The backup could not be copied to the second folder')}: ${a.who}`,
   customer_trn: a => `${tr('عملاء بدون رقم ضريبي', 'Clients missing TRN')}: ${a.who}`,
