@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS site_reports(id INTEGER PRIMARY KEY, project_id INTEG
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, ts TEXT, user TEXT, action TEXT, tbl TEXT, rec INTEGER, detail TEXT);
 `);
 const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
-[['quotes','attention','TEXT'],['quotes','location','TEXT'],['quotes','plot_no','TEXT'],['quotes','noc_ref','TEXT'],['quotes','scope','TEXT'],['quotes','contract_basis','TEXT'],['quotes','payment_terms','TEXT'],['users','totp_secret','TEXT'],['users','totp_on','INTEGER DEFAULT 0'],['users','totp_last','INTEGER DEFAULT 0'],['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
+[['quotes','attention','TEXT'],['quotes','location','TEXT'],['quotes','plot_no','TEXT'],['quotes','noc_ref','TEXT'],['quotes','scope','TEXT'],['quotes','contract_basis','TEXT'],['quotes','payment_terms','TEXT'],['users','totp_secret','TEXT'],['sessions','method','TEXT'],['users','totp_on','INTEGER DEFAULT 0'],['users','totp_last','INTEGER DEFAULT 0'],['users','display_name','TEXT'],['users','job_title','TEXT'],['users','mobile','TEXT'],['users','employee_id','INTEGER'],['payments','reconciled','INTEGER DEFAULT 0'],['users','role',"TEXT DEFAULT 'admin'"],['projects','retention_pct','REAL DEFAULT 0'],['parties','bank_name','TEXT'],['parties','iban','TEXT'],['projects','emirate',"TEXT DEFAULT 'dubai'"],['invoices','kind',"TEXT DEFAULT 'invoice'"],['invoices','original_id','INTEGER'],['invoices','voided','INTEGER DEFAULT 0'],['invoices','void_reason','TEXT'],['payments','cheque_date','TEXT'],['payments','cheque_status',"TEXT DEFAULT 'cleared'"]].forEach(a => addCol(...a));
 
 // Editable columns per table (whitelist) and numeric columns
 const bad = m => { const e = new Error(m); e.status = 400; throw e; };
@@ -272,16 +272,23 @@ const fails = new Map();                                    // ip -> [timestamps
 const clientIp = req => (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',').pop().trim();
 const locked = (key, max = 8) => { const t = (fails.get(key) || []).filter(x => Date.now() - x < 15 * 60e3); if (fails.size > 5000) fails.clear(); fails.set(key, t); return t.length >= max; };
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32).toString('hex');
-function createSession(userId) {
+// how a session was signed in: 'password' (the ERP form), 'microsoft' (Entra sign-in), 'emergency' (/auth/emergency, password + ERP code)
+function createSession(userId, method = 'password') {
   const token = crypto.randomBytes(24).toString('hex');
-  db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(token, userId, Date.now());
+  db.prepare('INSERT INTO sessions(token,user_id,created,method) VALUES(?,?,?,?)').run(token, userId, Date.now(), method);
   return token;
 }
+let CTX = null;                                                              // (set below; the authentication mode comes from modules/authmode.js)
+const EMERGENCY_TTL = 12 * 3600e3;                                           // an emergency session lasts 12 hours, not 30 days
 function sessionUser(req) {
   const m = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
   if (!m) return null;
-  const s = db.prepare('SELECT user_id FROM sessions WHERE token=? AND created>?').get(m[1], Date.now() - 30 * 864e5);
-  return s ? db.prepare('SELECT id,username,role,employee_id FROM users WHERE id=? AND COALESCE(disabled,0)=0').get(s.user_id) : null;
+  const s = db.prepare('SELECT user_id, created, method FROM sessions WHERE token=? AND created>?').get(m[1], Date.now() - 30 * 864e5);
+  if (!s) return null;
+  if (s.method === 'emergency' && s.created < Date.now() - EMERGENCY_TTL) return null;
+  // microsoft-first: only Microsoft and emergency sessions count; password sessions made before the switch end with it
+  if (s.method !== 'microsoft' && s.method !== 'emergency' && CTX && CTX.authMode && CTX.authMode() === 'microsoft-first') return null;
+  return db.prepare('SELECT id,username,role,employee_id FROM users WHERE id=? AND COALESCE(disabled,0)=0').get(s.user_id);
 }
 
 // ---- http -----------------------------------------------------------------
@@ -393,9 +400,11 @@ const mailCfgFor = () => {
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
 ctx.siteScope = me => siteScope(me);
 ctx.isHttps = isHttps;
-ctx.createSession = createSession;                                             // Microsoft sign-in (Phase 1B) starts exactly the same session as the password login
-ctx.sessionCookie = (req, token) => cookie(req, token, 2592000);
+ctx.createSession = createSession; CTX = ctx;                                             // Microsoft sign-in (Phase 1B) starts exactly the same session as the password login
+ctx.sessionCookie = (req, token, maxAge = 2592000) => cookie(req, token, maxAge);
+ctx.startedAt = new Date().toISOString();                                     // to confirm a restart really started a new process
 ctx.clientIp = clientIp;
+ctx.passwordOk = (u, pw) => !!u && typeof pw === 'string' && crypto.timingSafeEqual(Buffer.from(hashPw(pw, u.salt)), Buffer.from(u.hash));   // the password login's own check (for /auth/emergency)
 ctx.applyPayroll = (...a) => applyPayroll(...a);
 // brand e-mail signature: Arial text block + the one-line logo as an inline image
 ctx.signature = user => {
@@ -403,7 +412,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -411,7 +420,7 @@ async function api(req, res, url) {
   const [a, b, c] = parts, method = req.method;
 
   if (a === 'health' && method === 'GET') { const h = ctx.health(); return send(res, h.ok ? 200 : 503, h, { 'Cache-Control': 'no-store' }); }   // uptime monitors (no login, no data)
-  if (a === 'status') return send(res, 200, { setup: db.prepare('SELECT COUNT(*) n FROM users').get().n === 0, token_required: !!process.env.SETUP_TOKEN, user: sessionUser(req), m365_login: !!(ctx.m365LoginAvailable && ctx.m365LoginAvailable()) });
+  if (a === 'status') return send(res, 200, { setup: db.prepare('SELECT COUNT(*) n FROM users').get().n === 0, token_required: !!process.env.SETUP_TOKEN, user: sessionUser(req), m365_login: !!(ctx.m365LoginAvailable && ctx.m365LoginAvailable()), auth_mode: ctx.authMode ? ctx.authMode() : 'hybrid' });
   if (a === 'setup' && method === 'POST') {
     if (db.prepare('SELECT COUNT(*) n FROM users').get().n) return send(res, 403, { error: 'already set up' });
     const { username, password, company, token } = await readBody(req);
@@ -425,6 +434,8 @@ async function api(req, res, url) {
     return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(r.lastInsertRowid), 2592000) });
   }
   if (a === 'login' && method === 'POST') {
+    // microsoft-first: the password form is off for everyone (checked before the password, so it reveals nothing); emergency: /auth/emergency
+    if (ctx.authMode && ctx.authMode() === 'microsoft-first') return send(res, 403, { error: 'Password sign-in is switched off on this server. Use "Sign in with Microsoft".', auth_mode: 'microsoft-first' });
     const { username, password, code } = await readBody(req), ip = clientIp(req), acct = 'user:' + String(username || '').toLowerCase();
     if (locked(ip) | locked(acct, 12)) return send(res, 429, { error: 'too many failed attempts — try again in 15 minutes' });   // per address and per account (both lists are refreshed)
     const u = db.prepare('SELECT * FROM users WHERE username=?').get(username || '');
@@ -437,7 +448,7 @@ async function api(req, res, url) {
       if (!step) { fails.set(acct, [...(fails.get(acct) || []), Date.now()]); return send(res, 401, { error: 'the code is not correct — check the time on your phone and try the next code', need_code: true }); }
       db.prepare('UPDATE users SET totp_last=? WHERE id=?').run(step, u.id);
     }
-    return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(u.id), 2592000) });
+    return send(res, 200, { ok: 1 }, { 'Set-Cookie': cookie(req, createSession(u.id, 'password'), 2592000) });
   }
   if (a === 'logout') {
     const m = /sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
@@ -920,6 +931,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname.startsWith('/auth/microsoft') && ctx.m365Auth && await ctx.m365Auth(req, res, url)) return;   // Microsoft 365 link (OAuth redirect and callback)
+    if (url.pathname === '/auth/emergency' && ctx.emergencyAuth && await ctx.emergencyAuth(req, res, url)) return;   // break-glass administrator sign-in
     if ((url.pathname.startsWith('/q/') || url.pathname.startsWith('/pub/q/')) && ctx.publicHandler && await ctx.publicHandler(req, res, url)) return;   // client quote acceptance (no login)
     let p = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
     if (p === '/' || p === '\\') p = '/index.html';

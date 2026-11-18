@@ -24,7 +24,7 @@ self.addEventListener('fetch', e => {
   }
   if (url.pathname.startsWith('/api/')) return;                                          // data: always live
   if (url.pathname.startsWith('/q/') || url.pathname.startsWith('/pub/')) return;           // client-facing quotation pages: always from the server
-  if (url.pathname === '/auth/microsoft' || url.pathname.startsWith('/auth/microsoft/')) return;   // Microsoft 365 sign-in and its callback: always the server (a cached page here is a blank screen)
+  if (url.pathname === '/auth' || url.pathname.startsWith('/auth/')) return;   // every sign-in page (Microsoft link / sign-in and callbacks, emergency): always the server (a cached page here is a blank screen)
   if (url.pathname.includes('/guide/')) return;                                            // the user guide is its own page (and large images): straight from the server
   if (req.mode === 'navigate') { e.respondWith(caches.match('index.html').then(r => r || fetch(req))); return; }   // hash routes → one page
   e.respondWith(caches.match(req, { ignoreSearch: true }).then(r => r || fetch(req).then(res => {

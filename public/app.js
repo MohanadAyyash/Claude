@@ -72,7 +72,15 @@ function authBox(title, extra, btn, onsubmit, after = '') {
 }
 // Microsoft sign-in (Phase 1B): a plain navigation to the server (never through the service worker); the password login stays as it is
 const msButton = st => st && st.m365_login ? `<a class="btn sec" id="mslogin" href="/auth/microsoft/login" style="width:100%;display:block;text-align:center;margin-top:10px;box-sizing:border-box;text-decoration:none">${tr('تسجيل الدخول باستخدام Microsoft', 'Sign in with Microsoft')}</a>` : '';
-const loginScreen = st => authBox(tr('تسجيل الدخول', 'Sign in'), `<div class="f" id="codef" style="display:none"><label>${tr('رمز التحقق من تطبيق المصادقة', 'Code from your authenticator app')}</label><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" dir="ltr"></div>`, tr('دخول', 'Sign in'), d => api('POST', 'login', d), msButton(st));
+// AUTH_MODE=microsoft-first: Microsoft is the way in, no password form; a plain (not hidden) link for the emergency administrator
+const msFirstScreen = () => {
+  $('#app').innerHTML = `<div class="login" style="text-align:center"><img class="logo" src="/api/brand/logo" alt="" onerror="this.remove()"><h2>${tr('تسجيل الدخول', 'Sign in')}</h2>
+    <a class="btn" id="mslogin" href="/auth/microsoft/login" style="width:100%;display:block;text-align:center;box-sizing:border-box;text-decoration:none">${tr('تسجيل الدخول باستخدام Microsoft', 'Sign in with Microsoft')}</a>
+    <p style="margin-top:28px"><a href="/auth/emergency" id="emlink" class="muted" style="font-size:12px">${tr('دخول المسؤول للطوارئ', 'Emergency administrator sign-in')}</a></p>
+    <p><a href="#" id="lg" class="muted">${lang === 'ar' ? 'English' : 'عربي'}</a></p></div>`;
+  $('#lg').onclick = e => { e.preventDefault(); lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
+};
+const loginScreen = st => st && st.auth_mode === 'microsoft-first' ? msFirstScreen() : authBox(tr('تسجيل الدخول', 'Sign in'), `<div class="f" id="codef" style="display:none"><label>${tr('رمز التحقق من تطبيق المصادقة', 'Code from your authenticator app')}</label><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" dir="ltr"></div>`, tr('دخول', 'Sign in'), d => api('POST', 'login', d), msButton(st));
 const setupScreen = needToken => authBox(tr('إعداد النظام لأول مرة', 'First-time setup'),
   `<div class="f"><label>${tr('اسم الشركة', 'Company name')}</label><input name="company"></div>${needToken ? `<div class="f"><label>${tr('رمز الإعداد السري (من ملف .env على الخادم)', 'Setup token (from the .env file on the server)')}</label><input name="token" required></div>` : ''}`, tr('إنشاء الحساب', 'Create account'), d => api('POST', 'setup', d));
 

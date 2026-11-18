@@ -79,7 +79,11 @@ window.m365Card = async el => {
     return;
   }
   const c = s.connection;
-  el.innerHTML = `<div class="card">${head}
+  // administrators: the sign-in mode and the emergency accounts (names and problems only)
+  const au = ME.role === 'admin' && s.auth, modeName = m => m === 'microsoft-first' ? tr('Microsoft أولاً', 'Microsoft first') : tr('مختلط (Microsoft + كلمة المرور)', 'Hybrid (Microsoft + password)');
+  const authLine = au ? `<p class="muted">${tr('طريقة الدخول', 'Sign-in mode')}: <b>${modeName(au.mode)}</b>${au.requested !== au.mode ? ` — <span class="neg">${tr('المطلوب', 'requested')}: ${esc(au.requested)}; ${esc(au.reason || '')}</span>` : ''}
+    ${au.emergency_admins.length ? `<br>${tr('مسؤولو الطوارئ', 'Emergency administrators')}: ${au.emergency_admins.map(e => `<span dir="ltr">${esc(e.username)}</span> ${e.ok ? '✔' : `<span class="neg">✖ ${esc(e.problems.join(', '))}</span>`}`).join(' · ')}` : ''}</p>` : '';
+  el.innerHTML = `<div class="card">${head}${authLine}
     <p class="muted">${tr('اربط حسابك في النظام بحساب Microsoft الخاص بك لتتمكن من الدخول بزر «تسجيل الدخول باستخدام Microsoft». صلاحياتك في النظام لا تتغير، والدخول بكلمة المرور يبقى متاحاً. الصلاحية المطلوبة من Microsoft: قراءة ملفك الشخصي فقط.', 'Link your account in the system to your own Microsoft account to use "Sign in with Microsoft". Your permissions in the system do not change and the password sign-in stays available. Microsoft permission asked: read your profile only.')}</p>
     ${c ? `<p class="ok">✔ ${tr('مرتبط', 'Connected')}: <b dir="ltr">${esc(c.email || '')}</b>${c.display_name ? ' — ' + esc(c.display_name) : ''} <span class="muted">(${esc((c.linked_at || '').slice(0, 16).replace('T', ' '))})</span></p>
       <button class="btn sec" id="m365chk">${tr('فحص الربط', 'Check the link')}</button> <button class="btn bad" id="m365off">${tr('فصل الربط', 'Disconnect')}</button>

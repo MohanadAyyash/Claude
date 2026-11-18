@@ -1914,7 +1914,7 @@ When the administrator has switched on the Microsoft 365 link, the sign-in page 
 - Microsoft checks who you are, including its own two-step check (MFA) if your organisation requires it; the ERP then opens **your existing account with its usual role and permissions**.
 - The ERP's own two-step code is not asked when you sign in with Microsoft. Your organisation's Microsoft sign-in rules apply instead.
 - A disabled ERP account, a removed link or a different Microsoft account cannot sign in.
-- The username and password sign-in stays available.
+- The username and password sign-in stays available, unless the administrator switches the server to **Microsoft first**: then the sign-in page shows only **Sign in with Microsoft**, and a small **Emergency administrator sign-in** link that only the designated emergency administrator can use (password + two-step code).
 
 ---
 
