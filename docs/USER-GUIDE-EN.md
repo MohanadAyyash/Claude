@@ -60,6 +60,7 @@
 44. [Microsoft 365: SharePoint, Outlook and Teams](#44-microsoft-365-sharepoint-outlook-and-teams)
 45. [Partners: capital, loans and current accounts](#45-partners-capital-loans-and-current-accounts)
 46. [Expense claims and employee statements](#46-expense-claims-and-employee-statements)
+47. [Petty cash held by employees](#47-petty-cash-held-by-employees)
 
 ---
 
@@ -1155,7 +1156,8 @@ Menu: **Assets & equipment**.
 Menu: **Petty cash**.
 1. **+ Top up**: **Date**, **Amount**, **Note** → **Save**.
 2. **+ Cash expense**: **Date**, **Project**, **Category**, **Description**, **Amount (ex VAT)**, VAT → **Save**. It is booked as a project expense and paid from the float.
-3. The page shows the **Petty cash balance**. Keep a receipt or tax invoice for each expense.
+3. The page shows the **office float**. Keep a receipt or tax invoice for each expense.
+4. Petty cash that an employee carries (engineer, foreman…) is kept in that employee's name further down the same page: see section 47.
 
 <!--img-->
 
@@ -2106,3 +2108,19 @@ An **expense claim** = an employee paid a company expense from own money (fuel, 
 - Employees see their own statement in **My account & claims**.
 
 **Notes:** the payments of claims are kept from these pages only. A closed period blocks approving or paying with a date inside it. The daily check confirms the statements equal the general ledger (a manual journal on 2200 or 1300 shows as a warning). Claims with no supplier are not sent to Zoho (record them there by hand).
+
+---
+
+## 47. Petty cash held by employees
+
+Every employee who carries petty cash has a balance in their own name, separate from the office float.
+
+1. **Request:** the employee → **My account & claims** → **+ Request petty cash**: amount and purpose.
+2. **Approval:** **Expense claims** → "Petty cash requests waiting for approval". Same rule: manager and administrator any amount, accountant up to the limit, nobody their own request.
+3. **Hand-over:** the accountant → **Petty cash** → "Approved requests to hand over" → **Hand over**: date, cash or bank → **Save** → print the **acknowledgement** for the employee to sign (English and Arabic). Only the administrator can hand over directly without a request.
+4. **Spending:** the employee records each expense as an **Expense claim** → **Paid from: the petty cash I hold**, with the receipt photo. Once approved it is booked on the project and taken off the employee's petty cash. More than what is available cannot be recorded.
+5. **Return:** **Receive what is left**: employee, amount, cash or bank. Amounts in expenses waiting for approval cannot be received back: approve or reject them first.
+
+**The employee statement** shows "Petty cash held" in brackets (owed by the employee until spent with receipts or returned). It must be zero when the employee leaves.
+
+**Notes:** the office float at the top of the page is not affected by employees' petty cash. A hand-over that was already spent cannot be deleted. A closed period blocks hand-overs and returns dated inside it. The daily check confirms that employees' petty cash plus the office float equal account 1010 in the general ledger.

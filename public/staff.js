@@ -21,8 +21,9 @@ function staffStatementHtml(s) {
 }
 
 // a claim form (my own, or entered by the accounts for an employee)
-async function claimForm({ forEmployee, after }) {
-  const [projects, emps] = await Promise.all([api('GET', 'projects').catch(() => []), forEmployee ? api('GET', 'employees').catch(() => []) : Promise.resolve([])]);
+async function claimForm({ forEmployee, after, custody }) {
+  const [projects, emps, mine] = await Promise.all([api('GET', 'projects').catch(() => []), forEmployee ? api('GET', 'employees').catch(() => []) : Promise.resolve([]), forEmployee ? Promise.resolve(null) : api('GET', 'me/petty').catch(() => null)]);
+  const avail = mine ? mine.available : null;
   const m = modal(`<h2>${tr('مطالبة مصروف دفعته من مالك', 'Claim an expense you paid from your own money')}</h2>
     <p class="muted">${tr('أرفق صورة الإيصال أو الفاتورة. بعد الموافقة يُسجَّل المصروف على المشروع ويصبح المبلغ مستحقاً لك حتى يُصرف.', 'Attach a photo of the receipt or invoice. Once approved, the expense is booked on the project and the amount is owed to you until it is paid.')}</p>
     <div class="f2">${forEmployee ? field({ k: 'employee_id', ar: 'الموظف', en: 'Employee', type: 'select', options: emps.filter(e => e.status === 'active').map(e => [e.id, e.name]) }, '') : ''}
@@ -31,11 +32,12 @@ async function claimForm({ forEmployee, after }) {
     ${field({ k: 'category', ar: 'البند', en: 'Category', type: 'select', options: CL_CATS() }, 'other')}
     ${field({ k: 'project_id', ar: 'المشروع', en: 'Project', type: 'select', options: refOpts(projects, p => `${p.code || ''} ${p.name}`) }, '')}
     ${field({ k: 'reference', ar: 'رقم الإيصال / الفاتورة', en: 'Receipt / invoice no.' }, '')}
+    ${field({ k: 'paid_from', ar: 'دُفع من', en: 'Paid from', type: 'select', options: [['own', tr('مالي الخاص (أستردّه)', 'My own money (to be paid back)')], ['custody', tr('العهدة النقدية التي بحوزتي', 'The petty cash I hold') + (avail != null ? ` — ${money(avail)}` : '')]] }, custody ? 'custody' : 'own')}
     <div class="f"><label>${tr('صورة الإيصال (صورة أو PDF)', 'Receipt (photo or PDF)')}</label><input type="file" name="receipt" accept="image/*,application/pdf" capture="environment"></div></div>
     <div class="acts"><button class="btn" id="save">${tr('إرسال للموافقة', 'Send for approval')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button></div>`, true);
   $('#cancel', m).onclick = closeModal;
   $('#save', m).onclick = guard(async () => {
-    const b = {}; for (const k of ['employee_id', 'date', 'description', 'amount', 'vat_amount', 'category', 'project_id', 'reference']) b[k] = val(m, k);
+    const b = {}; for (const k of ['employee_id', 'date', 'description', 'amount', 'vat_amount', 'category', 'project_id', 'reference', 'paid_from']) b[k] = val(m, k);
     const f = m.querySelector('[name=receipt]').files[0];
     if (f && f.size > 8 * 1024 * 1024) throw new Error(tr('الملف أكبر من ٨ ميغابايت', 'The file is larger than 8 MB'));
     const r = await api('POST', forEmployee ? 'expense_claims' : 'me/claims', b);
@@ -47,14 +49,20 @@ async function claimForm({ forEmployee, after }) {
 // ---------------- my account & claims ----------------
 PAGES.myaccount = async () => {
   if (!ME.employee_id) return main(`<h1>${tr('حسابي ومطالباتي', 'My account & claims')}</h1><div class="card"><p>${tr('حسابك غير مربوط بملف موظف. يربطه المسؤول من الإعدادات ← المستخدمين.', 'Your account is not linked to an employee record. The administrator links it in Settings → Users.')}</p></div>`);
-  const [s, claims] = await Promise.all([api('GET', 'me/statement'), api('GET', 'me/claims')]);
-  main(`<div class="bar"><h1>${tr('حسابي ومطالباتي', 'My account & claims')} — ${esc(s.employee.name)}</h1><span class="sp"></span><button class="btn" id="nc">+ ${tr('مطالبة مصروف', 'Expense claim')}</button></div>
+  const [s, claims, pc] = await Promise.all([api('GET', 'me/statement'), api('GET', 'me/claims'), api('GET', 'me/petty').catch(() => null)]);
+  const RQ = { pending: CL_ST.pending, approved: ['موافق عليه — بانتظار التسليم', 'Approved — to be handed over'], rejected: CL_ST.rejected, paid: ['سُلِّم', 'Handed over'] };
+  main(`<div class="bar"><h1>${tr('حسابي ومطالباتي', 'My account & claims')} — ${esc(s.employee.name)}</h1><span class="sp"></span><button class="btn" id="nc">+ ${tr('مطالبة مصروف', 'Expense claim')}</button><button class="btn sec" id="pr">+ ${tr('طلب عهدة نقدية', 'Request petty cash')}</button></div>
+  ${pc ? `<div class="grid"><div class="kpi"><div class="l">${tr('العهدة النقدية بحوزتي', 'Petty cash I hold')}</div><div class="v">${money(pc.held)}</div></div><div class="kpi"><div class="l">${tr('المتاح للصرف (بعد المصاريف بانتظار الموافقة)', 'Available (after expenses waiting for approval)')}</div><div class="v">${money(pc.available)}</div></div></div>
+    ${pc.held > 0.005 ? `<p class="muted">${tr('سجّل كل ما تصرفه من العهدة بـ «مطالبة مصروف» ← دُفع من: العهدة، مع صورة الإيصال. يُرجَع الباقي للمحاسب.', 'Record everything you spend from the petty cash as an "Expense claim" → Paid from: the petty cash, with the receipt photo. Return what is left to the accountant.')}</p>` : ''}
+    ${pc.requests.length ? `<div class="tw"><table><tbody>${pc.requests.map(r => `<tr><td>${esc(String(r.created || '').slice(0, 10))}</td><td>${esc(r.purpose || '')}${r.decision_note ? `<br><span class="muted">${esc(r.decision_note)}</span>` : ''}</td><td class="n">${money(r.amount)}</td><td><span class="pill">${tr(...(RQ[r.status] || [r.status, r.status]))}</span></td><td>${r.status === 'pending' ? `<button class="btn sec sm" data-wr="${r.id}">${tr('سحب', 'Withdraw')}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}` : ''}
   <h2>${tr('مطالباتي', 'My expense claims')}</h2><div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('البيان', 'Description')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th>${tr('الحالة', 'Status')}</th><th>${tr('الإيصال', 'Receipt')}</th><th></th></tr></thead><tbody>
-  ${claims.map(c => `<tr><td>${esc(c.date)}</td><td>${esc(c.description)}${c.project_name ? ` <span class="muted">· ${esc(c.project_name)}</span>` : ''}${c.decision_note ? `<br><span class="muted">${esc(c.decision_note)}</span>` : ''}</td><td class="n">${money(c.total)}</td><td>${clPill(c.status)}</td>
+  ${claims.map(c => `<tr><td>${esc(c.date)}</td><td>${esc(c.description)}${c.project_name ? ` <span class="muted">· ${esc(c.project_name)}</span>` : ''}${c.paid_from === 'custody' ? ` <span class="pill">${tr('من العهدة', 'from petty cash')}</span>` : ''}${c.decision_note ? `<br><span class="muted">${esc(c.decision_note)}</span>` : ''}</td><td class="n">${money(c.total)}</td><td>${clPill(c.status)}</td>
     <td>${(c.receipts || []).length ? `📎 ${c.receipts.length}` : c.status === 'pending' ? `<label class="btn sec sm">${tr('إرفاق', 'Attach')}<input type="file" data-rc="${c.id}" accept="image/*,application/pdf" capture="environment" hidden></label>` : '—'}</td>
     <td>${c.status === 'pending' ? `<button class="btn sec sm" data-wd="${c.id}">${tr('سحب', 'Withdraw')}</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="6" class="muted">${tr('لا توجد مطالبات', 'No claims')}</td></tr>`}</tbody></table></div>
   <h2 style="margin-top:16px">${tr('كشف حسابي', 'My statement')}</h2>${staffStatementHtml(s)}`);
   $('#nc').onclick = () => claimForm({ forEmployee: false, after: render });
+  $('#pr').onclick = () => simpleModal({ title: tr('طلب عهدة نقدية', 'Request petty cash'), table: 'me/petty/requests', after: render, fields: [{ k: 'amount', ar: 'المبلغ', en: 'Amount', type: 'number', req: 1 }, { k: 'purpose', ar: 'لأي غرض؟', en: 'What is it for?', req: 1, full: 1 }] });
+  document.querySelectorAll('[data-wr]').forEach(b => b.onclick = guard(async () => { if (confirm(tr('سحب هذا الطلب؟', 'Withdraw this request?'))) { await api('DELETE', 'me/petty/requests/' + b.dataset.wr); render(); } }));
   document.querySelectorAll('[data-wd]').forEach(b => b.onclick = guard(async () => { if (confirm(tr('سحب هذه المطالبة؟', 'Withdraw this claim?'))) { await api('DELETE', 'me/claims/' + b.dataset.wd); render(); } }));
   document.querySelectorAll('[data-rc]').forEach(inp => inp.onchange = guard(async () => {
     const f = inp.files[0]; if (!f) return; const data = await new Promise((ok, no) => { const rd = new FileReader(); rd.onload = () => ok(rd.result); rd.onerror = no; rd.readAsDataURL(f); });
@@ -64,16 +72,22 @@ PAGES.myaccount = async () => {
 
 // ---------------- expense claims (approvers, accounts) ----------------
 PAGES.claims = async () => {
-  const st = sessionStorage.clSt ?? 'pending', d = await api('GET', `expense_claims${st ? '?status=' + st : ''}`), fin = ['admin', 'accountant'].includes(ME.role);
+  const st = sessionStorage.clSt ?? 'pending', fin = ['admin', 'accountant'].includes(ME.role);
+  const [d, preqs] = await Promise.all([api('GET', `expense_claims${st ? '?status=' + st : ''}`), api('GET', 'petty_requests?status=pending').catch(() => [])]);
   main(`<div class="bar"><h1>${tr('مطالبات مصاريف الموظفين', 'Employee expense claims')}</h1><span class="sp"></span>
     <select id="st" style="width:auto">${[['pending', ...CL_ST.pending], ['approved', ...CL_ST.approved], ['rejected', ...CL_ST.rejected], ['', 'الكل', 'All']].map(([k, a, e]) => `<option value="${k}" ${k === st ? 'selected' : ''}>${tr(a, e)}</option>`).join('')}</select>
     <button class="btn" id="nc">+ ${tr('مطالبة لموظف', 'Claim for an employee')}</button>${fin ? `<button class="btn" id="rb">${tr('صرف للموظف', 'Reimburse an employee')}</button>` : ''}${ME.role === 'admin' ? `<button class="btn sec" id="lim">${tr('حد موافقة المحاسب', 'Accountant\'s limit')}</button>` : ''}</div>
   <p class="muted">${tr('المدير والمسؤول يوافقان على أي مبلغ؛ المحاسب حتى', 'The manager and the administrator approve any amount; the accountant up to')} <b>${d.accountant_limit ? money(d.accountant_limit) : tr('(لم يُحدَّد)', '(not set)')}</b>. ${tr('لا أحد يوافق على مطالبته.', 'Nobody approves their own claim.')}</p>
   <div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('الموظف', 'Employee')}</th><th>${tr('البيان', 'Description')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th>${tr('الإيصال', 'Receipt')}</th><th>${tr('الحالة', 'Status')}</th><th></th></tr></thead><tbody>
-  ${d.rows.map(c => `<tr><td>${esc(c.date)}</td><td>${esc(c.employee_name)}</td><td>${esc(c.description)}${c.project_name ? ` <span class="muted">· ${esc(c.project_name)}</span>` : ''}${c.reference ? ` <span class="muted">· ${esc(c.reference)}</span>` : ''}${c.decision_note ? `<br><span class="muted">${esc(c.decided_by || '')}: ${esc(c.decision_note)}</span>` : ''}</td>
+  ${d.rows.map(c => `<tr><td>${esc(c.date)}</td><td>${esc(c.employee_name)}</td><td>${esc(c.description)}${c.project_name ? ` <span class="muted">· ${esc(c.project_name)}</span>` : ''}${c.reference ? ` <span class="muted">· ${esc(c.reference)}</span>` : ''}${c.paid_from === 'custody' ? ` <span class="pill">${tr('من العهدة', 'from petty cash')}</span>` : ''}${c.decision_note ? `<br><span class="muted">${esc(c.decided_by || '')}: ${esc(c.decision_note)}</span>` : ''}</td>
     <td class="n">${money(c.total)}${c.vat_amount ? `<br><span class="muted">${tr('ضريبة', 'VAT')} ${money(c.vat_amount)}</span>` : ''}</td><td>${receiptsCell(c)}</td><td>${clPill(c.status)}</td>
     <td>${c.can_decide ? `<button class="btn sm" data-ok="${c.id}">${tr('موافقة', 'Approve')}</button> <button class="btn sec sm" data-no="${c.id}">${tr('رفض', 'Reject')}</button>` : c.block ? `<span class="muted" title="${esc(c.block)}">🔒</span>` : ''}
       ${c.status === 'approved' && ME.role === 'admin' ? `<button class="btn sec sm" data-undo="${c.id}">${tr('إلغاء الموافقة', 'Take back')}</button>` : ''}${c.status !== 'approved' && fin ? `<button class="btn sec sm" data-del="${c.id}">×</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="7" class="muted">—</td></tr>`}</tbody></table></div>`);
+  $('#main').insertAdjacentHTML('beforeend', `<h2 style="margin-top:16px">${tr('طلبات العهدة النقدية بانتظار الموافقة', 'Petty cash requests waiting for approval')}</h2><div class="tw"><table><tbody>
+    ${preqs.map(r => `<tr><td>${esc(String(r.created || '').slice(0, 10))}</td><td>${esc(r.employee_name)}</td><td>${esc(r.purpose || '')}<br><span class="muted">${tr('بحوزته حالياً', 'Holds now')}: ${money(r.held)}</span></td><td class="n">${money(r.amount)}</td>
+      <td>${r.can_decide ? `<button class="btn sm" data-pok="${r.id}">${tr('موافقة', 'Approve')}</button> <button class="btn sec sm" data-pno="${r.id}">${tr('رفض', 'Reject')}</button>` : `<span class="muted" title="${esc(r.block || '')}">🔒</span>`}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>`);
+  document.querySelectorAll('[data-pok]').forEach(b => b.onclick = guard(async () => { await api('POST', `petty_requests/${b.dataset.pok}/decide`, { status: 'approved' }); toast(tr('تمت الموافقة — يسلّمها المحاسب من صفحة العهدة', 'Approved — the accountant hands it over from Petty cash')); render(); }));
+  document.querySelectorAll('[data-pno]').forEach(b => b.onclick = guard(async () => { const note = prompt(tr('سبب الرفض:', 'Reason for the rejection:')); if (!note) return; await api('POST', `petty_requests/${b.dataset.pno}/decide`, { status: 'rejected', note }); render(); }));
   $('#st').onchange = e => { sessionStorage.clSt = e.target.value; render(); };
   $('#nc').onclick = () => claimForm({ forEmployee: true, after: render });
   document.querySelectorAll('[data-ok]').forEach(b => b.onclick = guard(async () => { await api('POST', `expense_claims/${b.dataset.ok}/decide`, { status: 'approved', note: '' }); toast(tr('تمت الموافقة', 'Approved')); render(); }));
@@ -117,3 +131,41 @@ PAGES.staffaccounts = async id => {
   <tfoot><tr><td><b>${tr('الإجمالي', 'Total')}</b></td>${keys.map(k => `<td class="n"><b>${sSigned(d.totals[k])}</b></td>`).join('')}<td class="n"><b>${sSigned(d.totals.total)}</b></td></tr></tfoot></table></div>`);
   document.querySelectorAll('tr[data-e]').forEach(r => r.onclick = () => go('staffaccounts/' + r.dataset.e));
 };
+
+// ---------------- petty cash per employee (added under the existing Petty cash page) ----------------
+{
+  const officePetty = PAGES.petty;
+  PAGES.petty = async () => {
+    await officePetty();
+    const [d, banks] = await Promise.all([api('GET', 'petty_custody'), api('GET', 'bank_accounts').catch(() => [])]);
+    const fin = ['admin', 'accountant'].includes(ME.role);
+    $('#main').insertAdjacentHTML('beforeend', `<h2 style="margin-top:20px">${tr('العهدة النقدية بحوزة الموظفين', 'Petty cash held by employees')}</h2>
+    <div class="bar">${fin ? `<button class="btn" id="ho">${tr('تسليم عهدة', 'Hand over petty cash')}</button><button class="btn sec" id="rt">${tr('استلام المتبقي', 'Receive what is left')}</button>` : ''}
+      <span class="muted">${tr('بحوزة الموظفين', 'Held by employees')}: <b>${money(d.held_by_employees)}</b></span></div>
+    ${d.approved_requests.length ? `<div class="card" style="border-color:var(--warn)"><b>${tr('طلبات معتمدة بانتظار التسليم', 'Approved requests to hand over')}</b>${d.approved_requests.map(r => `<div>${esc(r.employee_name)} — ${money(r.amount)} — ${esc(r.purpose || '')} ${fin ? `<button class="btn sm" data-hr="${r.id}">${tr('تسليم', 'Hand over')}</button>` : ''}</div>`).join('')}</div>` : ''}
+    <div class="tw"><table><thead><tr><th>${tr('الموظف', 'Employee')}</th><th class="n">${tr('بحوزته', 'Holds')}</th><th class="n">${tr('مصاريف بانتظار الموافقة', 'Expenses waiting')}</th><th></th></tr></thead><tbody>
+    ${d.custodians.map(c => `<tr><td>${esc(c.name)}${c.status && c.status !== 'active' ? ` <span class="neg">(${esc(c.status)})</span>` : ''}</td><td class="n">${money(c.held)}</td><td class="n">${c.pending ? money(c.pending) : '—'}</td><td><a class="btn sec sm" onclick="go('staffaccounts/${c.id}')">${tr('كشفه', 'Statement')}</a></td></tr>`).join('') || `<tr><td colspan="4" class="muted">—</td></tr>`}</tbody></table></div>
+    <h2>${tr('التسليمات والاستلامات', 'Hand-overs and returns')}</h2><div class="tw"><table><tbody>
+    ${d.handovers.map(t => `<tr><td>${esc(t.date)}</td><td>${esc(t.employee_name)}</td><td>${t.kind === 'return' ? tr('إرجاع للشركة', 'Returned') : tr('تسليم', 'Handed over')} · ${t.method === 'cash' ? tr('نقداً', 'cash') : tr('بنك', 'bank')}${t.note ? ` · ${esc(t.note)}` : ''}</td><td class="n">${money(t.amount)}</td>
+      <td>${t.kind !== 'return' ? `<a class="btn sec sm" target="_blank" href="/api/doc/custody_receipt/${t.id}?print=1">${tr('إقرار استلام', 'Acknowledgement')}</a>` : ''} ${fin ? `<button class="btn sec sm" data-dh="${t.id}">×</button>` : ''}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>`);
+    const form = async (kind, preset) => {
+      const people = kind === 'return' ? d.custodians.filter(c => c.held > 0.005) : null, emps = kind !== 'return' && !preset ? (await api('GET', 'employees')).filter(e => e.status === 'active') : null;
+      const fields = [kind === 'return' ? { k: 'employee_id', ar: 'الموظف', en: 'Employee', type: 'select', options: people.map(c => [c.id, `${c.name} — ${money(c.held)}`]) }
+        : preset ? { k: 'employee_id', type: 'hidden' } : { k: 'employee_id', ar: 'الموظف', en: 'Employee', type: 'select', options: emps.map(e => [e.id, e.name]) },
+        ...(!preset && kind !== 'return' ? [{ k: 'note', ar: 'الغرض', en: 'Purpose' }] : []),
+        { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date', def: today() }, { k: 'amount', ar: 'المبلغ', en: 'Amount', type: 'number', req: 1, def: preset ? preset.amount : (people && people[0] ? people[0].held : '') },
+        { k: 'method', ar: kind === 'return' ? 'استُلم' : 'سُلِّم', en: kind === 'return' ? 'Received' : 'Paid', type: 'select', options: [['cash', tr('نقداً', 'Cash')], ['bank', tr('بنك', 'Bank')]], def: 'cash' },
+        { k: 'bank_account_id', ar: 'الحساب البنكي (للبنك)', en: 'Bank account (if bank)', type: 'select', options: banks.filter(b => b.active).map(b => [b.id, b.name]) }, { k: 'reference', ar: 'المرجع', en: 'Reference' },
+        { k: 'request_id', type: 'hidden' }];
+      const m = modal(`<h2>${kind === 'return' ? tr('استلام المتبقي من العهدة', 'Receive what is left of the petty cash') : `${tr('تسليم عهدة', 'Hand over petty cash')}${preset ? ' — ' + esc(preset.employee_name) : ' ' + tr('(مباشرة، بدون طلب: المسؤول فقط)', '(directly, without a request: administrator only)')}`}</h2><div class="f2">${fields.map(f => field(f, f.k === 'employee_id' && preset ? preset.employee_id : f.k === 'request_id' && preset ? preset.id : f.def)).join('')}</div>
+        <div class="acts"><button class="btn" id="save">${tr('حفظ', 'Save')}</button><button class="btn sec" id="cancel">${tr('إلغاء', 'Cancel')}</button></div>`);
+      $('#cancel', m).onclick = closeModal;
+      $('#save', m).onclick = guard(async () => { const b = {}; fields.forEach(f => b[f.k] = val(m, f.k)); const r = await api('POST', `petty_custody/${kind === 'return' ? 'return' : 'handover'}`, b); closeModal(); render();
+        if (kind !== 'return' && confirm(tr('طباعة إقرار الاستلام ليوقّعه الموظف؟', 'Print the acknowledgement for the employee to sign?'))) window.open(`/api/doc/custody_receipt/${r.id}?print=1`, '_blank'); });
+    };
+    document.querySelectorAll('[data-hr]').forEach(b => b.onclick = guard(() => form('handover', d.approved_requests.find(r => r.id === +b.dataset.hr))));
+    if ($('#ho')) $('#ho').onclick = guard(async () => ME.role === 'admin' ? form('handover') : toast(d.approved_requests.length ? tr('اختر الطلب المعتمد من القائمة أعلاه', 'Pick the approved request above') : tr('لا توجد طلبات معتمدة: يطلب الموظف العهدة من «حسابي ومطالباتي» ويوافق عليها المدير', 'No approved requests: the employee asks from "My account & claims" and the manager approves')));
+    if ($('#rt')) $('#rt').onclick = guard(() => form('return'));
+    document.querySelectorAll('[data-dh]').forEach(b => b.onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'petty_custody/' + b.dataset.dh); render(); } }));
+  };
+}

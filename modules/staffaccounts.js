@@ -67,13 +67,19 @@ module.exports = ctx => {
     if (x.party_id && !db.prepare('SELECT 1 FROM parties WHERE id=?').get(+x.party_id)) bad('Unknown supplier');
     const cats = ['materials', 'labour', 'subcontract', 'equipment', 'transport', 'permits', 'overhead', 'other', 'accommodation', 'visa', 'insurance'];
     const category = cats.includes(x.category) ? x.category : 'other';
-    return { employee_id: +employeeId, date, description: String(x.description).trim().slice(0, 300), amount, vat_amount: vat, category, project_id: +x.project_id || null, party_id: +x.party_id || null, reference: String(x.reference || '').slice(0, 100) };
+    const paid_from = x.paid_from === 'custody' ? 'custody' : 'own';
+    if (paid_from === 'custody') {
+      if (!ctx.custodyAvailable) bad('Petty cash per employee is not available');
+      const free = ctx.custodyAvailable(+employeeId); if (round(amount + vat) > free + 0.005) bad(`Petty cash available to this employee: ${free} (after the expenses already waiting for approval)`);
+    }
+    return { employee_id: +employeeId, date, description: String(x.description).trim().slice(0, 300), amount, vat_amount: vat, category, project_id: +x.project_id || null, party_id: +x.party_id || null, reference: String(x.reference || '').slice(0, 100), paid_from };
   }
   function createClaim(x, employeeId, me) {
     const c = checkClaim(x, employeeId);
     const r = db.prepare('INSERT INTO expense_claims(employee_id,date,description,amount,vat_amount,category,project_id,party_id,reference,status,requested_by,requested_by_id,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(c.employee_id, c.date, c.description, c.amount, c.vat_amount, c.category, c.project_id, c.party_id, c.reference, 'pending', me.username, me.id, now());
     const id = Number(r.lastInsertRowid);
+    if (c.paid_from === 'custody') db.prepare("UPDATE expense_claims SET paid_from='custody' WHERE id=?").run(id);
     ping(approverIds(total(c)).filter(u => u !== me.id), 'مطالبة مصروف بانتظار موافقتك / Expense claim to approve', `${emp(c.employee_id).name} — ${c.description} — ${money(total(c))} AED`, '#claims');
     return id;
   }
@@ -95,9 +101,11 @@ module.exports = ctx => {
       db.prepare("UPDATE expense_claims SET status='rejected', decided_by=?, decided_by_id=?, decided_at=?, decision_note=? WHERE id=?").run(me.username, me.id, now(), String(x.note).trim(), c.id);
     } else {
       guardDate(c.date, 'an expense');
-      const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)').run(c.date, c.party_id, c.project_id, c.category, `${c.description} (claim of ${emp(c.employee_id).name})`, c.amount, c.vat_amount, c.reference || `CLAIM-${c.id}`);
+      const custody = c.paid_from === 'custody';                     // paid from petty cash the employee holds: credit 1010, not owed to him
+      if (custody && total(c) > (ctx.custodyHeld ? ctx.custodyHeld(c.employee_id) : 0) + 0.005) bad(`${emp(c.employee_id).name} holds only ${ctx.custodyHeld ? ctx.custodyHeld(c.employee_id) : 0} of petty cash`);
+      const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)').run(c.date, c.party_id, c.project_id, c.category, `${c.description} (${custody ? 'petty cash of' : 'claim of'} ${emp(c.employee_id).name})`, c.amount, c.vat_amount, c.reference || `CLAIM-${c.id}`);
       const billId = Number(bill.lastInsertRowid);
-      const pay = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,employee_id,notes) VALUES('out',?,?,'employee',?,?,?,'expense-claim')").run(c.date, total(c), `CLAIM-${c.id}`, billId, c.employee_id);
+      const pay = db.prepare(`INSERT INTO payments(kind,date,amount,method,reference,bill_id,employee_id,notes) VALUES('out',?,?,'${custody ? 'petty' : 'employee'}',?,?,?,'expense-claim')`).run(c.date, total(c), `CLAIM-${c.id}`, billId, c.employee_id);
       db.prepare("UPDATE expense_claims SET status='approved', decided_by=?, decided_by_id=?, decided_at=?, decision_note=?, bill_id=?, payment_id=? WHERE id=?").run(me.username, me.id, now(), String(x.note || '').trim(), billId, Number(pay.lastInsertRowid), c.id);
     }
     audit(req, x.status, 'expense_claims', c.id, `${total(c)}`);
@@ -120,7 +128,8 @@ module.exports = ctx => {
       for (const r of db.prepare("SELECT r.amount, p.month FROM loan_repayments r JOIN payroll p ON p.id=r.payroll_id JOIN loans l ON l.id=r.loan_id WHERE l.employee_id=? AND p.status='final'").all(eid))
         out.push({ date: monthEnd(r.month), ref: `PAY-${r.month}`, section: 'advance', amount: round(r.amount), description: `Advance instalment deducted ${r.month}`, description_ar: `قسط سلفة مخصوم من راتب ${r.month}` });
     }
-    for (const c of db.prepare("SELECT * FROM expense_claims WHERE employee_id=? AND status='approved'").all(eid))
+    const own = db.prepare('PRAGMA table_info(expense_claims)').all().some(x => x.name === 'paid_from') ? " AND COALESCE(paid_from,'own')!='custody'" : '';   // spent from petty cash: in the petty cash section, not owed
+    for (const c of db.prepare(`SELECT * FROM expense_claims WHERE employee_id=? AND status='approved'${own}`).all(eid))
       out.push({ date: c.date, ref: `CLAIM-${c.id}`, id: c.id, kind: 'claim', section: 'claims', amount: total(c), description: `Expense claim — ${c.description}`, description_ar: `مطالبة مصروف — ${c.description}` });
     for (const p of reimbursements(eid))
       out.push({ date: p.date, ref: p.reference || `PAY-${p.id}`, id: p.id, kind: 'reimbursement', section: 'claims', amount: -round(p.amount), description: `Reimbursed (${p.method})`, description_ar: `صُرف للموظف (${p.method === 'cash' ? 'نقداً' : 'بنك'})` });
@@ -160,7 +169,7 @@ module.exports = ctx => {
     const out = [];   // no amounts: the daily report may be posted to a GitHub issue
     // statement sign = credit − debit of the account: salaries / claims owed are credits, advances / petty cash held are debits
     for (const [k, v] of Object.entries(sections())) {
-      const diff = round(bal(v[0]) - sub[k]);
+      const diff = round(bal(v[0]) - sub[k] - (k === 'custody' && ctx.custodyUnassigned ? ctx.custodyUnassigned() : 0));   // 1010 also holds the office float
       if (Math.abs(diff) >= 0.01) out.push({ status: k === 'claims' || k === 'custody' ? 'fail' : 'warn', detail: `account ${v[0]} (${v[1].toLowerCase()}): the general ledger and the employee statements differ${k === 'claims' || k === 'custody' ? '' : ' — usually a manual journal entry on this account'}` });
     }
     return out.length ? out : [{ status: 'ok', detail: 'salaries, advances and expense claims equal the general ledger' }];
@@ -245,7 +254,7 @@ module.exports = ctx => {
           if (me.role !== 'admin') refuse('Only the administrator can take back an approval');
           if (cl.status !== 'approved') bad('Only an approved claim can be taken back');
           guardDate(cl.date, 'an expense');
-          if (claimsOwed(cl.employee_id) - total(cl) < -0.005) bad('This employee was already reimbursed for this claim — delete the reimbursement first');
+          if (cl.paid_from !== 'custody' && claimsOwed(cl.employee_id) - total(cl) < -0.005) bad('This employee was already reimbursed for this claim — delete the reimbursement first');
           db.prepare('DELETE FROM payments WHERE id=?').run(cl.payment_id); db.prepare('DELETE FROM bills WHERE id=?').run(cl.bill_id);
           db.prepare("UPDATE expense_claims SET status='pending', decided_by=NULL, decided_by_id=NULL, decided_at=NULL, decision_note=NULL, bill_id=NULL, payment_id=NULL WHERE id=?").run(cl.id);
           audit(req, 'undo', 'expense_claims', cl.id, ''); return send(res, 200, { ok: 1 }), true;

@@ -421,7 +421,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/partners'), require('./modules/staffaccounts'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode'), require('./modules/m365business')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/partners'), require('./modules/staffaccounts'), require('./modules/pettycustody'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode'), require('./modules/m365business')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -471,7 +471,7 @@ async function api(req, res, url) {
   if (!me) return send(res, 401, { error: 'unauthorized' });
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
   const scope = siteScope(me);
-  if (scope) { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }
+  if (scope && a !== 'me') { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }   // own records (me/…) are limited to the user's own employee, not to the assigned projects
   if (ctx.periodGuard) await ctx.periodGuard(req, method, url, parts);          // closed accounting period
   if (ctx.spendGuard) await ctx.spendGuard(req, method, url, parts, me);        // purchase orders / payments above the approval limit
 
@@ -879,6 +879,7 @@ async function api(req, res, url) {
           }
         }
       }
+      if (a === 'petty_topups' && db.prepare('SELECT 1 FROM petty_topups WHERE id=? AND employee_id IS NOT NULL').get(id)) bad('This is petty cash handed to an employee — change it from Petty cash per employee');
       if (a === 'payments') {
         const cur = db.prepare('SELECT * FROM payments WHERE id=?').get(id); if (!cur) return send(res, 404, { error: 'not found' });
         if (reconciled(id) && ['kind', 'amount', 'date', 'invoice_id', 'bill_id', 'bank_account_id', 'method'].some(k => k in row && String(row[k] ?? '') !== String(cur[k] ?? '') && +row[k] !== +cur[k])) bad('This payment is matched to a bank statement line — unmatch it first');
@@ -899,7 +900,8 @@ async function api(req, res, url) {
       if (a === 'payments' && db.prepare("SELECT 1 FROM payments WHERE id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
       if (a === 'bills' && db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
       if (a === 'payments' && db.prepare('SELECT 1 FROM payments WHERE id=? AND employee_id IS NOT NULL').get(id)) return send(res, 409, { error: 'This payment belongs to an employee expense claim — change it from Expense claims' });
-      if (a === 'bills' && db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='employee'").get(id)) return send(res, 409, { error: 'This expense comes from an approved employee expense claim — take the approval back from Expense claims' });
+      if (a === 'bills' && db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND employee_id IS NOT NULL AND method IN ('employee','petty')").get(id)) return send(res, 409, { error: 'This expense comes from an approved employee expense claim — take the approval back from Expense claims' });
+      if (a === 'petty_topups' && db.prepare('SELECT 1 FROM petty_topups WHERE id=? AND employee_id IS NOT NULL').get(id)) return send(res, 409, { error: 'This is petty cash handed to an employee — delete it from Petty cash per employee' });
       if (a === 'bills') {                                                    // a bill raised by a certificate or a purchase order belongs to it
         const sc = has('sub_certs') && db.prepare('SELECT number FROM sub_certs WHERE bill_id=?').get(id), po = has('purchase_orders') && db.prepare('SELECT number FROM purchase_orders WHERE bill_id=?').get(id);
         if (sc) return send(res, 409, { error: `This bill belongs to payment certificate ${sc.number} — it cannot be deleted on its own` });

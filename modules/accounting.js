@@ -47,7 +47,11 @@ module.exports = ctx => {
       else if (p.employee_id && !p.bill_id) add(p.date, p.reference || `PAY-${p.id}`, 'Expense claims reimbursed to an employee', 'payment', [mk('2260', p.amount), mk(bankAcct(p, 'out'), 0, p.amount)]);   // modules/staffaccounts.js
       else add(p.date, p.ref_label, `Payment — ${p.party_name || ''}`, 'payment', [mk('2000', p.amount), mk(bankAcct(p, 'out'), 0, p.amount)]);
     }
-    for (const t of db.prepare('SELECT * FROM petty_topups').all()) add(t.date, 'PETTY', `Petty cash top-up ${t.note || ''}`, 'petty', [mk('1010', t.amount), mk('1000', 0, t.amount)]);
+    for (const t of db.prepare('SELECT * FROM petty_topups').all()) {
+      const src = t.method === 'cash' ? '1020' : codeOf(t.bank_account_id);   // bank (the main account when none is chosen) or cash on hand
+      if (t.kind === 'return') add(t.date, `PETTY-${t.id}`, `Petty cash returned ${t.note || ''}`, 'petty', [mk(src, t.amount), mk('1010', 0, t.amount)]);
+      else add(t.date, t.employee_id ? `PETTY-${t.id}` : 'PETTY', `Petty cash ${t.employee_id ? 'handed over' : 'top-up'} ${t.note || ''}`, 'petty', [mk('1010', t.amount), mk(src, 0, t.amount)]);
+    }
     const rep = Object.fromEntries(db.prepare('SELECT payroll_id, SUM(amount) a FROM loan_repayments GROUP BY payroll_id').all().map(x => [x.payroll_id, round(x.a)]));
     for (const l of db.prepare('SELECT l.*, e.name FROM loans l JOIN employees e ON e.id=l.employee_id').all()) add(l.created.slice(0, 10), `ADV-${l.id}`, `Salary advance — ${l.name}`, 'payroll', [mk('1300', l.amount), mk(l.method === 'cash' ? '1020' : '1000', 0, l.amount)]);
     for (const x of ctx.eosEntries ? ctx.eosEntries() : []) add(x.date, x.ref, x.memo, 'payroll', x.lines.map(l => mk(...l)));
