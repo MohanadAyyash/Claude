@@ -2095,9 +2095,12 @@ An **expense claim** = an employee paid a company expense from own money (fuel, 
 **Approval:** menu **Expense claims**.
 - The **manager and the administrator** approve any amount. The **accountant** approves up to a limit the administrator sets (button **Accountant's limit**; 0 = cannot approve). **Nobody approves their own claim.**
 - Approvers are notified when a claim comes in, and the employee when it is approved or rejected. A rejection needs a reason.
+- **The manager and the accountant** cannot approve until their account is linked to their own employee record (Settings → Users → Employee), so nobody can approve their own claim.
+- The accountant's limit counts **all of the employee's claims of the same day**, so a large amount cannot be split into small claims.
+- An engineer or foreman can book a claim only on a project assigned to them (or leave the project empty).
 - On approval the expense is booked on the project with its input VAT, and the amount becomes **owed to the employee** (account 2260). No company bank money moves yet.
 
-**Paying the employee:** the accountant or the administrator: **Reimburse an employee** → employee (the amount owed is shown) → amount, bank or cash → **Save**. More than the approved claims cannot be paid.
+**Paying the employee:** the accountant or the administrator: **Reimburse an employee** → employee (the amount owed is shown) → amount, bank or cash → **Save**. More than the approved claims cannot be paid, nor with a date before them. An amount above the **payment approval limit** (Spend approvals) is recorded by the administrator only.
 - **Take back** (administrator only): the expense is removed and the claim is pending again, unless it was already paid.
 
 **Employee statements** (administrator, accountant, HR): for each employee what the company owes and what the employee owes:
@@ -2107,7 +2110,7 @@ An **expense claim** = an employee paid a company expense from own money (fuel, 
 - The **net**, with the end-of-service gratuity accrued for information. **Print** or **PDF** for any period.
 - Employees see their own statement in **My account & claims**.
 
-**Notes:** the payments of claims are kept from these pages only. A closed period blocks approving or paying with a date inside it. The daily check confirms the statements equal the general ledger (a manual journal on 2200 or 1300 shows as a warning). Claims with no supplier are not sent to Zoho (record them there by hand).
+**Notes:** the payments of claims are kept from these pages only, and the bill of an approved claim keeps its amount and project on the Expenses page. An employee with claims cannot be deleted (mark them as left). When offboarding is completed, the employee-portal account is closed; another staff account (manager, engineer…) is only unlinked. A closed period blocks approving or paying with a date inside it. The daily check confirms the statements equal the general ledger (a manual journal on 2200 or 1300 shows as a warning). Claims with no supplier are not sent to Zoho (record them there by hand).
 
 ---
 

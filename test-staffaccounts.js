@@ -4,7 +4,7 @@
 //   node --no-warnings test-staffaccounts.js          Fake names and amounts only.
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-staff-'));
-const { server } = require('./server.js');
+const { server, ctx } = require('./server.js');
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 server.listen(0, async () => {
@@ -24,16 +24,17 @@ server.listen(0, async () => {
     const E1 = ok(await call('POST', 'employees', { name: 'Worker One', join_date: '2026-01-01', basic: 3000, project_id: prj, ...WPS })).id;
     const E2 = ok(await call('POST', 'employees', { name: 'Site Engineer Two', join_date: '2026-01-01', basic: 5000, project_id: prj, ...WPS })).id;
     const E3 = ok(await call('POST', 'employees', { name: 'Manager Three', join_date: '2026-01-01', basic: 9000, ...WPS })).id;
-    for (const [u, role, e] of [['worker1', 'employee', E1], ['eng2', 'site_engineer', E2], ['mgr3', 'manager', E3], ['acc', 'accountant', null], ['hr1', 'hr', null], ['view1', 'viewer', null]])
+    const E5 = ok(await call('POST', 'employees', { name: 'Accountant Five', join_date: '2026-01-01', basic: 7000, ...WPS })).id;
+    for (const [u, role, e] of [['worker1', 'employee', E1], ['eng2', 'site_engineer', E2], ['mgr3', 'manager', E3], ['acc', 'accountant', E5], ['hr1', 'hr', null], ['view1', 'viewer', null], ['mgr9', 'manager', null]])
       ok(await call('POST', 'users', { username: u, password: 'pass1234', role, ...(e ? { employee_id: e } : {}) }), 'user ' + u);
-    for (const u of ['worker1', 'eng2', 'mgr3', 'acc', 'hr1', 'view1']) { await login(u); }
+    for (const u of ['worker1', 'eng2', 'mgr3', 'acc', 'hr1', 'view1', 'mgr9']) { await login(u); }
     cookie = sessions.admin;
     // a staff account may be linked to its employee record (optional); one account per employee
     no(await call('POST', 'users', { username: 'dup', password: 'pass1234', role: 'qs', employee_id: E1 }), /already has an account/);
     const users = ok(await call('GET', 'users')), uid = n => users.find(u => u.username === n).id;
     assert.equal(users.find(u => u.username === 'mgr3').employee_id, E3);
     no(await call('PUT', `users/${uid('worker1')}`, { employee_id: '' }), /must stay linked/);
-    no(await call('PUT', `users/${uid('acc')}`, { employee_id: E2 }), /already has an account/);
+    no(await call('PUT', `users/${uid('hr1')}`, { employee_id: E2 }), /already has an account/);
     ok(await call('PUT', `users/${uid('eng2')}`, { employee_id: '' })); ok(await call('PUT', `users/${uid('eng2')}`, { employee_id: E2 }));
     // (the session reads the user record on every request: the link applies at once)
 
@@ -137,11 +138,12 @@ server.listen(0, async () => {
     await as('eng2', async () => { ok(await call('GET', 'me/statement')); ok(await call('GET', 'me/claims')); });   // any role linked to an employee
     // a site role (here not assigned to any project) still sees its own claims: own records are not filtered by the assigned projects
     await as('eng2', async () => {
-      const id = ok(await call('POST', 'me/claims', { date: '2026-09-18', description: 'Marker spray', amount: 25, project_id: prj })).id;
+      no(await call('POST', 'me/claims', { date: '2026-09-18', description: 'Marker spray', amount: 25, project_id: prj }), /not assigned/);   // F7
+      const id = ok(await call('POST', 'me/claims', { date: '2026-09-18', description: 'Marker spray', amount: 25 })).id;
       const mine = ok(await call('GET', 'me/claims')); assert.ok(mine.some(c => c.id === id), 'own claim visible to the site engineer');
       ok(await call('DELETE', `me/claims/${id}`));
     });
-    await as('acc', async () => { const r = await call('POST', 'me/claims', { description: 'x', amount: 1 }); assert.equal(r.s, 403); assert.match(r.t, /not linked/); });
+    await as('hr1', async () => { const r = await call('POST', 'me/claims', { description: 'x', amount: 1 }); assert.equal(r.s, 403); assert.match(r.t, /not linked/); });
 
     // ---- ledger = statements
     let chk = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.equal(chk.status, 'ok', chk.detail);
@@ -167,6 +169,46 @@ server.listen(0, async () => {
     await as('eng2', async () => assert.equal((await call('DELETE', `me/claims/${c5}`)).s, 404));
     await as('worker1', async () => ok(await call('DELETE', `me/claims/${c5}`)));
     await as('worker1', async () => no(await call('DELETE', `me/claims/${c1}`), /pending/));
+
+    // ================= review fixes =================
+    // D1: a manager whose account is not linked to an employee record cannot approve (else he could enter and approve his own claim)
+    const c8 = await as('worker1', async () => ok(await call('POST', 'me/claims', { date: '2026-10-01', description: 'Bolts', amount: 60, project_id: prj })).id);
+    await as('mgr9', async () => { no(await call('POST', `expense_claims/${c8}/decide`, { status: 'approved' }), /Link your account/); assert.equal(ok(await call('GET', 'expense_claims')).rows.find(r => r.id === c8).can_decide, false); });
+    // D2: the accountant's limit counts all of an employee's claims of the same day (no splitting)
+    await as('acc', async () => ok(await call('POST', `expense_claims/${c8}/decide`, { status: 'approved' })));
+    const c9 = await as('worker1', async () => ok(await call('POST', 'me/claims', { date: '2026-10-01', description: 'Bolts part 2', amount: 450, project_id: prj })).id);
+    await as('acc', async () => no(await call('POST', `expense_claims/${c9}/decide`, { status: 'approved' }), /same day/));
+    await as('mgr3', async () => ok(await call('POST', `expense_claims/${c9}/decide`, { status: 'approved' })));
+    // D3: a reimbursement above the payment approval limit is recorded by the administrator only
+    ok(await call('PUT', 'settings', { pay_approval_limit: '100' }));
+    await as('acc', async () => no(await call('POST', 'expense_claims/reimburse', { employee_id: E1, date: '2026-10-05', amount: 510, method: 'bank' }), /approval limit/));
+    await as('acc', async () => ok(await call('POST', 'expense_claims/reimburse', { employee_id: E1, date: '2026-10-05', amount: 100, method: 'bank' })));
+    // backdated: a reimbursement cannot be dated before the claims it pays existed
+    no(await call('POST', 'expense_claims/reimburse', { employee_id: E1, date: '2026-09-30', amount: 410, method: 'bank' }), /not yet reimbursed on 2026-09-30/);
+    ok(await call('POST', 'expense_claims/reimburse', { employee_id: E1, date: '2026-10-05', amount: 410, method: 'bank' }));
+    ok(await call('PUT', 'settings', { pay_approval_limit: '' }));
+    // F5: the bill of an approved claim keeps the claim's figures
+    const b8 = ok(await call('GET', `expense_claims/${c8}`)).bill_id;
+    no(await call('PUT', `bills/${b8}`, { amount: 1000 }), /expense claim/); no(await call('PUT', `bills/${b8}`, { project_id: '' }), /expense claim/);
+    // F3: an employee with claims (or payments) cannot be deleted
+    no(await call('DELETE', `employees/${E3}`), /expense claims/);
+    const E6 = ok(await call('POST', 'employees', { name: 'Temp Six', join_date: '2026-01-01', basic: 1000, ...WPS })).id;
+    ok(await call('POST', 'expense_claims', { employee_id: E6, date: '2026-10-02', description: 'x', amount: 5 }));
+    no(await call('DELETE', `employees/${E6}`), /expense claims/);
+    // F1: offboarding an employee disables only an employee-portal account; a staff account (here the administrator) is unlinked, not locked out
+    const E7 = ok(await call('POST', 'employees', { name: 'Owner Seven', join_date: '2026-01-01', basic: 1000, ...WPS })).id;
+    const uAdmin = ok(await call('GET', 'users')).find(u => u.username === 'admin').id;
+    ok(await call('PUT', `users/${uAdmin}`, { employee_id: E7 }));
+    await as('hr1', async () => { ok(await call('POST', `hr/offboarding/${E7}`, { last_day: '2026-11-30', reason: 'resignation' })); ok(await call('POST', `hr/offboarding/${E7}/complete`, { force: true })); });
+    ok(await call('GET', 'users'), 'the administrator is still signed in');
+    assert.equal(ok(await call('GET', 'users')).find(u => u.id === uAdmin).employee_id, null, 'the administrator account is unlinked');
+    // F9: an account code 2260 the company already used is not taken over
+    const a2260 = ctx.db.prepare("SELECT * FROM accounts WHERE code='2260'").get();
+    ctx.db.prepare("UPDATE accounts SET system=0, name='Other payables' WHERE code='2260'").run();
+    const cF9 = await as('worker1', async () => ok(await call('POST', 'me/claims', { date: '2026-10-03', description: 'Paint', amount: 30 })).id);
+    await as('mgr3', async () => no(await call('POST', `expense_claims/${cF9}/decide`, { status: 'approved' }), /already used/));
+    let chk2 = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.equal(chk2.status, 'fail'); assert.match(chk2.detail, /2260 is already used/);
+    ctx.db.prepare('UPDATE accounts SET system=?, name=? WHERE code=?').run(a2260.system, a2260.name, '2260');
 
     console.log('EMPLOYEE ACCOUNTS TESTS PASSED');
   } catch (e) { console.error(e); process.exitCode = 1; } finally { server.close(); process.exit(process.exitCode || 0); }
