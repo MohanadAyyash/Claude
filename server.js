@@ -393,6 +393,9 @@ const mailCfgFor = () => {
 const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
 ctx.siteScope = me => siteScope(me);
 ctx.isHttps = isHttps;
+ctx.createSession = createSession;                                             // Microsoft sign-in (Phase 1B) starts exactly the same session as the password login
+ctx.sessionCookie = (req, token) => cookie(req, token, 2592000);
+ctx.clientIp = clientIp;
 ctx.applyPayroll = (...a) => applyPayroll(...a);
 // brand e-mail signature: Arial text block + the one-line logo as an inline image
 ctx.signature = user => {
@@ -408,7 +411,7 @@ async function api(req, res, url) {
   const [a, b, c] = parts, method = req.method;
 
   if (a === 'health' && method === 'GET') { const h = ctx.health(); return send(res, h.ok ? 200 : 503, h, { 'Cache-Control': 'no-store' }); }   // uptime monitors (no login, no data)
-  if (a === 'status') return send(res, 200, { setup: db.prepare('SELECT COUNT(*) n FROM users').get().n === 0, token_required: !!process.env.SETUP_TOKEN, user: sessionUser(req) });
+  if (a === 'status') return send(res, 200, { setup: db.prepare('SELECT COUNT(*) n FROM users').get().n === 0, token_required: !!process.env.SETUP_TOKEN, user: sessionUser(req), m365_login: !!(ctx.m365LoginAvailable && ctx.m365LoginAvailable()) });
   if (a === 'setup' && method === 'POST') {
     if (db.prepare('SELECT COUNT(*) n FROM users').get().n) return send(res, 403, { error: 'already set up' });
     const { username, password, company, token } = await readBody(req);
