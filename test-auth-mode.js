@@ -223,6 +223,56 @@ const mailOf = oid => `user-${oid.slice(-2)}@example.test`;
         exec("DELETE FROM sessions WHERE token IN (?,?)", 'ab'.repeat(24), 'cd'.repeat(24));
       }
       console.log('✔ session lifetimes: emergency = AUTH_EMERGENCY_SESSION_MINUTES (default 60, 5–240; invalid → 60, extreme → 240), Microsoft = AUTH_MICROSOFT_SESSION_HOURS (default 12, ≤ 30 days); never extended by use or by another sign-in; switching mode ends / refuses incompatible sessions');
+
+      // ---- the emergency form's origin check (Windows test: Edge posted "Origin: null" because the page said Referrer-Policy: no-referrer) ----
+      {
+        const raw = (headers, form) => new Promise((ok_, no) => { const body = new URLSearchParams(form).toString();
+          const r = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/auth/emergency', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body), ...headers } },
+            rs => { let t = ''; rs.on('data', c => t += c); rs.on('end', () => ok_({ s: rs.statusCode, setCookie: [].concat(rs.headers['set-cookie'] || []).join(', '), t })); }); r.on('error', no); r.end(body); });
+        const form = () => ({ username: 'breakglass', password: BG_PW, code: bgCode() });
+        const lastAudit = () => q("SELECT detail FROM audit_log WHERE tbl='auth' ORDER BY id DESC LIMIT 1")[0].detail;
+        const page = await nav('/auth/emergency'); assert.equal((await fetch(base + '/auth/emergency')).headers.get('referrer-policy'), 'same-origin', 'the page lets the browser send its real Origin (not "null")');
+        void page;
+        process.env.TRUST_PROXY = '0';                                        // as on the isolated Windows copy: no proxy, forwarded headers not trusted
+        let r = await raw({ Host: `localhost:${port}`, Origin: `http://localhost:${port}` }, form());
+        assert.equal(r.s, 303, 'served as localhost, posted from localhost ' + r.t.slice(0, 200)); assert.ok(sidOf(r.setCookie));
+        r = await raw({ Host: `127.0.0.1:${port}`, Origin: `http://127.0.0.1:${port}` }, form());
+        assert.equal(r.s, 303, 'served as 127.0.0.1, posted from 127.0.0.1');
+        const refusedOrigin = async (label, headers, re) => { const x = await raw(headers, form()); assert.equal(x.s, 403, `${label}: ${x.s}`); assert.ok(!sidOf(x.setCookie), label);
+          assert.match(x.t, /Sign-in failed\. Check the username, password and code, or wait 15 minutes\./, `${label}: the generic message`); assert.doesNotMatch(x.t, /Origin|expected/, `${label}: no detail shown`);
+          assert.match(lastAudit(), re, `${label}: the audit says why`); };
+        await refusedOrigin('localhost page, 127.0.0.1 origin (no loopback equivalence)', { Host: `localhost:${port}`, Origin: `http://127.0.0.1:${port}` }, new RegExp(`Origin http://127\\.0\\.0\\.1:${port}, expected http://localhost:${port}`));
+        await refusedOrigin('127.0.0.1 page, localhost origin', { Host: `127.0.0.1:${port}`, Origin: `http://localhost:${port}` }, /expected http:\/\/127\.0\.0\.1:/);
+        await refusedOrigin('other port', { Host: `localhost:${port}`, Origin: `http://localhost:${port + 1}` }, /not posted from this site/);
+        await refusedOrigin('attacker origin', { Host: `localhost:${port}`, Origin: 'https://evil.example' }, /Origin https:\/\/evil\.example, expected/);
+        await refusedOrigin('look-alike origin', { Host: `localhost:${port}`, Origin: `http://localhost:${port}.evil.example` }, /not posted from this site/);
+        await refusedOrigin('Origin: null', { Host: `localhost:${port}`, Origin: 'null' }, /Origin null, expected http:\/\/localhost:/);
+        await refusedOrigin('no Origin, no Referer', { Host: `localhost:${port}` }, /Origin \(none\)/);
+        await refusedOrigin('https origin to an http server', { Host: `localhost:${port}`, Origin: `https://localhost:${port}` }, /not posted from this site/);
+        await refusedOrigin('forwarded host spoofed while TRUST_PROXY is off', { Host: `127.0.0.1:${port}`, 'X-Forwarded-Host': 'erp.trigon.ae', 'X-Forwarded-Proto': 'https', Origin: 'https://erp.trigon.ae' }, /expected http:\/\/127\.0\.0\.1:/);
+        // production behind the trusted proxy (Cloudflare tunnel): https://erp.trigon.ae
+        process.env.TRUST_PROXY = '1';
+        const prod = { Host: `127.0.0.1:${port}`, 'X-Forwarded-Host': 'erp.trigon.ae', 'X-Forwarded-Proto': 'https', 'X-Forwarded-For': nextIp() };
+        r = await raw({ ...prod, Origin: 'https://erp.trigon.ae' }, form()); assert.equal(r.s, 303, 'production origin behind the trusted proxy ' + r.t.slice(0, 160));
+        await refusedOrigin('production host, http origin', { ...prod, Origin: 'http://erp.trigon.ae' }, /expected https:\/\/erp\.trigon\.ae/);
+        await refusedOrigin('production host, other origin', { ...prod, Origin: 'https://erp.trigon.ae.evil.example' }, /expected https:\/\/erp\.trigon\.ae/);
+        await refusedOrigin('production host, null origin', { ...prod, Origin: 'null' }, /Origin null, expected https:\/\/erp\.trigon\.ae/);
+        // a real browser posting the page's own form (skipped where no browser is installed, e.g. CI)
+        let browser = null; try { browser = await require(process.env.PLAYWRIGHT_PATH || 'playwright').chromium.launch({ executablePath: process.env.CHROME_PATH || undefined }); } catch { browser = null; }
+        if (browser) {
+          process.env.TRUST_PROXY = '0';
+          try {
+            const pg = await browser.newPage(); await pg.goto(`http://localhost:${port}/auth/emergency`);
+            await pg.fill('[name=username]', 'breakglass'); await pg.fill('[name=password]', BG_PW); await pg.fill('[name=code]', bgCode());
+            await Promise.all([pg.waitForURL(u => !u.pathname.startsWith('/auth/emergency'), { timeout: 15000 }), pg.click('button')]);
+            const ck = (await pg.context().cookies()).find(c => c.name === 'sid'); assert.ok(ck, 'browser: signed in');
+            assert.equal(q('SELECT method FROM sessions WHERE token=?', ck.value)[0].method, 'emergency');
+            console.log('  ✔ browser (Chromium): the emergency form posted from http://localhost signs in');
+          } finally { await browser.close(); process.env.TRUST_PROXY = '1'; }
+        } else console.log('  (browser check skipped: no Chromium here)');
+        process.env.TRUST_PROXY = '1';
+      }
+      console.log('✔ emergency origin check: localhost→localhost and 127.0.0.1→127.0.0.1 accepted; mismatched, other-port, attacker, look-alike, null / missing, wrong-scheme and spoofed-forwarded origins refused (generic message, detailed audit); https://erp.trigon.ae accepted only behind the trusted proxy');
       const bad = async (label, form, opts, status = 401) => { const r = await emergency(form, opts); assert.equal(r.s, status, `${label}: ${r.s} ${r.t.slice(0, 120)}`); assert.ok(!sidOf(r.setCookie), `${label}: no session`); return r; };
       await bad('22 no code', { username: 'breakglass', password: BG_PW });
       await bad('22 wrong code', { username: 'breakglass', password: BG_PW, code: '000000' });

@@ -67,7 +67,8 @@ module.exports = ctx => {
   const note = k => tries.get(k).push(Date.now());
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const page = (res, code, msg = '', extra = {}) => {
-    res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
+    // same-origin (not no-referrer): with no-referrer browsers send "Origin: null" on this page's own form post, which the check refuses
+    res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY',
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'", ...extra });
     res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Emergency administrator sign-in</title>
 <body style="font:15px system-ui,sans-serif;max-width:420px;margin:10vh auto;padding:0 16px;color:#1F3A5F">
@@ -84,11 +85,19 @@ ${msg ? `<p style="color:#b91c1c">${esc(msg)}</p>` : ''}
     return true;
   };
   const readForm = req => new Promise((ok, no) => { let b = ''; req.on('data', c => { b += c; if (b.length > 4096) { no(new Error('too large')); req.destroy(); } }); req.on('end', () => ok(Object.fromEntries(new URLSearchParams(b)))); req.on('error', no); });
-  // a POST must come from this site's own page (browsers send Origin on form posts)
-  const sameOrigin = req => {
-    const host = (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-host'] ? String(req.headers['x-forwarded-host']).split(',').pop().trim() : String(req.headers.host || '')).toLowerCase();
-    let o; try { o = new URL(req.headers.origin || req.headers.referer || ''); } catch { return false; }
-    return o.host.toLowerCase() === host;
+  // a POST must come from this site's own page: the browser's Origin (scheme + host + port) must equal the address the request came to,
+  // worked out like the rest of the server: the Host header, or X-Forwarded-Host / X-Forwarded-Proto ONLY behind the proxy (TRUST_PROXY=1).
+  // An exact string comparison: no DNS, no "localhost = 127.0.0.1"; "Origin: null" or a missing Origin is refused.
+  // → { ok, got, want } (got / want are shown in the audit to explain a refusal; neither is secret)
+  const originCheck = req => {
+    const proxied = process.env.TRUST_PROXY === '1', first = v => String(v || '').split(',')[0].trim().toLowerCase();
+    const host = (proxied && req.headers['x-forwarded-host'] ? String(req.headers['x-forwarded-host']).split(',').pop().trim() : String(req.headers.host || '')).toLowerCase();
+    const proto = proxied && req.headers['x-forwarded-proto'] ? first(req.headers['x-forwarded-proto']) : (req.socket && req.socket.encrypted ? 'https' : 'http');
+    const want = `${proto}://${host}`, raw = String(req.headers.origin || '').trim();
+    let got = raw;
+    if (!raw && req.headers.referer) { try { got = new URL(req.headers.referer).origin; } catch { got = ''; } }
+    got = got.toLowerCase().slice(0, 120);
+    return { ok: !!host && /^https?$/.test(proto) && got === want, got: got || '(none)', want };
   };
 
   ctx.emergencyAuth = async (req, res) => {
@@ -97,7 +106,8 @@ ${msg ? `<p style="color:#b91c1c">${esc(msg)}</p>` : ''}
     if (req.method === 'GET') return page(res, 200);
     if (req.method !== 'POST') return page(res, 405, 'Not allowed.');
     const ip = ctx.clientIp(req), fail = (who, rec, why, code = 401) => { sysAudit(who, 'emergency-login-failed', rec, `${why} (from ${String(ip).slice(0, 60)})`); return page(res, code, 'Sign-in failed. Check the username, password and code, or wait 15 minutes.'); };
-    if (!sameOrigin(req)) return fail('', 0, 'refused: not posted from this site', 403);
+    const oc = originCheck(req);
+    if (!oc.ok) return fail('', 0, `refused: not posted from this site (Origin ${oc.got.replace(/[^\w:/.\-()\[\]]/g, '?')}, expected ${oc.want.replace(/[^\w:/.\-\[\]]/g, '?')})`, 403);
     let f; try { f = await readForm(req); } catch { return fail('', 0, 'refused: unreadable form', 400); }
     const username = String(f.username || '').slice(0, 100), acct = 'em:' + username.toLowerCase();
     if (over('ip:' + ip) | over(acct)) { note('ip:' + ip); return fail(username, 0, 'refused: too many attempts', 429); }
