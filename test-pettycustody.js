@@ -10,7 +10,7 @@ server.listen(0, async () => {
   let call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'Content-Type': 'application/json', cookie }, body: b ? JSON.stringify(b) : undefined }); const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { s: r.status, j, t }; };
   // accounting invariants after every change that went through: debits = credits, and the partner, claims and petty cash
   // sub-ledgers equal the general ledger (no FAIL in the reconciliations)
-  let invRuns = 0;
+  let INV = true, invRuns = 0;
   const invariants = what => {
     const f = ctx.financials('2000-01-01', '2099-12-31');
     assert.ok(Math.abs(f.tb_debit - f.tb_credit) < 0.006, `after ${what}: debits ${f.tb_debit} ≠ credits ${f.tb_credit}`);
@@ -18,7 +18,7 @@ server.listen(0, async () => {
     invRuns++;
   };
   const call0 = call;
-  call = async (m, u, b) => { const r = await call0(m, u, b); if (m !== 'GET' && r.s === 200) invariants(`${m} ${u}`); return r; };
+  call = async (m, u, b) => { const r = await call0(m, u, b); if (INV && m !== 'GET' && r.s === 200) invariants(`${m} ${u}`); return r; };
   const ok = (r, m = '') => { assert.equal(r.s, 200, m + ' ' + JSON.stringify(r.j)); return r.j; };
   const no = (r, re, m = '') => { assert.ok(r.s >= 400, m + ' expected a refusal, got ' + r.s + ' ' + JSON.stringify(r.j)); if (re) assert.match(JSON.stringify(r.j), re, m); return r.j; };
   const sessions = {};
@@ -66,7 +66,7 @@ server.listen(0, async () => {
     ok(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-09-03', amount: 100, method: 'cash', note: 'extra' }));   // the administrator may hand over directly
     let me = await as('fore1', async () => ok(await call('GET', 'me/petty'))); assert.equal(me.held, 900); assert.equal(me.requests[0].status, 'paid');
     assert.equal(ok(await call('GET', 'petty_topups')).balance, 1000, 'the office float is not changed by petty cash held by an employee');
-    assert.equal(await credit('1010'), -1900, '1010 = office float + petty cash held by employees');
+    assert.equal(await credit('1010'), -1000, '1010 is the office float only'); assert.equal(await credit('1030'), -900, '1030 = petty cash held by employees');
 
     // ---- spending from the petty cash: an expense claim "paid from my petty cash", same approval rule
     const c1 = await as('fore1', async () => {
@@ -77,7 +77,7 @@ server.listen(0, async () => {
     await as('acc', async () => ok(await call('POST', `expense_claims/${c1}/decide`, { status: 'approved' })));
     const bill = ok(await call('GET', 'bills')).find(b => /Drinking water/.test(b.description));
     assert.equal(bill.project_id, prj); assert.equal(bill.vat_amount, 15); assert.equal(bill.balance, 0); assert.match(bill.description, /petty cash of Foreman One/);
-    assert.equal(await credit('2260'), 0, 'not owed to the employee: paid from the company petty cash'); assert.equal(await credit('1010'), -1585);
+    assert.equal(await credit('2260'), 0, 'not owed to the employee: paid from the company petty cash'); assert.equal(await credit('1030'), -585); assert.equal(await credit('1010'), -1000);
     me = await as('fore1', async () => ok(await call('GET', 'me/petty'))); assert.equal(me.held, 585);
     let s = ok(await call('GET', `staff_statements/${E1}`)); assert.equal(s.sections.custody.closing, -585, 'cash held: owed to the company until spent or returned'); assert.equal(s.sections.custody.lines.length, 3);
     let chk = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.equal(chk.status, 'ok', chk.detail);
@@ -139,7 +139,9 @@ server.listen(0, async () => {
     // ---- review fixes
     const held = async eid => ok(await call('GET', `petty_custody/${eid}`)).held;
     const check = async () => ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts');
-    // F2: a manual journal on 1010 and a receipt into petty cash are not employees' petty cash — the daily check stays ok
+    // 1030 is a control account: only the petty cash pages post to it; 1010 (office petty cash) keeps its manual journals
+    no(await call('POST', 'journal_entries', { date: '2026-10-01', memo: 'adjust custody', lines: [{ account: '1030', debit: 5 }, { account: '1020', credit: 5 }] }), /kept from the Petty cash pages/);
+    // a manual journal on 1010 and a receipt into the office petty cash are not employees' petty cash — the daily check stays ok
     ok(await call('POST', 'journal_entries', { date: '2026-10-01', memo: 'cash moved to petty', lines: [{ account: '1010', debit: 25 }, { account: '1020', credit: 25 }] }));
     chk = await check(); assert.equal(chk.status, 'ok', 'journal on 1010: ' + chk.detail);
     const inv = ok(await call('POST', 'invoices', { project_id: prj, date: '2026-10-01', number: 'INV-P1', items: [{ description: 'Work', qty: 1, rate: 100 }], vat_pct: 5 })).id;
@@ -193,6 +195,17 @@ server.listen(0, async () => {
     assert.equal(half.s, 500); assert.equal(await held(E1), 85, 'the hand-over was rolled back with its request');
     assert.equal(ctx.db.prepare('SELECT status FROM petty_requests WHERE id=?').get(tq).status, 'approved');
     invariants('the failed hand-over');
+
+    // the company's own account 1030 is never taken over: custody postings refused, the daily check fails until it is renumbered
+    const a1030 = ctx.db.prepare("SELECT * FROM accounts WHERE code='1030'").get();
+    INV = false;   // the books are broken on purpose here
+    ctx.db.prepare("UPDATE accounts SET system=0, name='Staff loans' WHERE code='1030'").run();
+    no(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-10-09', amount: 5, method: 'cash' }), /1030 is already used by your own account ..Staff loans/);
+    const cu = await as('fore1', async () => ok(await call('POST', 'me/claims', { date: '2026-10-09', description: 'Tape', amount: 5, project_id: prj, paid_from: 'custody' })).id);
+    await as('mgr', async () => no(await call('POST', `expense_claims/${cu}/decide`, { status: 'approved' }), /1030 is already used/));
+    chk = await check(); assert.equal(chk.status, 'fail'); assert.match(chk.detail, /1030 is already used/);
+    ctx.db.prepare('UPDATE accounts SET system=?, name=? WHERE code=?').run(a1030.system, a1030.name, '1030'); INV = true; invariants('restoring account 1030');
+    await as('mgr', async () => ok(await call('POST', `expense_claims/${cu}/decide`, { status: 'rejected', note: 'test' })));
 
     // offboarding an employee who still holds petty cash asks for confirmation
     ok(await call('POST', `hr/offboarding/${E1}`, { last_day: '2026-11-30', reason: 'resignation' }));

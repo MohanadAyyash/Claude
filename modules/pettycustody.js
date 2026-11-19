@@ -2,9 +2,11 @@
 // ctx.staffApproval), the accounts hand it over (bank or cash), the employee records what was spent with the receipts — as
 // expense claims "paid from my petty cash", approved under the same rule and booked on the project — and returns what is left.
 //
-// Account 1010 stays the petty-cash account. A hand-over is a petty_topups row with the employee (Dr 1010 / Cr bank or cash), a
-// return is a petty_topups row of kind 'return' (Dr bank or cash / Cr 1010), an approved custody expense is a bill paid with
-// method 'petty' and the employee (Cr 1010). Rows without an employee are the general float, as before.
+// Petty cash held by employees has its own control account, 1030 (one account, a sub-ledger per employee); 1010 stays the office
+// petty cash (the float), with its manual journals, as before. A hand-over is a petty_topups row with the employee (Dr 1030 /
+// Cr bank or cash), a return is a petty_topups row of kind 'return' (Dr bank or cash / Cr 1030), an approved custody expense is
+// a bill paid with method 'petty' and the employee (Cr 1030). Nothing else may post to 1030: manual journals on it are refused,
+// and the daily check requires 1030 = the petty cash all employees hold.
 // In the employee statement the cash an employee holds shows in brackets (owed to the company until spent or returned).
 const { esc, money, bi } = require('../lib/render');
 
@@ -27,7 +29,16 @@ module.exports = ctx => {
   const ping = (ids, title, body, url) => { if (ctx.notify && ids.length) ctx.notify(ids, { title, body, url }).catch(() => {}); };
 
   // ---------------- custody per employee ----------------
-  ctx.custodySection = ['1010', 'Petty cash held', 'عهدة نقدية بحوزته'];
+  db.prepare('INSERT OR IGNORE INTO accounts(code,name,name_ar,type,system) VALUES(?,?,?,?,1)').run('1030', 'Employee cash custody', 'عهد نقدية لدى الموظفين', 'asset');
+  const taken1030 = () => db.prepare("SELECT name FROM accounts WHERE code='1030' AND COALESCE(system,0)=0").get();   // the company's own account with this code is never taken over
+  const need1030 = () => { const t = taken1030(); if (t) bad(`Account 1030 is already used by your own account "${t.name}" — petty cash held by employees cannot be booked until that account is given another code (ask your administrator or accountant)`); };
+  ctx.need1030 = need1030; ctx.taken1030 = taken1030;
+  const prevGuard = ctx.journalGuard;
+  ctx.journalGuard = lines => {
+    if (prevGuard) prevGuard(lines);
+    if ((lines || []).some(l => String(l.account) === '1030') && !taken1030()) bad('Account 1030 (petty cash held by employees) is kept from the Petty cash pages — record the hand-over, the expense or the return there');
+  };
+  ctx.custodySection = ['1030', 'Petty cash held', 'عهدة نقدية بحوزته'];
   ctx.custodyMoves = eid => {
     const out = [];
     for (const t of db.prepare('SELECT * FROM petty_topups WHERE employee_id=? ORDER BY date, id').all(eid))
@@ -55,16 +66,6 @@ module.exports = ctx => {
   };
   ctx.custodyLowest = lowest;
   ctx.custodyAvailable = eid => round(held(eid) - pendingSpend(eid));                          // what is left to spend after the claims already waiting
-  // 1010 movements that are not petty cash held by an employee — the office float, petty-cash payments and receipts with no
-  // employee, manual journal lines on 1010 — as credit − debit, so the daily check can compare the rest with the statements
-  ctx.custodyUnassigned = () => {
-    const t = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='return' THEN amount ELSE -amount END),0) s FROM petty_topups WHERE employee_id IS NULL").get().s;
-    const p = db.prepare("SELECT COALESCE(SUM(CASE WHEN kind='in' THEN -amount ELSE amount END),0) s FROM payments WHERE method='petty' AND employee_id IS NULL AND COALESCE(cheque_status,'')!='bounced'").get().s;
-    let j = 0;
-    for (const r of db.prepare('SELECT lines FROM journal_entries').all()) { let ls = []; try { ls = JSON.parse(r.lines || '[]'); } catch {} for (const l of ls) if (String(l.account) === '1010') j += (+l.credit || 0) - (+l.debit || 0); }
-    return round(t + p + j);
-  };
-
   // ---------------- requests ----------------
   // the accountant's limit counts everything of this employee asked for the same day (no splitting a request in two)
   const reqDayTotal = r => round(db.prepare("SELECT COALESCE(SUM(amount),0) s FROM petty_requests WHERE employee_id=? AND substr(created,1,10)=? AND status!='rejected'").get(r.employee_id, String(r.created || '').slice(0, 10)).s);
@@ -83,6 +84,7 @@ module.exports = ctx => {
   // ---------------- hand-over / return ----------------
   function moveCash(x, kind, me, req) {
     if (!FIN(me)) refuse('Petty cash is handed over and received by the accounts (administrator or accountant)');
+    need1030();
     const e = emp(x.employee_id); if (!e) bad('Select the employee');
     const date = x.date || today(); if (!isDate(date)) bad('Enter a valid date'); guardDate(date, 'a petty cash movement');
     const amount = round(+x.amount); if (!(amount > 0)) bad('Enter the amount');

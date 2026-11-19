@@ -113,7 +113,8 @@ module.exports = ctx => {
     } else {
       if (c.paid_from !== 'custody') need2260();
       guardDate(c.date, 'an expense');
-      const custody = c.paid_from === 'custody';                     // paid from petty cash the employee holds: credit 1010, not owed to him
+      const custody = c.paid_from === 'custody';                     // paid from petty cash the employee holds: credit 1030, not owed to him
+      if (custody && ctx.need1030) ctx.need1030();
       if (custody && total(c) > (ctx.custodyHeld ? ctx.custodyHeld(c.employee_id) : 0) + 0.005) bad(`${emp(c.employee_id).name} holds only ${ctx.custodyHeld ? ctx.custodyHeld(c.employee_id) : 0} of petty cash`);
       if (custody && ctx.custodyLowest) { const lo = ctx.custodyLowest(c.employee_id, { spend: { date: c.date, amount: total(c) } }); if (lo.at) bad(`${emp(c.employee_id).name} did not hold enough petty cash on ${lo.at} for an expense dated ${c.date} — check the date`); }
       const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)').run(c.date, c.party_id, c.project_id, c.category, `${c.description} (${custody ? 'petty cash of' : 'claim of'} ${emp(c.employee_id).name})`, c.amount, c.vat_amount, c.reference || `CLAIM-${c.id}`);
@@ -201,7 +202,8 @@ module.exports = ctx => {
     const out = [];   // no amounts: the daily report may be posted to a GitHub issue
     // statement sign = credit − debit of the account: salaries / claims owed are credits, advances / petty cash held are debits
     for (const [k, v] of Object.entries(sections())) {
-      const diff = round(bal(v[0]) - sub[k] - (k === 'custody' && ctx.custodyUnassigned ? ctx.custodyUnassigned() : 0));   // 1010 also holds the office float
+      if (k === 'custody' && ctx.taken1030 && ctx.taken1030()) { out.push({ status: 'fail', detail: "account 1030 is already used by an account of the company's own, so petty cash held by employees cannot use it" }); continue; }
+      const diff = round(bal(v[0]) - sub[k]);
       if (Math.abs(diff) >= 0.01) out.push({ status: k === 'claims' || k === 'custody' ? 'fail' : 'warn', detail: `account ${v[0]} (${v[1].toLowerCase()}): the general ledger and the employee statements differ${k === 'claims' || k === 'custody' ? '' : ' — usually a manual journal entry on this account'}` });
     }
     return out.length ? out : [{ status: 'ok', detail: 'salaries, advances and expense claims equal the general ledger' }];
