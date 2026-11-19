@@ -8,7 +8,18 @@ const { server, ctx } = require('./server.js');
 
 server.listen(0, async () => {
   const base = `http://localhost:${server.address().port}/api/`; let cookie = '';
-  const call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'Content-Type': 'application/json', cookie }, body: b ? JSON.stringify(b) : undefined }); const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { s: r.status, j, t }; };
+  let call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'Content-Type': 'application/json', cookie }, body: b ? JSON.stringify(b) : undefined }); const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { s: r.status, j, t }; };
+  // accounting invariants after every change that went through: debits = credits, and the partner sub-ledger equals the general
+  // ledger (the partner reconciliation has no FAIL). INV is switched off only where a test breaks the books on purpose.
+  let INV = true, invRuns = 0;
+  const invariants = (what) => {
+    const f = ctx.financials('2000-01-01', '2099-12-31');
+    assert.ok(Math.abs(f.tb_debit - f.tb_credit) < 0.006, `after ${what}: debits ${f.tb_debit} ≠ credits ${f.tb_credit}`);
+    const bad = ctx.partnerChecks().filter(c => c.status === 'fail'); assert.equal(bad.length, 0, `after ${what}: ${bad.map(c => c.detail).join('; ')}`);
+    invRuns++;
+  };
+  const call0 = call;
+  call = async (m, u, b) => { const r = await call0(m, u, b); if (INV && m !== 'GET' && r.s === 200) invariants(`${m} ${u}`); return r; };
   const ok = (r, m = '') => { assert.equal(r.s, 200, m + ' ' + JSON.stringify(r.j)); return r.j; };
   const no = (r, re, m = '') => { assert.ok(r.s >= 400, m + ' expected a refusal, got ' + r.s); if (re) assert.match(JSON.stringify(r.j), re, m); return r.j; };
   const tb = async () => { const f = ok(await call('GET', 'financials?from=2000-01-01&to=2099-12-31')); return { f, cr: code => { const r = f.trial_balance.find(x => x.code === code); return r ? Math.round((r.credit - r.debit) * 100) / 100 : 0; } }; };
@@ -174,12 +185,30 @@ server.listen(0, async () => {
     no(await call('POST', `partners/${A}/expense`, { date: '2026-01-07', description: 'x', amount: 100, vat_amount: 5.02 }), /VAT is more than 5%/);
     // F9: an account code the company already used for something else is not taken over
     const before3110 = ctx.db.prepare("SELECT * FROM accounts WHERE code='2500'").get();
+    INV = false;   // the books are broken on purpose here
     ctx.db.prepare("UPDATE accounts SET system=0, name='Bank loan' WHERE code='2500'").run();      // as if the company had its own 2500 before the upgrade
     no(await call('POST', 'partner_txns', { partner_id: A, date: '2026-02-02', type: 'loan_in', amount: 10, method: 'bank' }), /already used/);
     ok(await call('POST', 'journal_entries', { date: '2026-02-02', memo: 'own bank loan', lines: [{ account: '1000', debit: 10 }, { account: '2500', credit: 10 }] }), 'the company keeps using its own 2500');
     chk = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'partner_accounts'); assert.equal(chk.status, 'fail'); assert.match(chk.detail, /2500 is already used/);
     ok(await call('DELETE', `journal_entries/${ok(await call('GET', 'journal_entries')).find(j => j.memo === 'own bank loan').id}`));
     ctx.db.prepare('UPDATE accounts SET system=?, name=? WHERE code=?').run(before3110.system, before3110.name, '2500');
+    INV = true; invariants('restoring account 2500');
+
+    // the same movement sent twice within a minute (a double click) is refused unless confirmed; one database transaction each
+    const dup = { partner_id: B, date: '2026-03-03', type: 'deposit', amount: 77, method: 'bank' };
+    const d1 = ok(await call('POST', 'partner_txns', dup)).id;
+    const r2 = await call('POST', 'partner_txns', dup); assert.equal(r2.s, 409); assert.match(r2.j.error, /^DUPLICATE: /);
+    assert.equal(ctx.db.prepare('SELECT COUNT(*) n FROM partner_txns WHERE amount=77').get().n, 1, 'only one movement was written');
+    const d2 = ok(await call('POST', 'partner_txns', { ...dup, confirm_duplicate: 1 })).id;
+    ok(await call('DELETE', `partner_txns/${d2}`)); ok(await call('DELETE', `partner_txns/${d1}`));
+    const inkEx = { date: '2026-03-04', amount: 40, vat_amount: 2, description: 'Printer ink', category: 'other' };
+    ok(await call('POST', `partners/${B}/expense`, inkEx)); no(await call('POST', `partners/${B}/expense`, inkEx), /DUPLICATE/);
+    assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM bills WHERE description='Printer ink'").get().n, 1, 'no second bill either');
+    // a posting that fails half-way leaves nothing behind (bill and payment are written together or not at all)
+    const realPrep = ctx.db.prepare.bind(ctx.db);
+    ctx.db.prepare = sql => { if (/^INSERT INTO payments/.test(sql)) throw new Error('disk full'); return realPrep(sql); };
+    const half = await call('POST', `partners/${B}/expense`, { ...inkEx, description: 'Half written' }); ctx.db.prepare = realPrep;
+    assert.equal(half.s, 500); assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM bills WHERE description='Half written'").get().n, 0, 'the bill was rolled back');
 
     // a partner with movements cannot be deleted; an unused one can
     no(await call('DELETE', `partners/${A}`), /inactive/);
@@ -194,7 +223,7 @@ server.listen(0, async () => {
     cookie = admin; ok(await call('POST', 'login', { username: 'acc1', password: 'pass1234' }));
     ok(await call('GET', 'partners')); ok(await call('POST', 'partner_txns', { partner_id: A, date: '2026-02-01', type: 'deposit', amount: 1, method: 'bank' }));
 
-    console.log('PARTNERS TESTS PASSED');
+    assert.ok(invRuns > 40, 'invariants were checked after every change: ' + invRuns); console.log('PARTNERS TESTS PASSED');
   } catch (e) { console.error(e); process.exitCode = 1; } finally { server.close(); process.exit(process.exitCode || 0); }
 });
 function round2(x) { return Math.round(x * 100) / 100; }

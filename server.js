@@ -85,6 +85,21 @@ function nextNumber(table, prefix, col = 'number') {
 
 // ---- enriched views -------------------------------------------------------
 const NOT_COST = ['asset', 'sub_advance'];                       // bills that create an asset, not a cost: a fixed asset bought, an advance paid to a subcontractor
+// ---- money postings: each one is a single database transaction (all its rows are written, or none), and the same movement sent
+// twice by the same user within a minute (a double click, a resend) is refused unless the user confirms it (confirm_duplicate)
+let txDepth = 0;
+const tx = fn => {
+  if (txDepth) return fn();
+  db.exec('BEGIN'); txDepth++;
+  try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { try { db.exec('ROLLBACK'); } catch {} throw e; } finally { txDepth--; }
+};
+const recentPostings = new Map(), DUP_MS = 60000;
+const postOnce = (me, key, x, fn) => {
+  const now = Date.now(); for (const [k, t] of recentPostings) if (now - t > DUP_MS) recentPostings.delete(k);
+  const k = `${me && me.id}|${key}`;
+  if (recentPostings.has(k) && !(x && x.confirm_duplicate)) { const e = new Error('DUPLICATE: the same entry was recorded less than a minute ago — record it again?'); e.status = 409; throw e; }
+  const r = tx(fn); recentPostings.set(k, now); return r;
+};
 const countable = p => p.cheque_status !== 'bounced';           // bounced cheques never settle anything
 function enrich() {
   const parties = Object.fromEntries(all('parties').map(p => [p.id, p]));
@@ -408,7 +423,7 @@ const mailCfgFor = () => {
   if (!st.smtp_host || !st.smtp_from) bad('Email is not configured — set the SMTP details in Settings');
   return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
 };
-const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+const ctx = { tx, postOnce, brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
 ctx.siteScope = me => siteScope(me);
 ctx.isHttps = isHttps;
 ctx.createSession = createSession; CTX = ctx; ctx.sessionTtl = sessionTtl;                                             // Microsoft sign-in (Phase 1B) starts exactly the same session as the password login
