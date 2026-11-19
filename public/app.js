@@ -15,6 +15,11 @@ async function api(method, url, body) {
   const r = await fetch('/api/' + url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && url !== 'login') { boot(); throw new Error('unauthorized'); }
+  // the server refuses the same money movement twice within a minute (a double click): resend only if the user confirms
+  if (r.status === 409 && /^DUPLICATE: /.test(j.error || '') && body && !body.confirm_duplicate) {
+    if (confirm(tr('سُجّلت الحركة نفسها قبل أقل من دقيقة. هل تريد تسجيلها مرة أخرى؟', 'The same entry was recorded less than a minute ago. Record it again?'))) return api(method, url, { ...body, confirm_duplicate: 1 });
+    throw new Error(tr('لم تُسجَّل مرة ثانية', 'Not recorded twice'));
+  }
   if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { data: j });
   return j;
 }

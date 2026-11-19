@@ -319,18 +319,23 @@ module.exports = ctx => {
               const bill = ctx.enrich().bills.find(k => k.id === +x.bill_id); if (!bill) bad('Bill not found');
               const amt = round(+x.amount || bill.balance); if (!(amt > 0)) bad('The amount must be greater than zero'); if (amt > bill.balance + 0.005) bad(`The open balance of this bill is ${bill.balance}`);
               billId = bill.id;
-              const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,partner_id,notes) VALUES('out',?,?,'partner',?,?,?,?)").run(date, amt, x.reference || '', billId, p.id, x.note || '');
-              audit(req, 'create', 'partner_expense', Number(r.lastInsertRowid), `${p.name} paid bill #${billId} ${amt}`); return send(res, 200, { payment_id: Number(r.lastInsertRowid), bill_id: billId }), true;
+              const id = ctx.postOnce(me, `partner_expense|${p.id}|${date}|bill ${billId}|${amt}`, x, () => {
+                const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,partner_id,notes) VALUES('out',?,?,'partner',?,?,?,?)").run(date, amt, x.reference || '', billId, p.id, x.note || '');
+                audit(req, 'create', 'partner_expense', Number(r.lastInsertRowid), `${p.name} paid bill #${billId} ${amt}`); return Number(r.lastInsertRowid);
+              });
+              return send(res, 200, { payment_id: id, bill_id: billId }), true;
             }
             const amount = round(+x.amount), vat = round(+x.vat_amount || 0);
             if (!(amount > 0)) bad('Enter the expense amount'); if (vat < 0) bad('VAT cannot be negative'); if (vat > amount * 0.05 + 0.01) bad('VAT is more than 5% of the amount'); if (!String(x.description || '').trim()) bad('Enter a description');
             if (x.project_id && !db.prepare('SELECT 1 FROM projects WHERE id=?').get(+x.project_id)) bad('Unknown project');
             if (x.party_id && !db.prepare('SELECT 1 FROM parties WHERE id=?').get(+x.party_id)) bad('Unknown supplier');
-            const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)').run(date, +x.party_id || null, +x.project_id || null, x.category || 'other', String(x.description).trim(), amount, vat, x.reference || '');
-            billId = Number(bill.lastInsertRowid);
-            const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,partner_id,notes,created_bill) VALUES('out',?,?,'partner',?,?,?,?,1)").run(date, round(amount + vat), x.reference || '', billId, p.id, String(x.note || ''));
-            audit(req, 'create', 'partner_expense', Number(r.lastInsertRowid), `${p.name} ${String(x.description).trim()} ${round(amount + vat)}`);
-            return send(res, 200, { payment_id: Number(r.lastInsertRowid), bill_id: billId }), true;
+            const id = ctx.postOnce(me, `partner_expense|${p.id}|${date}|${amount}|${vat}|${String(x.description).trim()}`, x, () => {
+              const bill = db.prepare('INSERT INTO bills(date,party_id,project_id,category,description,amount,vat_amount,reference) VALUES(?,?,?,?,?,?,?,?)').run(date, +x.party_id || null, +x.project_id || null, x.category || 'other', String(x.description).trim(), amount, vat, x.reference || '');
+              billId = Number(bill.lastInsertRowid);
+              const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,partner_id,notes,created_bill) VALUES('out',?,?,'partner',?,?,?,?,1)").run(date, round(amount + vat), x.reference || '', billId, p.id, String(x.note || ''));
+              audit(req, 'create', 'partner_expense', Number(r.lastInsertRowid), `${p.name} ${String(x.description).trim()} ${round(amount + vat)}`); return Number(r.lastInsertRowid);
+            });
+            return send(res, 200, { payment_id: id, bill_id: billId }), true;
           }
         }
         if (b === 'shares' && c && m === 'DELETE') {
@@ -341,10 +346,13 @@ module.exports = ctx => {
         if (b === 'expense' && c && m === 'DELETE') {
           const pay = db.prepare("SELECT * FROM payments WHERE id=? AND method='partner'").get(+c); if (!pay) return send(res, 404, { error: 'not found' }), true;
           guardDate(pay.date, 'an expense');
-          db.prepare('DELETE FROM payments WHERE id=?').run(pay.id);
-          const bill = pay.bill_id && db.prepare('SELECT * FROM bills WHERE id=?').get(pay.bill_id);
-          if (bill && pay.created_bill && !db.prepare('SELECT 1 FROM payments WHERE bill_id=?').get(bill.id)) { db.prepare('DELETE FROM bills WHERE id=?').run(bill.id); audit(req, 'delete', 'bills', bill.id, 'created with a partner expense'); }   // the bill this page created goes with it
-          audit(req, 'delete', 'partner_expense', pay.id, `${pay.amount}`); return send(res, 200, { ok: 1 }), true;
+          ctx.tx(() => {
+            db.prepare('DELETE FROM payments WHERE id=?').run(pay.id);
+            const bill = pay.bill_id && db.prepare('SELECT * FROM bills WHERE id=?').get(pay.bill_id);
+            if (bill && pay.created_bill && !db.prepare('SELECT 1 FROM payments WHERE bill_id=?').get(bill.id)) { db.prepare('DELETE FROM bills WHERE id=?').run(bill.id); audit(req, 'delete', 'bills', bill.id, 'created with a partner expense'); }   // the bill this page created goes with it
+            audit(req, 'delete', 'partner_expense', pay.id, `${pay.amount}`);
+          });
+          return send(res, 200, { ok: 1 }), true;
         }
         return false;
       }
@@ -353,9 +361,12 @@ module.exports = ctx => {
         if (m === 'POST' && !b) {
           needCodes();
           const x = req._body || await readBody(req), t = checkTxn(x); guardDate(t.date, 'a partner movement');
-          const r = db.prepare('INSERT INTO partner_txns(partner_id,date,type,amount,method,bank_account_id,from_section,to_section,reference,note,created,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-            .run(t.partner_id, t.date, t.type, t.amount, t.method, t.bank_account_id, t.from_section, t.to_section, x.reference || '', x.note || '', new Date().toISOString(), me.username);
-          audit(req, 'create', 'partner_txns', Number(r.lastInsertRowid), `${t.type} ${t.amount}`); return send(res, 200, { id: Number(r.lastInsertRowid) }), true;
+          const id = ctx.postOnce(me, `partner_txn|${t.partner_id}|${t.date}|${t.type}|${t.amount}|${t.method}|${t.from_section}|${t.to_section}`, x, () => {
+            const r = db.prepare('INSERT INTO partner_txns(partner_id,date,type,amount,method,bank_account_id,from_section,to_section,reference,note,created,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+              .run(t.partner_id, t.date, t.type, t.amount, t.method, t.bank_account_id, t.from_section, t.to_section, x.reference || '', x.note || '', new Date().toISOString(), me.username);
+            audit(req, 'create', 'partner_txns', Number(r.lastInsertRowid), `${t.type} ${t.amount}`); return Number(r.lastInsertRowid);
+          });
+          return send(res, 200, { id }), true;
         }
         if (m === 'DELETE' && b) {
           const t = db.prepare('SELECT * FROM partner_txns WHERE id=?').get(+b); if (!t) return send(res, 404, { error: 'not found' }), true;
