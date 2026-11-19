@@ -30,15 +30,18 @@ module.exports = ctx => {
   const now = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
   const canFin = me => ['admin', 'accountant'].includes(me.role);
   const tokenCache = {};                                                               // access token (1 hour), shared by all runs
-  const client = c => {
+  const client = (c, readOnly = false) => {
     if (!c.client_id || !c.client_secret || !c.refresh_token) throw new Error('Connect to Zoho first (Client ID, Client Secret and a grant code)');
     if (!c.org) throw new Error('Choose the Zoho Books organisation first');
-    return Z.createClient({ accounts: accountsUrl(c), client_id: c.client_id, client_secret: c.client_secret, refresh_token: c.refresh_token, api_domain: c.api_domain, org: c.org, cache: tokenCache });
+    return Z.createClient({ accounts: accountsUrl(c), client_id: c.client_id, client_secret: c.client_secret, refresh_token: c.refresh_token, api_domain: c.api_domain, org: c.org, cache: tokenCache, readOnly });
   };
 
   const hashOf = o => { const s = JSON.stringify(o); let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return String(h >>> 0); };
-  let dry = null;                                                                     // during a dry run: { recs, ops } — nothing is written or sent
-  const rec = (kind, id) => (dry && dry.recs.has(kind + ':' + id) ? dry.recs.get(kind + ':' + id) : db.prepare('SELECT * FROM zoho_sync WHERE kind=? AND local_id=?').get(kind, id));
+  let dry = null;                                                                     // during a dry run: { recs, ops, items, accts } — nothing is written or sent
+  // preflight report: what would happen to each record, and how each Trigon account would be resolved in Zoho
+  const note = (kind, id, ref, action, why) => { if (dry) dry.items.push({ kind, local_id: id, ref: String(ref || ''), action, why: why || '' }); };
+  const useAcct = (code, label, zohoId, how) => { if (dry && !dry.accts.has(String(code))) dry.accts.set(String(code), { code: String(code), label, zoho_id: zohoId || null, how }); };
+  const rec = (kind, id) => (dry && dry.recs.has(kind + ':' + id) ? dry.recs.get(kind + ':' + id) || undefined : db.prepare('SELECT * FROM zoho_sync WHERE kind=? AND local_id=?').get(kind, id));
   const mark = (kind, id, zohoId, type, status, error, hash) => dry ? void dry.recs.set(kind + ':' + id, { kind, local_id: id, zoho_id: zohoId == null ? (rec(kind, id) || {}).zoho_id : String(zohoId), zoho_type: type, status, error, hash }) : db.prepare(`INSERT INTO zoho_sync(kind,local_id,zoho_id,zoho_type,status,error,hash,synced_at) VALUES(?,?,?,?,?,?,?,?)
     ON CONFLICT(kind,local_id) DO UPDATE SET zoho_id=COALESCE(excluded.zoho_id,zoho_id), zoho_type=COALESCE(excluded.zoho_type,zoho_type), status=excluded.status, error=excluded.error, hash=COALESCE(excluded.hash,hash), synced_at=excluded.synced_at`)
     .run(kind, id, zohoId == null ? null : String(zohoId), type ?? null, status, error ?? null, hash ?? null, now());
@@ -101,15 +104,18 @@ module.exports = ctx => {
     const tax = (pct, re) => taxes.find(t => +t.tax_percentage === pct && t.tax_type !== 'tax_group' && (!re || re.test(t.tax_name || '')));
     const expense = coa.filter(a => EXPENSE_TYPES.includes(a.account_type));
     return { std: tax(5), zero: tax(0, /zero/i), exempt: tax(0, /exempt/i), bank: banks.find(a => a.account_type === 'bank'), cash: banks.find(a => a.account_type === 'cash'), ar: coa.find(a => a.account_type === 'accounts_receivable'), retention: coa.find(a => /retention/i.test(a.account_name || '') && /asset/.test(a.account_type || '')),
-      expense, assets: coa.filter(a => a.account_type === 'fixed_asset'), cogs: expense.find(a => /^cost of goods sold$/i.test(a.account_name || '')) || expense.find(a => a.account_type === 'cost_of_goods_sold') || expense[0] };   // the standard account, not another COGS account (e.g. site salaries)
+      coa: [...coa, ...banks], expense, assets: coa.filter(a => a.account_type === 'fixed_asset'), cogs: expense.find(a => /^cost of goods sold$/i.test(a.account_name || '')) || expense.find(a => a.account_type === 'cost_of_goods_sold') || expense[0] };   // the standard account, not another COGS account (e.g. site salaries)
   }
   const taxOf = (lk, k) => (k === 'std' ? lk.std : k === 'zero' ? lk.zero : k === 'exempt' ? lk.exempt : null);
   // expense account for a bill category: an account whose name contains the category (e.g. "Materials"), else Cost of Goods Sold
   const accountFor = (lk, category) => {
-    const m = mapOf('account', 'cat:' + category); if (m) return { account_id: m };
-    if (category === 'asset' && lk.assets[0]) return lk.assets[0];
+    const code = ctx.expenseCode ? ctx.expenseCode(category) : category, name = `Expense category — ${CAT[category] || category || 'Other'}`;
+    const m = mapOf('account', 'cat:' + category); if (m) { useAcct(code, name, m, 'mapped'); return { account_id: m }; }
+    if (category === 'asset' && lk.assets[0]) { useAcct(code, name, lk.assets[0].account_id, 'automatic (first fixed-asset account)'); return lk.assets[0]; }
     const label = (CAT[category] || '').toLowerCase();
-    return (label && lk.expense.find(a => String(a.account_name || '').toLowerCase().includes(label))) || lk.cogs;
+    const hit = label && lk.expense.find(a => String(a.account_name || '').toLowerCase().includes(label));
+    if (hit) { useAcct(code, name, hit.account_id, 'automatic (name contains the category)'); return hit; }
+    useAcct(code, name, lk.cogs && lk.cogs.account_id, lk.cogs ? 'fallback (Cost of Goods Sold)' : 'missing'); return lk.cogs;
   };
   async function test() {
     const c = cfg(), cl = client(c);
@@ -128,16 +134,17 @@ module.exports = ctx => {
     const person = p.email || p.phone ? { first_name: p.name.slice(0, 100), email: p.email || '', phone: p.phone || '', is_primary_contact: true } : null;
     const h = hashOf([vals, person]), r = rec('contact', p.id);
     if (r && ['ok', 'error'].includes(r.status) && r.zoho_id) {
-      if (r.hash === h && r.status === 'ok') return r.zoho_id;
+      if (r.hash === h && r.status === 'ok') { note('contact', p.id, p.name, 'unchanged', 'already in Zoho'); return r.zoho_id; }
       try {
         const cp = (((await cl.get('/contacts/' + r.zoho_id)).contact || {}).contact_persons || [])[0];        // update the existing person instead of adding another
         await cl.put('/contacts/' + r.zoho_id, { ...vals, ...(person ? { contact_persons: [{ ...(cp ? { contact_person_id: cp.contact_person_id } : {}), ...person }] } : {}) });
-        mark('contact', p.id, r.zoho_id, 'contact', 'ok', null, h); run.updated++; return r.zoho_id;
+        mark('contact', p.id, r.zoho_id, 'contact', 'ok', null, h); note('contact', p.id, p.name, 'update', 'changed here since it was sent'); run.updated++; return r.zoho_id;
       } catch (e) { if (!gone(e)) throw e; }                                          // deleted in Zoho → create it again below
     }
     const found = ((await cl.get('/contacts', { contact_name: p.name })).contacts || []).find(x => x.contact_name === p.name);
     const id = found ? found.contact_id : (await cl.post('/contacts', { ...vals, contact_persons: person ? [person] : [] })).contact.contact_id;
     if (found) await cl.put('/contacts/' + id, vals);
+    note('contact', p.id, p.name, found ? 'link' : 'create', found ? 'a Zoho contact with the same name exists but is not in the send log — it would be linked (and updated), not created again' : '');
     mark('contact', p.id, id, 'contact', 'ok', null, h); run.sent++; return id;
   }
 
@@ -153,21 +160,23 @@ module.exports = ctx => {
   async function pushDoc(cl, kind, localId, type, vals, { voided, find, label }, run) {
     const t = DOC[type], h = hashOf(vals), r = rec(kind, localId), q = t.num ? { ignore_auto_number_generation: 'true' } : undefined;
     if (voided) {                                                                     // cancelled here → void there (if it was sent)
-      if (!r || !r.zoho_id) { mark(kind, localId, null, type, 'skipped', 'void — not sent', h); run.skipped++; return; }
-      if (r.status === 'cancelled') return;
-      await cl.post(`${t.path}/${r.zoho_id}/status/void`); mark(kind, localId, r.zoho_id, type, 'cancelled', null, h); run.updated++; return;
+      if (!r || !r.zoho_id) { note(kind, localId, label, 'skip', 'void here, never sent'); mark(kind, localId, null, type, 'skipped', 'void — not sent', h); run.skipped++; return; }
+      if (r.status === 'cancelled') { note(kind, localId, label, 'unchanged', 'already void in Zoho'); return; }
+      await cl.post(`${t.path}/${r.zoho_id}/status/void`); note(kind, localId, label, 'void', 'void here — would be voided in Zoho'); mark(kind, localId, r.zoho_id, type, 'cancelled', null, h); run.updated++; return;
     }
+    let again = false;
     if (r && r.zoho_id && ['ok', 'changed', 'error'].includes(r.status)) {     // 'error' with a Zoho id: it IS there (a later update failed) → update it, never post a second one
-      if (r.zoho_type && r.zoho_type !== type) { if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, null, 'changed', `${label} changed between bill and expense after it was sent — fix it in Zoho`, null); run.failed++; } return; }
-      if (r.hash === h && r.status !== 'error') return;
+      if (r.zoho_type && r.zoho_type !== type) { note(kind, localId, label, 'conflict', 'changed between bill and expense after it was sent'); if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, null, 'changed', `${label} changed between bill and expense after it was sent — fix it in Zoho`, null); run.failed++; } return; }
+      if (r.hash === h && r.status !== 'error') { note(kind, localId, label, 'unchanged', 'already in Zoho'); return; }
       let cur = null; try { cur = (await cl.get(`${t.path}/${r.zoho_id}`))[t.key]; } catch (e) { if (!gone(e)) throw e; }
-      if (cur && r.hash === h) { mark(kind, localId, r.zoho_id, type, 'ok', null, h); return; }          // unchanged since it was sent: only the error flag is cleared
-      if (cur && !LOCKED.includes(cur.status)) { await cl.put(`${t.path}/${r.zoho_id}`, vals, q); mark(kind, localId, r.zoho_id, type, 'ok', null, h); run.updated++; return; }
-      if (cur) { if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, type, 'changed', 'edited here after it was paid in Zoho — correct it in Zoho or issue a credit note', null); run.failed++; } return; }
-      // deleted in Zoho → send it again
+      if (cur && r.hash === h) { note(kind, localId, label, 'unchanged', 'already in Zoho (an earlier error is cleared)'); mark(kind, localId, r.zoho_id, type, 'ok', null, h); return; }          // unchanged since it was sent: only the error flag is cleared
+      if (cur && !LOCKED.includes(cur.status)) { await cl.put(`${t.path}/${r.zoho_id}`, vals, q); note(kind, localId, label, 'update', `changed here; ${cur.status} in Zoho`); mark(kind, localId, r.zoho_id, type, 'ok', null, h); run.updated++; return; }
+      if (cur) { note(kind, localId, label, 'conflict', `edited here after it was ${cur.status} in Zoho — correct it in Zoho or issue a credit note`); if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, type, 'changed', 'edited here after it was paid in Zoho — correct it in Zoho or issue a credit note', null); run.failed++; } return; }
+      again = true;                                                                    // deleted in Zoho → send it again
     }
     let id = null;
     if (find) { const hit = ((await cl.get(t.path, find))[t.key + 's'] || []).find(x => x[t.num] === vals[t.num]); if (hit) id = hit[t.id]; }
+    note(kind, localId, label, id ? 'link' : 'create', id ? `${vals[t.num]} already exists in Zoho but is not in the send log — it would be linked, not created again (check that it is the same document)` : again ? 'deleted in Zoho — would be sent again' : '');
     if (!id) {
       id = (await cl.post(t.path, vals, q))[t.key][t.id];
       if (t.post && cfg().post === '1') await cl.post(`${t.path}/${id}/status/${t.post}`);
@@ -176,12 +185,12 @@ module.exports = ctx => {
   }
 
   async function pushPayment(cl, p, lk, run) {
-    const r = rec('payment', p.id);
-    if (r && (['ok', 'skipped', 'included'].includes(r.status) || (r.status === 'error' && r.zoho_id))) return;   // already in Zoho (a payment is never posted twice)
-    if (p.method === 'cheque' && p.cheque_status === 'pending') return;               // post-dated cheque: sent once it clears
-    const d = payDoc(p, run.e), skip = why => { mark('payment', p.id, null, null, 'skipped', why, null); run.skipped++; };
+    const r = rec('payment', p.id), label = `${p.kind === 'in' ? 'receipt' : 'payment'} ${p.reference || '#' + p.id}`;
+    if (r && (['ok', 'skipped', 'included'].includes(r.status) || (r.status === 'error' && r.zoho_id))) { note('payment', p.id, label, r.status === 'ok' || r.zoho_id ? 'unchanged' : 'skip', r.status === 'ok' || r.zoho_id ? 'already in Zoho' : r.error || r.status); return; }   // already in Zoho (a payment is never posted twice)
+    if (p.method === 'cheque' && p.cheque_status === 'pending') { note('payment', p.id, label, 'skip', 'post-dated cheque — sent once it clears'); return; }   // post-dated cheque: sent once it clears
+    const d = payDoc(p, run.e), skip = why => { note('payment', p.id, label, 'skip', why); mark('payment', p.id, null, null, 'skipped', why, null); run.skipped++; };
     if (p.method === 'offset') return skip('offset against another balance — record it in Zoho directly');
-    if (d.bill && !d.bill.party_id) return void mark('payment', p.id, null, 'expense', 'included', 'paid expense — already in Zoho as an expense', null);
+    if (d.bill && !d.bill.party_id) { note('payment', p.id, label, 'skip', 'paid expense — part of the Zoho expense'); return void mark('payment', p.id, null, 'expense', 'included', 'paid expense — already in Zoho as an expense', null); }
     if (!d.inv && !d.bill) return skip('not linked to an invoice or bill — record it in Zoho directly');
     const docRec = rec(d.inv ? 'invoice' : 'bill', (d.inv || d.bill).id);
     if (docRec && docRec.zoho_type === 'creditnote') return skip('refund of a credit note — record it in Zoho as a credit note refund');
@@ -192,6 +201,9 @@ module.exports = ctx => {
     const apply = round(Math.min(d.amount, +doc.balance || 0)), contact = await contactId(cl, d.party_id, run);
     const mapped = !d.cash && ctx.bankCode && mapOf('account', 'acct:' + ctx.bankCode(p.bank_account_id));   // several bank accounts: each mapped to its Zoho bank
     const acct = mapped ? { account_id: mapped } : d.cash ? (lk.cash || lk.bank) : (lk.bank || lk.cash), ref = String(p.reference || '').slice(0, 100);
+    const pcode = d.cash ? (p.method === 'petty' ? (p.employee_id ? '1030' : '1010') : '1020') : ctx.bankCode ? ctx.bankCode(p.bank_account_id) : '1000';
+    useAcct(pcode, d.cash ? (p.method === 'petty' ? 'Petty cash' : 'Cash on hand') : 'Bank', acct && acct.account_id, mapped ? 'mapped' : acct ? `automatic (first Zoho ${d.cash && lk.cash ? 'cash' : 'bank'} account)` : 'missing');
+    note('payment', p.id, label, 'create', `${d.inbound ? 'customer payment' : 'vendor payment'} applied to ${d.inv ? d.inv.number : d.bill.reference || 'bill #' + d.bill.id}`);
     let id;
     if (d.inbound) {
       const vals = { customer_id: contact, payment_mode: d.mode, amount: d.amount, date: d.date, reference_number: ref, description: d.memo, ...(acct ? { account_id: acct.account_id } : {}),
@@ -262,23 +274,27 @@ module.exports = ctx => {
   async function pushJournal(cl, j, lk, run) {
     const r0 = rec(j.kind, j.local_id);
     if (j.voided) {                                                                   // invoice cancelled here → its retention journal is removed there
-      if (!r0 || !r0.zoho_id || r0.status === 'cancelled') return;
+      if (!r0 || !r0.zoho_id || r0.status === 'cancelled') { note(j.kind, j.local_id, j.ref, 'skip', 'its invoice is void; nothing in Zoho'); return; }
+      note(j.kind, j.local_id, j.ref, 'remove', 'its invoice is void here — the journal would be deleted in Zoho');
       try { await cl.del('/journals/' + r0.zoho_id); } catch (e) { if (!gone(e)) throw e; }
       mark(j.kind, j.local_id, r0.zoho_id, 'journal', 'cancelled', null, null); run.updated++; return;
     }
-    if (j.invoice) { const ir = rec('invoice', j.invoice); if (!ir || ir.status !== 'ok') return; }          // retention follows its invoice: not sent / not updated while the invoice is not in step
+    if (j.invoice) { const ir = rec('invoice', j.invoice); if (!ir || ir.status !== 'ok') { note(j.kind, j.local_id, j.ref, 'skip', 'waits until its invoice is in Zoho'); return; } }          // retention follows its invoice: not sent / not updated while the invoice is not in step
     const lines = [];
     for (const l of j.lines.filter(l => l.amount > 0.004)) {
       const acc = l.acct === 'bank' ? (mapOf('account', 'acct:1000') || (lk.bank || {}).account_id) : l.acct === 'cash' ? (mapOf('account', 'acct:1020') || (lk.cash || lk.bank || {}).account_id)
         : l.acct === 'ar' ? (mapOf('account', 'acct:1100') || (lk.ar || {}).account_id) : l.acct === 1150 ? (mapOf('account', 'acct:1150') || (lk.retention || {}).account_id) : mapOf('account', 'acct:' + l.acct);
+      { const code = l.acct === 'bank' ? '1000' : l.acct === 'cash' ? '1020' : l.acct === 'ar' ? '1100' : String(l.acct), mapped = mapOf('account', 'acct:' + code);
+        useAcct(code, LEDGER[code] || (code === '1000' ? 'Bank' : code === '1020' ? 'Cash on hand' : code), acc, mapped ? 'mapped' : acc ? 'automatic (Zoho default account of that type)' : 'missing'); }
       if (!acc) throw new Error(`map our account ${l.acct === 'ar' ? '1100 (Accounts receivable)' : l.acct}${LEDGER[l.acct] ? ' (' + LEDGER[l.acct] + ')' : ''} to a Zoho account first`);
       lines.push({ account_id: acc, debit_or_credit: l.dc, amount: round(l.amount), description: l.desc || '', ...(l.customer ? { customer_id: await contactId(cl, l.customer, run) } : {}), ...projectRef(l.project_id) });
     }
     const vals = { journal_date: j.date, reference_number: j.ref.slice(0, 100), notes: j.notes, line_items: lines }, h = hashOf(vals), r = rec(j.kind, j.local_id);
     if (r && ['ok', 'error'].includes(r.status) && r.zoho_id) {                   // also after a failed update: the journal exists there, so it is updated, not posted twice
-      if (r.hash === h && r.status === 'ok') return;
-      try { await cl.put('/journals/' + r.zoho_id, vals); mark(j.kind, j.local_id, r.zoho_id, 'journal', 'ok', null, h); run.updated++; return; } catch (e) { if (!gone(e)) throw e; }
+      if (r.hash === h && r.status === 'ok') { note(j.kind, j.local_id, j.ref, 'unchanged', 'already in Zoho'); return; }
+      try { await cl.put('/journals/' + r.zoho_id, vals); note(j.kind, j.local_id, j.ref, 'update', 'changed here since it was sent'); mark(j.kind, j.local_id, r.zoho_id, 'journal', 'ok', null, h); run.updated++; return; } catch (e) { if (!gone(e)) throw e; }
     }
+    note(j.kind, j.local_id, j.ref, 'create', '');
     const id = (await cl.post('/journals', vals)).journal.journal_id;
     if (cfg().post === '1') await cl.post(`/journals/${id}/status/publish`);
     mark(j.kind, j.local_id, id, 'journal', 'ok', null, h); run.sent++;
@@ -286,7 +302,7 @@ module.exports = ctx => {
 
   // dry run: real reads when connected (offline stand-ins otherwise), every write is recorded instead of sent
   function dryClient(c) {
-    let real = null; try { real = client(c); } catch { /* not connected: offline */ }
+    let real = null; try { real = client(c, true); } catch { /* not connected: offline */ }
     let n = 0; const fake = () => new Proxy({}, { get: (t, k) => (typeof k !== 'string' || k === 'then' || k === 'toJSON' ? undefined : /_id$/.test(k) ? (t[k] ??= 'DRY-' + ++n) : (t[k] ??= fake())) });
     const OFF = { '/settings/taxes': { taxes: [{ tax_id: 'DRY-VAT5', tax_name: 'Standard Rate', tax_percentage: 5, tax_type: 'tax' }, { tax_id: 'DRY-ZERO', tax_name: 'Zero Rate', tax_percentage: 0, tax_type: 'tax' }, { tax_id: 'DRY-EXEMPT', tax_name: 'Exempt', tax_percentage: 0, tax_type: 'tax' }] },
       '/bankaccounts': { bankaccounts: [{ account_id: 'DRY-BANK', account_name: '(bank)', account_type: 'bank' }, { account_id: 'DRY-CASH', account_name: '(cash)', account_type: 'cash' }] },
@@ -298,7 +314,25 @@ module.exports = ctx => {
       return OFF[p] || { [p.slice(1)]: [] };
     };
     const write = method => async (p, body) => { dry.ops.push({ method, path: p.replace(/\/\d{6,}/g, '/:id'), what: body ? (body.invoice_number || body.creditnote_number || body.bill_number || body.reference_number || body.contact_name || body.journal_date || '') : '', amount: body ? (body.amount ?? (body.line_items ? round(body.line_items.reduce((s, l) => s + (l.debit_or_credit === 'credit' ? 0 : (l.amount ?? l.quantity * l.rate)), 0)) : '')) : '', body }); return fake(); };
-    return { get, post: write('POST'), put: write('PUT'), offline: !real };
+    return { get, post: write('POST'), put: write('PUT'), del: write('DELETE'), offline: !real };
+  }
+
+  // the preflight report of a dry run: which organisation, what is already linked and synced, what would be created / updated /
+  // left alone, conflicts and possible duplicates, and how every Trigon account the sync uses resolves in Zoho
+  async function preflight(c, offline, items, accts, coa, from, to) {
+    const names = Object.fromEntries((coa || []).map(a => [String(a.account_id), `${a.account_name}${a.account_code ? ' (' + a.account_code + ')' : ''}`]));
+    let organization = { id: c.org || '', name: c.org_name || '' };
+    if (!offline) {
+      try { const o = ((await client(c, true).get('/organizations')).organizations || []).find(x => String(x.organization_id) === String(c.org)); organization = o ? { id: String(o.organization_id), name: o.name, currency: o.currency_code } : { ...organization, error: 'not found in this Zoho account' }; }
+      catch (e) { organization = { ...organization, error: e.message }; }
+    }
+    const plan = {}; for (const i of items) { const k = plan[i.kind] ||= {}; k[i.action] = (k[i.action] || 0) + 1; }
+    const accounts = [...accts.values()].sort((a, b) => a.code.localeCompare(b.code)).map(a => ({ ...a, zoho_name: a.zoho_id ? names[String(a.zoho_id)] || (/^DRY-/.test(a.zoho_id) ? '(stand-in, not connected)' : '') : '' }));
+    let host = ''; try { host = c.api_domain ? new URL(c.api_domain).host : ''; } catch { /* not connected */ }
+    return { read_only: true, offline, period: { from, to }, organization, data_centre: c.dc, api_host: host,
+      mappings: db.prepare('SELECT kind, local_key, zoho_id, label FROM zoho_map ORDER BY kind, local_key').all(),
+      synced: db.prepare('SELECT kind, status, COUNT(*) n FROM zoho_sync GROUP BY kind, status ORDER BY kind, status').all(),
+      plan, conflicts: items.filter(i => ['conflict', 'link'].includes(i.action)), missing_accounts: accounts.filter(a => a.how.startsWith('missing')), accounts, items: items.slice(0, 2000) };
   }
 
   let running = null;
@@ -306,14 +340,20 @@ module.exports = ctx => {
     if (running) throw new Error('A sync is already running');
     const c = cfg(); if (!dryRun && c.enabled !== '1') throw new Error('The Zoho link is switched off');
     const run = { sent: 0, updated: 0, failed: 0, skipped: 0, errors: [] }, started = now();
-    if (dryRun) dry = { recs: new Map(), ops: [] };
+    if (dryRun) dry = { recs: new Map(), ops: [], items: [], accts: new Map() };
     let offline = false;
     running = (async () => {
-      const cl = dryRun ? dryClient(c) : client(c), lk = await lookups(cl); offline = !!cl.offline;
+      const cl = dryRun ? dryClient(c) : client(c), lk = await lookups(cl); offline = !!cl.offline; run.coa = lk.coa; run.cl = cl;
       const { e, invoices, bills, payments } = data(from || c.start || null, to || today()); run.e = e;
-      const each = async (kind, id, label, fn) => { try { await fn(); } catch (err) { run.failed++; run.errors.push(`${label}: ${err.message}`); mark(kind, id, null, null, 'error', err.message.slice(0, 500), null); } };
+      const each = async (kind, id, label, fn) => { try { await fn(); } catch (err) { run.failed++; run.errors.push(`${label}: ${err.message}`); note(kind, id, label, 'error', err.message); mark(kind, id, null, null, 'error', err.message.slice(0, 500), null); } };
+      if (dryRun) {                                                                    // accounts every invoice / bill uses in Zoho without a mapping of ours
+        useAcct('4000', 'Contract revenue', null, "Zoho default (the line's sales account)"); useAcct('1100', 'Accounts receivable', (lk.ar || {}).account_id, 'automatic (Zoho Accounts Receivable)');
+        useAcct('2100', 'VAT output', lk.std && lk.std.tax_id, lk.std ? `Zoho tax ${lk.std.tax_name}` : 'missing (no 5% tax in Zoho)'); useAcct('1200', 'VAT input', lk.std && lk.std.tax_id, lk.std ? `Zoho tax ${lk.std.tax_name}` : 'missing (no 5% tax in Zoho)');
+        useAcct('2000', 'Accounts payable', null, 'automatic (Zoho Accounts Payable)');
+      }
       for (const i of invoices) await each('invoice', i.id, i.number, async () => {
         if ((i.vat_basis === 'net' && i.retention > 0.004) || i.release > 0.004 || (i.items || []).some(x => x.contra)) {   // PC invoices: VAT after retention / contra / retention release
+          note('invoice', i.id, i.number, 'skip', 'invoice from a main-contractor PC (VAT after retention, contra charges or retention release) — entered in Zoho by hand');
           if ((rec('invoice', i.id) || {}).status !== 'skipped') { mark('invoice', i.id, null, null, 'skipped', 'invoice from a main-contractor PC (VAT after retention, contra charges or retention release) — enter it in Zoho by hand for now', null); run.skipped++; }
           return;
         }
@@ -325,18 +365,20 @@ module.exports = ctx => {
         await pushDoc(cl, 'invoice', i.id, d.type, vals, { voided: d.voided, find: { [credit ? 'creditnote_number' : 'invoice_number']: d.number }, label: i.number }, run);
       });
       for (const b of bills) await each('bill', b.id, b.reference || b.description || `#${b.id}`, async () => {
-        if (b.category === 'sub_advance') { if ((rec('bill', b.id) || {}).status !== 'skipped') { mark('bill', b.id, null, null, 'skipped', 'advance paid to a subcontractor — record it in Zoho as a vendor advance', null); run.skipped++; } return; }
+        if (b.category === 'sub_advance') { note('bill', b.id, b.reference || `#${b.id}`, 'skip', 'advance to a subcontractor — recorded in Zoho as a vendor advance by hand'); if ((rec('bill', b.id) || {}).status !== 'skipped') { mark('bill', b.id, null, null, 'skipped', 'advance paid to a subcontractor — record it in Zoho as a vendor advance', null); run.skipped++; } return; }
         const d = billDoc(b, e), acct = accountFor(lk, d.category), tax = d.vat > 0.004 ? lk.std : null;
         if (d.vat > 0.004 && !tax) { d.amount = round(d.amount + d.vat); d.notes = [d.notes, `VAT ${d.vat.toFixed(2)} not recoverable (not VAT-registered) — included in the cost`].filter(Boolean).join('\n'); }   // not registered: input VAT is part of the cost
         if (!acct) throw new Error('no expense account in Zoho');
         const pct = +(tax && tax.tax_percentage) || 5, exact = !tax || Math.abs(d.vat - round(d.amount * pct / 100)) <= 0.05, taxable = exact ? d.amount : round(d.vat * 100 / pct);
         if (!exact && taxable > d.amount + 0.05) throw new Error(`VAT ${d.vat.toFixed(2)} is more than ${pct}% of the amount — check the bill`);
         if (d.type === 'expense' && !exact) {                                           // an expense has one amount and one tax in Zoho
+          note('bill', b.id, d.number, 'skip', 'VAT is not 5% of the amount — entered in Zoho by hand');
           if ((rec('bill', b.id) || {}).status !== 'skipped') { mark('bill', b.id, null, null, 'skipped', `VAT ${d.vat.toFixed(2)} is not ${pct}% of the amount (partly outside VAT) — enter this expense in Zoho by hand`, null); run.skipped++; }
           return;
         }
         if (d.type === 'expense') {
           const paid = d.cash ? (lk.cash || lk.bank) : (lk.bank || lk.cash); if (!paid) throw new Error('no bank or cash account in Zoho');
+          useAcct(d.cash ? '1020' : '1000', d.cash ? 'Cash (expenses paid in cash)' : 'Bank (expenses paid by bank)', paid.account_id, `automatic (first Zoho ${d.cash && lk.cash ? 'cash' : 'bank'} account)`);
           const vals = { account_id: acct.account_id, paid_through_account_id: paid.account_id, date: d.date, amount: d.amount, ...(tax ? { tax_id: tax.tax_id } : {}), is_inclusive_tax: false,
             reference_number: d.number.slice(0, 100), description: [d.description, d.notes].filter(Boolean).join('\n'), place_of_supply: d.place };
           return pushDoc(cl, 'bill', b.id, 'expense', vals, { label: d.number }, run);
@@ -349,10 +391,12 @@ module.exports = ctx => {
         await pushDoc(cl, 'bill', b.id, 'bill', vals, { find: { bill_number: d.number, vendor_id: vendor }, label: d.number }, run);
       });
       // receipts / payments already in Zoho that bounced, were deleted or were changed here: removed there (a changed one is sent again just below)
-      if (!dryRun) for (const r of db.prepare("SELECT * FROM zoho_sync WHERE kind='payment' AND status='ok' AND zoho_id IS NOT NULL").all()) await each('payment', r.local_id, `payment #${r.local_id}`, async () => {
+      for (const r of db.prepare("SELECT * FROM zoho_sync WHERE kind='payment' AND status='ok' AND zoho_id IS NOT NULL").all()) await each('payment', r.local_id, `payment #${r.local_id}`, async () => {
         const p = e.payments.find(x => x.id === r.local_id), live = p && p.cheque_status !== 'bounced';
         if (live && (!r.hash || r.hash === payHash(payDoc(p, e)))) return;
+        note('payment', r.local_id, `payment #${r.local_id}`, 'remove', !p ? 'deleted here — would be removed from Zoho' : !live ? 'cheque bounced — would be removed from Zoho' : 'changed here — would be removed from Zoho and sent again');
         try { await cl.del(`/${r.zoho_type === 'vendorpayment' ? 'vendorpayments' : 'customerpayments'}/${r.zoho_id}`); } catch (err) { if (!gone(err)) throw err; }
+        if (dryRun) { if (live) dry.recs.set('payment:' + r.local_id, null); else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', null, null); run.updated++; return; }
         if (live) db.prepare("DELETE FROM zoho_sync WHERE kind='payment' AND local_id=?").run(r.local_id);
         else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', p ? 'cheque bounced — removed from Zoho' : 'deleted here — removed from Zoho', null);
         run.updated++;
@@ -363,7 +407,11 @@ module.exports = ctx => {
     let message = '';
     try { await running; } catch (err) { message = err.message; run.failed++; } finally { running = null; }
     if (!message && run.errors.length) message = run.errors.slice(0, 5).join(' | ');
-    if (dryRun) { const ops = dry.ops; dry = null; return { dry_run: true, offline, would_send: run.sent, would_update: run.updated, failed: run.failed, skipped: run.skipped, errors: message && !run.errors.length ? [message] : run.errors, ops: ops.map(({ body, ...o }) => o), payloads: ops.slice(0, 200) }; }
+    if (dryRun) {
+      const { ops, items, accts } = dry; dry = null;
+      return { dry_run: true, offline, would_send: run.sent, would_update: run.updated, failed: run.failed, skipped: run.skipped, errors: message && !run.errors.length ? [message] : run.errors,
+        ops: ops.map(({ body, ...o }) => o), payloads: ops.slice(0, 200), preflight: await preflight(c, offline, items, accts, run.coa, from || c.start || null, to || today()) };
+    }
     db.prepare('INSERT INTO zoho_runs(started,finished,trigger,user,sent,updated,failed,skipped,message) VALUES(?,?,?,?,?,?,?,?,?)').run(started, now(), trigger, user, run.sent, run.updated, run.failed, run.skipped, message);
     setCfg('last_run', today());
     return { sent: run.sent, updated: run.updated, failed: run.failed, skipped: run.skipped, message };
