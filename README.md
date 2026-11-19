@@ -19,6 +19,8 @@ npm test            # اختبارات الحسابات والصلاحيات و�
 
 نسخة PDF للطباعة والإرسال: **[عربي PDF](docs/Trigon-ERP-User-Guide-AR.pdf)** • **[English PDF](docs/Trigon-ERP-User-Guide-EN.pdf)** — تُحدَّث بالأمر `npm run build:guide-pdf`.
 
+أساس Copilot للقراءة فقط، مع متطلبات التفعيل وقرارات الخصوصية والإقامة السحابية: [COPILOT.md](docs/COPILOT.md) (عربي / English).
+
 ## الوحدات
 | المجموعة | المحتوى |
 |---|---|
