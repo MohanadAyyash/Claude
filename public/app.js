@@ -15,6 +15,11 @@ async function api(method, url, body) {
   const r = await fetch('/api/' + url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && url !== 'login') { boot(); throw new Error('unauthorized'); }
+  // the server refuses the same money movement twice within a minute (a double click): resend only if the user confirms
+  if (r.status === 409 && /^DUPLICATE: /.test(j.error || '') && body && !body.confirm_duplicate) {
+    if (confirm(tr('سُجّلت الحركة نفسها قبل أقل من دقيقة. هل تريد تسجيلها مرة أخرى؟', 'The same entry was recorded less than a minute ago. Record it again?'))) return api(method, url, { ...body, confirm_duplicate: 1 });
+    throw new Error(tr('لم تُسجَّل مرة ثانية', 'Not recorded twice'));
+  }
   if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { data: j });
   return j;
 }
@@ -94,7 +99,7 @@ const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', [...READR, 'procurement', 'site_engineer']], ['po', 'أوامر الشراء', 'Purchase orders', [...READR, 'procurement', 'storekeeper']], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', [...MONEYR, 'procurement']],
   ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', [...READR, 'procurement']], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['cheques', 'الشيكات المؤجلة', 'Post-dated cheques', READR], ['spend', 'اعتماد المشتريات والمدفوعات', 'Spend approvals', ['admin', 'accountant', 'manager', 'procurement', 'qs']], ['cashflow', 'توقع التدفق النقدي', 'Cash-flow forecast', READR], ['guarantees', 'الضمانات البنكية', 'Bank guarantees', [...READR, 'qs']], ['parties', 'العملاء والموردون', 'Clients & suppliers', [...READR, 'qs', 'procurement']],
   ['stock', 'المخزون', 'Stock', [...READR, 'procurement', 'storekeeper', 'site_engineer']], ['assets', 'الأصول والمعدات', 'Assets & equipment', [...FINR, 'manager']], ['equipment', 'تشغيل وصيانة المعدات', 'Equipment log', [...READR, 'qs', 'site_engineer', 'foreman', 'storekeeper']], ['hired', 'عمالة ومعدات مستأجرة', 'Hired labour & rentals', [...READR, 'qs', 'procurement', 'site_engineer', 'foreman', 'storekeeper']], ['petty', 'العهدة النقدية', 'Petty cash', FINR],
-  ['#', 'المحاسبة', 'Accounting'], ['financials', 'القوائم المالية', 'Financial statements', FINR], ['ledger', 'دفتر الأستاذ', 'General ledger', FINR], ['journal', 'قيود اليومية', 'Journal entries', FINR], ['coa', 'دليل الحسابات', 'Chart of accounts', FINR], ['bank', 'مطابقة البنك', 'Bank reconciliation', FINR], ['zoho', 'الربط مع Zoho Books', 'Zoho Books link', FINR],
+  ['#', 'المحاسبة', 'Accounting'], ['financials', 'القوائم المالية', 'Financial statements', FINR], ['ledger', 'دفتر الأستاذ', 'General ledger', FINR], ['journal', 'قيود اليومية', 'Journal entries', FINR], ['partners', 'الشركاء', 'Partners', FINR], ['coa', 'دليل الحسابات', 'Chart of accounts', FINR], ['bank', 'مطابقة البنك', 'Bank reconciliation', FINR], ['zoho', 'الربط مع Zoho Books', 'Zoho Books link', FINR],
   ['#', 'الموارد البشرية', 'Human resources'], ['hrdash', 'لوحة الموارد البشرية', 'HR dashboard', HRR], ['approvals', 'الاعتمادات', 'Approvals', STAFFR.filter(r => r !== 'viewer')], ['employees', 'الموظفون', 'Employees', EMPR], ['attendance', 'الحضور والإضافي', 'Attendance & overtime', [...HRR, 'manager', ...SITER]],
   ['leave', 'الإجازات', 'Leave', HRR], ['hrrequests', 'طلبات الموظفين', 'Employee requests', HRR], ['letters', 'الخطابات الرسمية', 'Official letters', HRR], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS', EMPR],
   ['#', 'الضرائب والامتثال', 'Tax & compliance'], ['vat', 'ضريبة القيمة المضافة', 'VAT report', ['admin', 'accountant', 'viewer']], ['ctax', 'ضريبة الشركات', 'Corporate tax', FINR], ['compliance', 'الامتثال والتدقيق', 'Compliance & audit', FINR], ['documents', 'المستندات', 'Documents', [...READR, 'hr']],
@@ -127,7 +132,7 @@ const go = r => { location.hash = r; };
 window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };
 // user guide (public/guide, built from docs/USER-GUIDE-*.md by tools/build-guide.js): the section that explains each page
 const GUIDE = { hired: 43, cheques: 35, cashflow: 36, guarantees: 37, spend: 38, equipment: 41, schedule: 42, dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
-  employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31 };
+  employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31, partners: 45 };
 const guideUrl = p => `guide/index.html?lang=${lang}${GUIDE[p] ? '#s' + GUIDE[p] : ''}`;
 const PAGES = {};
 const render = async () => {

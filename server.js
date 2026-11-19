@@ -85,6 +85,23 @@ function nextNumber(table, prefix, col = 'number') {
 
 // ---- enriched views -------------------------------------------------------
 const NOT_COST = ['asset', 'sub_advance'];                       // bills that create an asset, not a cost: a fixed asset bought, an advance paid to a subcontractor
+// ---- money postings: each one is a single database transaction (all its rows are written, or none), and the same movement sent
+// twice by the same user within a minute (a double click, a resend) is refused unless the user confirms it (confirm_duplicate)
+let txDepth = 0;
+const tx = fn => {
+  if (txDepth) return fn();
+  db.exec('BEGIN'); txDepth++;
+  try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { try { db.exec('ROLLBACK'); } catch {} throw e; } finally { txDepth--; }
+};
+const recentPostings = new Map(), DUP_MS = 60000;
+// table: where fn writes the row whose id it returns — an entry deleted since then (to correct it) is no longer a duplicate
+const postOnce = (me, key, x, fn, table) => {
+  const now = Date.now(); for (const [k, v] of recentPostings) if (now - v.t > DUP_MS) recentPostings.delete(k);
+  const k = `${me && me.id}|${key}`, prev = recentPostings.get(k);
+  const still = prev && (!prev.table || db.prepare(`SELECT 1 FROM ${prev.table} WHERE id=?`).get(prev.id));
+  if (still && !(x && x.confirm_duplicate)) { const e = new Error('DUPLICATE: the same entry was recorded less than a minute ago — record it again?'); e.status = 409; throw e; }
+  const r = tx(fn); recentPostings.set(k, { t: now, table, id: r }); return r;
+};
 const countable = p => p.cheque_status !== 'bounced';           // bounced cheques never settle anything
 function enrich() {
   const parties = Object.fromEntries(all('parties').map(p => [p.id, p]));
@@ -148,7 +165,7 @@ function enrich() {
   return { parties, projects, invoices, bills, quotes, payments };
 }
 // cash that has really moved: pending/bounced cheques excluded
-const inCash = p => p.method !== 'offset' && (p.method !== 'cheque' || p.cheque_status === 'cleared' || !p.cheque_status);
+const inCash = p => p.method !== 'offset' && p.method !== 'partner' && (p.method !== 'cheque' || p.cheque_status === 'cleared' || !p.cheque_status);
 const payrollCost = (from, to) => db.prepare("SELECT * FROM payroll WHERE status='final' AND month>=? AND month<=?").all((from || '0000-00').slice(0, 7), (to || '9999-99').slice(0, 7));
 
 function projectRows() {
@@ -408,7 +425,7 @@ const mailCfgFor = () => {
   if (!st.smtp_host || !st.smtp_from) bad('Email is not configured — set the SMTP details in Settings');
   return { host: st.smtp_host, port: st.smtp_port, secure: st.smtp_secure === '1', user: st.smtp_user, pass: st.smtp_pass, from: st.smtp_from, fromName: st.company_name };
 };
-const ctx = { brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
+const ctx = { tx, postOnce, brandRef, vatReport: (...a) => vatReport(...a), db, send, bad, audit, readBody, getSettings, enrich, today, round, C, nextNumber, parseItems, TABLES, ROLES, DATA_DIR, inCash, countable, sessionUser, projectRows, payrollRows, applyPayroll, mailCfg: mailCfgFor, sendMail, validEmail, docHtml, toText, hooks: {} };
 ctx.siteScope = me => siteScope(me);
 ctx.isHttps = isHttps;
 ctx.createSession = createSession; CTX = ctx; ctx.sessionTtl = sessionTtl;                                             // Microsoft sign-in (Phase 1B) starts exactly the same session as the password login
@@ -423,7 +440,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode'), require('./modules/m365business')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/partners'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode'), require('./modules/m365business')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -795,6 +812,8 @@ async function api(req, res, url) {
     // receipts and payments: a real amount against a live document, never more than what is open; reconciled ones are locked
     const checkPayment = (row, cur) => {
       const p = { ...(cur || {}), ...row };
+      if (cur && cur.method === 'partner') bad('This expense was paid by a partner — change or delete it from the Partners page');
+      if (p.method === 'partner') bad('Expenses paid by a partner are recorded from the Partners page');
       if (!['in', 'out'].includes(p.kind)) bad('Payment kind must be in or out');
       if (!(Number.isFinite(+p.amount) && +p.amount > 0)) bad('Amount must be greater than zero');
       if (p.date && !/^\d{4}-\d\d-\d\d$/.test(p.date)) bad('Invalid date');
@@ -867,6 +886,15 @@ async function api(req, res, url) {
           }
         }
       }
+      if (a === 'bills') {
+        const cur = enrich().bills.find(x => x.id === id); if (!cur) return send(res, 404, { error: 'not found' });
+        const diff = k => k in row && String(row[k] ?? '') !== String(cur[k] ?? '') && !(row[k] !== '' && row[k] != null && +row[k] === +cur[k]);
+        // a bill paid (partly) by a partner from own money keeps the figures that money was recorded against
+        if (db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='partner'").get(id) && ['amount', 'vat_amount', 'date', 'party_id'].some(diff))
+          bad('This bill was paid by a partner — its amount, VAT, date and supplier cannot be changed here; delete the partner payment from the Partners page first');
+        const total = round(('amount' in row ? +row.amount || 0 : cur.amount) + ('vat_amount' in row ? +row.vat_amount || 0 : cur.vat_amount));
+        if (total < round(cur.paid) - 0.01) bad(`This bill cannot go below what was already paid (${money(cur.paid)})`);
+      }
       if (a === 'payments') {
         const cur = db.prepare('SELECT * FROM payments WHERE id=?').get(id); if (!cur) return send(res, 404, { error: 'not found' });
         if (reconciled(id) && ['kind', 'amount', 'date', 'invoice_id', 'bill_id', 'bank_account_id', 'method'].some(k => k in row && String(row[k] ?? '') !== String(cur[k] ?? '') && +row[k] !== +cur[k])) bad('This payment is matched to a bank statement line — unmatch it first');
@@ -884,6 +912,8 @@ async function api(req, res, url) {
       if (a === 'invoices') return send(res, 409, { error: 'Tax invoices cannot be deleted (sequential numbering). Void it or issue a credit note.' });
       if (a === 'employees' && db.prepare('SELECT COUNT(*) n FROM payroll WHERE employee_id=?').get(id).n) return send(res, 409, { error: 'employee has payroll records — mark as left instead' });
       if (a === 'payments' && reconciled(id)) return send(res, 409, { error: 'This payment is matched to a bank statement line — unmatch it first' });
+      if (a === 'payments' && db.prepare("SELECT 1 FROM payments WHERE id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
+      if (a === 'bills' && db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
       if (a === 'bills') {                                                    // a bill raised by a certificate or a purchase order belongs to it
         const sc = has('sub_certs') && db.prepare('SELECT number FROM sub_certs WHERE bill_id=?').get(id), po = has('purchase_orders') && db.prepare('SELECT number FROM purchase_orders WHERE bill_id=?').get(id);
         if (sc) return send(res, 409, { error: `This bill belongs to payment certificate ${sc.number} — it cannot be deleted on its own` });

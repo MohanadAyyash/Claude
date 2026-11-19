@@ -80,6 +80,12 @@ module.exports = ctx => {
         .map(r => `payroll #${r.id} (${r.month})`);
       return bad.length ? warn(`${bad.length} row(s) to review`, bad.slice(0, 50)) : ok();
     }],
+    ['partner_accounts', 'Partner accounts (capital, loans, current accounts) equal the general ledger', () => {
+      if (!ctx.partnerChecks) return ok('partners module not loaded');
+      const r = ctx.partnerChecks(); if (!r.length) return ok('no partners recorded');
+      const worst = r.some(x => x.status === 'fail') ? 'fail' : r.some(x => x.status === 'warn') ? 'warn' : 'ok';
+      return { status: worst, detail: r.map(x => x.detail).join('; ') };
+    }],
     ['errors_24h', 'Server errors in the last 24 hours', () => {
       const since = new Date(Date.now() - 864e5).toISOString();
       const rows = db.prepare('SELECT path, message, COUNT(*) n FROM error_log WHERE ts >= ? GROUP BY path, message ORDER BY n DESC LIMIT 20').all(since);

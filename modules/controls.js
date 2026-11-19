@@ -12,7 +12,7 @@ module.exports = ctx => {
   const lockDate = () => { const d = getSettings().lock_date; return isDate(d) ? d : ''; };
   const closed = d => { const l = lockDate(); return !!l && isDate(d) && d <= l; };
   const refuse = (what, d) => bad(`The accounting period is closed up to ${lockDate()} — ${what} dated ${d} cannot be added or changed. Use a date after the closing date (for a correction: a credit note or a journal entry in the open period), or ask the administrator to reopen the period in Settings.`);
-  const DATED = { invoices: 'date', bills: 'date', payments: 'date', petty_topups: 'date', journal_entries: 'date', sub_certs: 'date', stock_moves: 'date' };   // records that feed the ledger
+  const DATED = { invoices: 'date', bills: 'date', payments: 'date', petty_topups: 'date', journal_entries: 'date', sub_certs: 'date', stock_moves: 'date', partner_txns: 'date', partner_allocations: 'date' };   // records that feed the ledger
   const OPEN_ACTIONS = ['credit-note', 'email', 'pdf', 'share', 'remind', 'statement'];   // allowed on a closed document: they add nothing to the closed period
   const has = t => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
   const monthEnd = m => `${m}-${String(C.daysInMonth(m)).padStart(2, '0')}`;
@@ -33,7 +33,7 @@ module.exports = ctx => {
       const chequeOnly = a === 'payments' && method === 'PUT' && body && Object.keys(body).every(k => ['cheque_status', 'bank_account_id'].includes(k));
       if (cur && closed(cur[DATED[a]]) && !chequeOnly) refuse('a document', cur[DATED[a]]);
     }
-    if ((DATED[a] || ['projects', 'claims', 'client_pcs', 'pay_apps', 'bank', 'purchase_orders', 'hire'].includes(a)) && body && isDate(body.date) && closed(body.date) && !(a === 'purchase_orders' && c !== 'receive')) refuse('a document', body.date);
+    if ((DATED[a] || ['projects', 'claims', 'client_pcs', 'pay_apps', 'bank', 'purchase_orders', 'hire', 'partners'].includes(a)) && body && isDate(body.date) && closed(body.date) && !(a === 'purchase_orders' && c !== 'receive')) refuse('a document', body.date);
   };
 
   // ======================= backups =======================
