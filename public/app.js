@@ -3,6 +3,7 @@ let lang = localStorage.lang || 'ar';
 let S = {};            // company settings
 let ME = {};           // current user {username, role}
 let BR = new Set();    // brand assets that exist (logo, stamp, …)
+let COPILOT_AVAILABLE = false;
 let route = location.hash.slice(1) || 'dashboard';
 const tr = (ar, en) => (lang === 'ar' ? ar : en);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -57,8 +58,10 @@ async function boot() {
   if (!st.user) return loginScreen(st);
   ME = st.user; document.body.dataset.role = ME.role; route = location.hash.slice(1) || landing();
   if (!allowedNav().some(n => n[0] === route.split('/')[0])) route = landing();
-  const [s, br] = await Promise.all([api('GET', 'settings'), api('GET', 'brand').catch(() => [])]);   // in parallel: faster start on mobile data
-  S = s; BR = new Set(br.map(b => b.name));
+  const [s, br, copilot] = await Promise.all([
+    api('GET', 'settings'), api('GET', 'brand').catch(() => []), api('GET', 'copilot/status').catch(() => null),
+  ]);
+  S = s; BR = new Set(br.map(b => b.name)); COPILOT_AVAILABLE = !!copilot?.enabled;
   document.title = S.company_name || tr('نظام إدارة المقاولات', 'Contractor ERP');
   shell();
 }
@@ -94,7 +97,7 @@ const FINR = ['admin', 'accountant'], READR = ['admin', 'accountant', 'manager',
 const MONEYR = [...READR, 'qs'], SITER = ['site_engineer', 'foreman'], STAFFR = Object.keys(ROLE).filter(r => r !== 'employee'), ALLROLES = Object.keys(ROLE);
 const seesMoney = () => MONEYR.includes(ME.role);                       // contract values, costs, margins (site roles never)
 const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
-  ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['portal', 'بوابتي', 'My portal', ['employee']], ['myaccount', 'حسابي ومطالباتي', 'My account & claims', ALLROLES], ['tasks', 'المهام', 'Tasks', STAFFR],
+  ['dashboard', 'لوحة التحكم', 'Dashboard', READR], ['copilot', 'مساعد Trigon', 'Trigon Copilot', ALLROLES], ['portal', 'بوابتي', 'My portal', ['employee']], ['myaccount', 'حسابي ومطالباتي', 'My account & claims', ALLROLES], ['tasks', 'المهام', 'Tasks', STAFFR],
   ['#', 'المشاريع والمبيعات', 'Projects & sales'], ['tenders', 'المناقصات والفرص', 'Tenders & opportunities', MONEYR], ['projects', 'المشاريع', 'Projects', [...MONEYR, 'site_engineer']], ['quotes', 'عروض الأسعار', 'Quotations', MONEYR], ['invoices', 'فواتير العملاء', 'Sales invoices', MONEYR], ['aging', 'أعمار الديون وكشوف الحساب', 'Ageing & statements', READR], ['sitediary', 'يومية الموقع', 'Site diary', [...READR, 'qs', ...SITER]], ['schedule', 'الجدول الزمني', 'Programme (Gantt)', [...READR, 'qs', 'site_engineer', 'foreman']],
   ['#', 'المشتريات والمخزون', 'Procurement & stock'], ['rfq', 'طلبات الأسعار (RFQ)', 'RFQs', [...READR, 'procurement', 'site_engineer']], ['po', 'أوامر الشراء', 'Purchase orders', [...READR, 'procurement', 'storekeeper']], ['subcontracts', 'مقاولو الباطن وشهادات الدفع', 'Subcontracts & certificates', [...MONEYR, 'procurement']],
   ['bills', 'المصروفات والمشتريات', 'Expenses & purchases', [...READR, 'procurement']], ['payments', 'المدفوعات والمقبوضات', 'Payments', READR], ['cheques', 'الشيكات المؤجلة', 'Post-dated cheques', READR], ['spend', 'اعتماد المشتريات والمدفوعات', 'Spend approvals', ['admin', 'accountant', 'manager', 'procurement', 'qs']], ['cashflow', 'توقع التدفق النقدي', 'Cash-flow forecast', READR], ['guarantees', 'الضمانات البنكية', 'Bank guarantees', [...READR, 'qs']], ['parties', 'العملاء والموردون', 'Clients & suppliers', [...READR, 'qs', 'procurement']],
@@ -106,7 +109,8 @@ const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['notifications', 'الإشعارات', 'Notifications', ALLROLES],
   ['settings', 'الإعدادات', 'Settings', ALLROLES],
 ];
-const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role) && (n[0] !== 'myaccount' || ME.employee_id));   // my account: only for a user linked to an employee
+const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role) &&
+  (n[0] !== 'myaccount' || ME.employee_id) && (n[0] !== 'copilot' || COPILOT_AVAILABLE));   // my account: only for a user linked to an employee
 const landing = () => ({ employee: 'portal', hr: 'hrdash', foreman: 'attendance', site_engineer: 'sitediary', qs: 'projects', procurement: 'po', storekeeper: 'stock' }[ME.role] || 'dashboard');
 function shell() {
   const ok = allowedNav(), okSet = new Set(ok.map(n => n[0]));

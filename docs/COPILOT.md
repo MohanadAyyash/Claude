@@ -1,80 +1,134 @@
-# Trigon ERP Copilot Foundation
+# Trigon ERP Copilot
 
-This is a disabled-by-default, read-only API foundation. It does not change ERP business logic, Microsoft 365 flows, or the standalone UI. Do not enable it against production data or connect a production AI service until Trigon has made the decisions below.
+The Copilot feature is an opt-in, read-only assistant. It is disabled by default and does not change ERP accounting, payroll, VAT, invoice, approval, or Microsoft 365 business flows. Do not enable it against production data or connect a production AI service until Trigon has approved the open decisions below.
 
-## Runtime behavior
+## What is implemented
 
-- Every Copilot endpoint requires an active ERP identity and `COPILOT_ENABLED=1`.
-- Access requires either the ERP user ID in `COPILOT_ALLOWED_USERS` or the role in `COPILOT_ALLOWED_ROLES`. Both unset or empty means nobody is allowed. This feature allowlist never overrides the existing role ACL for the data being requested.
-- The server deterministically routes English and Arabic questions to one of three read-only tools: project status, project financial summaries, or invoice summaries. Other intents are rejected. There are no mutation tools.
-- Each tool uses an explicit result projection. The provider receives only the chosen intent, the user's question, and that projection; it cannot choose tools, issue SQL, or call ERP endpoints.
-- There is no cross-user cache. Each user's own question/answer history is retained for up to 30 days, omitted from sanitized backups, and can be cleared with `DELETE /api/copilot/history`.
-- Limits: 1,000 characters per question, 16 KiB request body, 50 results per tool/history response, 20 queries per ERP user per minute, 200 queries per server process per minute, and a 30-second provider timeout.
+- The English/Arabic UI is available only to an authenticated user who is allowed by the server.
+- Intent routing and tool selection are deterministic server-side. The model cannot select tools, issue SQL, or call ERP endpoints.
+- Read-only tools: project status, project financial summaries, invoice summaries, procurement (PO/RFQ) status, subcontract summaries, project document metadata, spend approval queue, and SharePoint sync-failure status.
+- Every tool has explicit field projections. A central sensitive-field denylist is an additional filter, not a substitute for those projections. Attachments, document contents and filenames, SharePoint URLs, supplier contact details, employee/HR data, payroll, tax returns, and ledger data are not supplied to the model.
+- Existing ERP role ACLs are checked for every tool. Site roles are limited to their assigned projects wherever the ERP permits them to use a tool. Admin-only SharePoint failure details are further reduced to operational status fields; raw provider errors are never sent.
+- ERP deep links are references only. The destination's own ERP API still enforces role and record/project scope; a Copilot result does not grant access.
+- The provider only phrases the authorized structured result. The question and result are treated as untrusted input. There is no cross-user cache.
 
-## Endpoints
+## API and UI
 
-- `POST /api/copilot/ask` — JSON body `{ "question": "..." }`.
-- `GET /api/copilot/history` — the signed-in user's recent history only.
-- `DELETE /api/copilot/history` — clears only the signed-in user's history.
+`public/copilot-openapi.yaml` is the OpenAPI 3.1 description for Copilot Studio and other clients. The UI is at **Trigon Copilot** for allowlisted users. Every API route requires `COPILOT_ENABLED=1`, an active ERP identity, and `COPILOT_ALLOWED_USERS` containing the ERP user ID **or** `COPILOT_ALLOWED_ROLES` containing the role. Empty lists grant nobody access. Feature access never overrides a tool's normal ERP ACL.
 
-## Provider adapter
+| Route | Behavior |
+|---|---|
+| `GET /api/copilot/status` | Supported intents, result/retention limits, and a provider-configured boolean; no secrets |
+| `POST /api/copilot/ask` | Deterministically select one authorized read-only tool and phrase its projected results |
+| `GET /api/copilot/history` | Current user's recent question/answer history |
+| `DELETE /api/copilot/history` | Clear only the current user's history |
+| `POST /api/copilot/feedback` | Store a helpful/not-helpful rating and optional fixed reason code for the user's own history item; no free-text feedback |
+| `GET /api/copilot/audit` | Admin-only structured events; no prompts, answers, document content, or provider errors |
 
-The implemented adapter targets the Azure OpenAI chat-completions endpoint with API-key authentication, a configured deployment name, and a pinned API version. No provider request is made unless Copilot is enabled, the caller is allowed, and a supported intent has produced authorized structured results. Missing or invalid provider configuration fails closed.
+History is pruned after the configured retention period. History, feedback and Copilot audit rows are removed from sanitized backup copies, never from the live database.
 
-Azure AI Foundry is not claimed to be supported as a distinct provider. Trigon must confirm the selected Foundry deployment's endpoint shape, authentication method, and API version before it is configured; only a validated Azure OpenAI-compatible endpoint may use the current adapter. The provider only phrases the projected results; it is not an authorization or tool-routing layer.
+## Identity and authorization
 
-Configure values through the deployment's secret/environment mechanism, never in source control:
+The regular path uses the existing ERP session. The optional Entra bearer-token path is separately disabled unless `COPILOT_ENTRA_ENABLED=1`. It verifies an RS256 signature/JWKS, issuer, expiry, tenant (`tid`), the dedicated API audience, and the `Copilot.Read` scope; it maps `(tid, oid)` to exactly one active ERP-linked user. The login application's `M365_CLIENT_ID` audience is rejected. Both paths resolve to an ERP user and pass through the same feature allowlist and per-tool ERP ACL checks.
 
-```text
-COPILOT_ENABLED=1
-COPILOT_ALLOWED_USERS=12,34
-COPILOT_ALLOWED_ROLES=manager,accountant
-COPILOT_PROVIDER=azure-openai
-COPILOT_AZURE_ENDPOINT=https://<approved-resource-endpoint>
-COPILOT_AZURE_DEPLOYMENT=<approved-deployment>
-COPILOT_AZURE_API_VERSION=<approved-api-version>
-COPILOT_AZURE_API_KEY=<secret>
-```
+## Limits and configuration
 
-The `COPILOT_ENTRA_*` bearer-token path is separately disabled unless `COPILOT_ENTRA_ENABLED=1`. It verifies an RS256 access token's signature, expiry, issuer, tenant, dedicated `COPILOT_ENTRA_API_AUDIENCE`, and `Copilot.Read` scope. It maps `(tid, oid)` to the existing ERP-linked Microsoft identity and then applies the same ERP-user allowlist and per-tool role ACL as an ERP session. The Entra login application's client ID is not a valid API audience.
+The shipped `.env.example` keeps the feature and Entra path disabled. Use only a deployment's approved secret/environment mechanism; never commit secrets.
 
-```text
-COPILOT_ENTRA_ENABLED=1
-COPILOT_ENTRA_TENANT_ID=<approved-tenant-guid>
-COPILOT_ENTRA_API_AUDIENCE=api://<dedicated-erp-api>
-```
+| Variable | Default | Allowed configuration |
+|---|---:|---|
+| `COPILOT_ENABLED` | `0` | Set to `1` only after review |
+| `COPILOT_ALLOWED_USERS` | empty | Comma/space-separated ERP numeric user IDs |
+| `COPILOT_ALLOWED_ROLES` | empty | Comma/space-separated existing ERP role names |
+| `COPILOT_MAX_RESULTS` | 50 | Integer 1–50 |
+| `COPILOT_TIMEOUT_MS` | 30000 | Integer 1000–30000 |
+| `COPILOT_HISTORY_RETENTION_DAYS` | 30 | Integer 1–3650 |
+| `COPILOT_PROVIDER` | `azure-openai` | Only this adapter is implemented |
+| `COPILOT_AZURE_ENDPOINT` | unset | HTTPS `*.openai.azure.com` resource endpoint; local loopback HTTP only in tests |
+| `COPILOT_AZURE_DEPLOYMENT` | unset | Deployment name |
+| `COPILOT_AZURE_API_VERSION` | unset | Explicit date version (optional `-preview`) |
+| `COPILOT_AZURE_API_KEY` | unset | Secret; never returned or logged |
+| `COPILOT_ENTRA_ENABLED` | `0` | Optional bearer path; off by default |
+| `COPILOT_ENTRA_TENANT_ID` | unset | Single approved tenant GUID |
+| `COPILOT_ENTRA_API_AUDIENCE` | unset | Dedicated ERP Copilot API audience, not the login app audience |
+| `COPILOT_ENTRA_ISSUER`, `COPILOT_ENTRA_JWKS_URL` | tenant defaults | Optional reviewed overrides; loopback HTTP is test-only |
 
-The issuer and JWKS URL default to that tenant's Microsoft endpoints. `COPILOT_ENTRA_ISSUER` and `COPILOT_ENTRA_JWKS_URL` are optional overrides for a specifically reviewed identity provider (local tests use a loopback mock).
+Hard request limits remain 1,000 characters per question, 16 KiB per body, 20 queries/minute/user, and 200 queries/minute per server process. The provider timeout cannot be raised above 30 seconds. These throttles are in-memory and therefore apply per server process, not as a distributed cluster-wide quota.
 
-## Decisions required before production
+## Provider and production decisions
 
-Trigon must choose and approve the Azure region and data-residency requirements; whether question/result content may leave the ERP host; provider retention, abuse-monitoring, and model-training terms; the exact Azure OpenAI or Foundry service/deployment/API version and authentication; outbound network policy; provider-side logging; allowed ERP users/roles; and whether provider failure should remain a hard error. Local Copilot history retention is 30 days, but that does not decide the provider's retention or residency policy. Until those decisions are recorded and deployment configuration is reviewed, keep both `COPILOT_ENABLED` and `COPILOT_ENTRA_ENABLED` unset.
+The implemented adapter speaks the Azure OpenAI chat-completions request shape. Azure AI Foundry is **not** implemented as a separate provider. A Foundry deployment may use this adapter only after Trigon verifies the exact endpoint, authentication, deployment, and API-version compatibility; no unsupported Foundry options are assumed.
 
-## أساس Copilot في Trigon ERP
+Before any production use, Trigon must approve the provider/service and deployment, Azure region and data residency, whether questions and projected ERP results may leave the ERP host, provider retention/training/abuse-monitoring/logging terms, outbound network rules, allowlisted users/roles, and provider-failure handling. The implementation and local mocks do not make those decisions or contact production services. Keep both `COPILOT_ENABLED` and `COPILOT_ENTRA_ENABLED` off until approval and deployment review.
 
-هذه واجهة تجريبية للقراءة فقط ومعطّلة افتراضياً. لا تغيّر منطق ERP أو تدفّقات Microsoft 365 أو النسخة المستقلة. لا تفعّلها على بيانات الإنتاج ولا تربطها بخدمة ذكاء اصطناعي إنتاجية قبل اعتماد قرارات Trigon أدناه.
+## Deliberate first-release exclusions
 
-### السلوك
+No mutation/action tools, general HR approvals, supplier contact fields, raw document/attachment access, external SharePoint links, free-text feedback, model-based tool selection, distributed rate limiting, or distinct Azure AI Foundry adapter are included. Those require a separate security/product decision and must not be inferred as supported by this API. Copilot is supported only in the Node server deployment; the standalone browser edition has no server-side provider or Entra authentication path.
 
-- تتطلب جميع نقاط Copilot هوية ERP نشطة و`COPILOT_ENABLED=1`.
-- يلزم إدراج معرّف مستخدم ERP في `COPILOT_ALLOWED_USERS` أو دوره في `COPILOT_ALLOWED_ROLES`. القائمتان الفارغتان تمنعان الجميع. لا تتجاوز هذه القائمة صلاحيات الدور الحالية على البيانات المطلوبة.
-- يوجّه الخادم الأسئلة العربية والإنجليزية بشكل حتمي إلى إحدى الأدوات الثلاث للقراءة فقط: حالة المشاريع، أو ملخصاتها المالية، أو ملخص الفواتير. تُرفض المواضيع الأخرى. لا توجد أدوات تعديل.
-- لكل أداة إسقاط حقول صريح؛ لا يستلم المزوّد إلا النية المحددة والسؤال والنتائج المصرّح بها. لا يختار المزوّد الأدوات ولا ينفّذ SQL أو يستدعي ERP.
-- لا يوجد تخزين مؤقت مشترك بين المستخدمين. يُحتفظ بتاريخ كل مستخدم لمدة أقصاها 30 يوماً، ولا يُضمَّن في النسخ الاحتياطية المنقّحة، ويمكنه مسحه عبر `DELETE /api/copilot/history`.
-- الحدود: 1000 حرف للسؤال، 16 كيلوبايت للطلب، 50 نتيجة، 20 استعلاماً لكل مستخدم في الدقيقة، 200 استعلام لكل عملية خادم في الدقيقة، ومهلة 30 ثانية للمزوّد.
+---
 
-### نقاط النهاية
+# مساعد Trigon ERP
 
-- `POST /api/copilot/ask` — جسم JSON بالشكل `{ "question": "..." }`.
-- `GET /api/copilot/history` — سجل المستخدم الحالي فقط.
-- `DELETE /api/copilot/history` — يمسح سجل المستخدم الحالي فقط.
+ميزة Copilot اختيارية ومخصّصة للقراءة فقط، ومعطّلة افتراضياً. لا تغيّر المحاسبة أو الرواتب أو ضريبة القيمة المضافة أو الفواتير أو الاعتمادات أو تدفّقات Microsoft 365. لا تفعّلها على بيانات الإنتاج ولا تربطها بخدمة ذكاء اصطناعي إنتاجية قبل اعتماد القرارات أدناه.
 
-### المزوّد والقرارات المطلوبة
+## ما تم تنفيذه
 
-المحوّل الحالي يستهدف واجهة Azure OpenAI للمحادثة باستخدام مفتاح API واسم نشر وإصدار API محددين. لا يُرسل أي طلب للمزوّد قبل تفعيل Copilot والتحقق من المستخدم والنية والنتائج. الإعداد الناقص أو غير الصحيح يرفض الطلب.
+- واجهة عربية وإنجليزية لا تظهر إلا لمستخدم ERP مسجّل ومصرّح له من الخادم.
+- يحدد الخادم النية والأداة بقواعد ثابتة؛ لا يختار النموذج الأدوات ولا ينفّذ SQL ولا يستدعي ERP.
+- أدوات قراءة فقط: حالة المشاريع، ملخصاتها المالية، الفواتير، حالة المشتريات (أوامر الشراء وطلبات الأسعار)، ملخصات عقود الباطن، بيانات مستندات المشاريع، قائمة اعتمادات الصرف، وحالة إخفاقات مزامنة SharePoint.
+- لكل أداة إسقاط حقول صريح. قائمة الحقول الحساسة المركزية طبقة إضافية وليست بديلاً عن الإسقاطات. لا تُرسل محتويات الملفات أو المرفقات أو أسماءها أو روابط SharePoint أو بيانات اتصال الموردين أو بيانات الموظفين والموارد البشرية أو الرواتب أو الإقرارات الضريبية أو دفتر الأستاذ إلى النموذج.
+- تُفحص صلاحيات ERP الحالية لكل أداة. تقتصر أدوار الموقع على مشاريعها المعيّنة حيث تسمح صلاحية ERP بالأداة. تفاصيل إخفاقات SharePoint للمسؤول فقط وبحقول تشغيلية محدودة، ولا تُرسل أخطاء المزوّد الخام.
+- الروابط داخل ERP مراجع فقط؛ وتظل واجهة ERP المقصودة تفرض صلاحيات الدور والسجل/المشروع بشكل مستقل.
+- يقتصر دور المزوّد على صياغة النتائج المنظمة المصرح بها. يُعامل السؤال والنتائج كمدخلات غير موثوقة، ولا يوجد تخزين مؤقت مشترك بين المستخدمين.
 
-لا ندّعي دعم Azure AI Foundry كمزوّد منفصل. على Trigon التحقق من شكل نقطة النهاية والمصادقة وإصدار API للنشر المختار قبل استخدامه؛ ولا يستخدم المحوّل الحالي إلا نقطة نهاية متوافقة فعلياً مع Azure OpenAI. دور المزوّد هو صياغة النتائج المعروضة فقط.
+## الواجهة وواجهة API
 
-يتطلب مسار Entra المتغيرات `COPILOT_ENTRA_ENABLED=1` و`COPILOT_ENTRA_TENANT_ID` و`COPILOT_ENTRA_API_AUDIENCE` المخصّص. يستخدم افتراضياً مصدر مفاتيح Microsoft الخاص بالمستأجر؛ ولا تضبط روابط المصدر البديلة إلا بعد مراجعتها.
+يصف `public/copilot-openapi.yaml` واجهة OpenAPI 3.1 المتاحة لـ Copilot Studio والعملاء الآخرين. تظهر واجهة **مساعد Trigon** للمستخدمين المصرّح لهم. تتطلب جميع المسارات `COPILOT_ENABLED=1` وهوية ERP نشطة وإدراج معرّف المستخدم الرقمي في `COPILOT_ALLOWED_USERS` **أو** دوره في `COPILOT_ALLOWED_ROLES`. القائمتان الفارغتان تمنعان الجميع، ولا تتجاوز قائمة Copilot صلاحيات أداة ERP.
 
-قبل الإنتاج، على Trigon اعتماد منطقة Azure ومكان إقامة البيانات، والسماح بإرسال الأسئلة والنتائج خارج خادم ERP، وسياسة الاحتفاظ ومراقبة إساءة الاستخدام وتدريب النماذج، والخدمة/النشر وإصدار API والمصادقة، وسياسة الاتصالات الصادرة وسجلات المزوّد، وقوائم المستخدمين والأدوار، والتعامل مع تعذّر المزوّد. احتفاظ ERP المحلي لمدة 30 يوماً لا يحدد سياسة المزوّد. حتى اعتماد هذه القرارات ومراجعة الإعدادات، اترك `COPILOT_ENABLED` و`COPILOT_ENTRA_ENABLED` دون ضبط.
+| المسار | السلوك |
+|---|---|
+| `GET /api/copilot/status` | النوايا والحدود ومؤشر إعداد المزوّد بلا أسرار |
+| `POST /api/copilot/ask` | اختيار أداة قراءة فقط بشكل حتمي وصياغة نتيجتها المسموح بها |
+| `GET /api/copilot/history` | سجل أسئلة وأجوبة المستخدم الحالي |
+| `DELETE /api/copilot/history` | مسح سجل المستخدم الحالي فقط |
+| `POST /api/copilot/feedback` | تقييم مفيد/غير مفيد ورمز سبب ثابت لسجل المستخدم نفسه، دون نص حر |
+| `GET /api/copilot/audit` | أحداث منظمة للمسؤول فقط، بلا أسئلة أو إجابات أو محتوى مستندات أو أخطاء مزوّد |
+
+يُحذف السجل بعد مدة الاحتفاظ المضبوطة. لا تُحفظ بيانات السجل أو التقييم أو تدقيق Copilot في نسخ قاعدة البيانات المنقّحة؛ ولا تُحذف من قاعدة البيانات الحية بسبب النسخ الاحتياطي.
+
+## الهوية والصلاحيات
+
+يستخدم المسار المعتاد جلسة ERP الحالية. ومسار رمز Entra منفصل ومعطّل ما لم يُضبط `COPILOT_ENTRA_ENABLED=1`. يتحقق من توقيع RS256 ومفاتيح JWKS والمُصدر والانتهاء والمستأجر (`tid`) والجمهور المخصّص للـ API ونطاق `Copilot.Read`؛ ثم يربط `(tid, oid)` بمستخدم ERP نشط ومربوط بحساب Microsoft واحد فقط. يُرفض جمهور تطبيق تسجيل الدخول `M365_CLIENT_ID`. يحوّل المساران الهوية إلى مستخدم ERP واحد ويطبّقان قائمة Copilot وصلاحيات ERP نفسها.
+
+## الحدود والإعداد
+
+يُبقي ملف `.env.example` الميزة ومسار Entra معطّلين. استخدم آلية الأسرار المعتمدة للنشر فقط، ولا تحفظ الأسرار في Git.
+
+| المتغير | الافتراضي | الإعداد المسموح |
+|---|---:|---|
+| `COPILOT_ENABLED` | `0` | `1` بعد المراجعة فقط |
+| `COPILOT_ALLOWED_USERS` | فارغ | معرّفات مستخدمي ERP الرقمية |
+| `COPILOT_ALLOWED_ROLES` | فارغ | أسماء أدوار ERP المعروفة |
+| `COPILOT_MAX_RESULTS` | 50 | عدد صحيح من 1 إلى 50 |
+| `COPILOT_TIMEOUT_MS` | 30000 | عدد صحيح من 1000 إلى 30000 |
+| `COPILOT_HISTORY_RETENTION_DAYS` | 30 | عدد صحيح من 1 إلى 3650 |
+| `COPILOT_PROVIDER` | `azure-openai` | هذا المحوّل فقط منفّذ |
+| `COPILOT_AZURE_ENDPOINT` | غير مضبوط | نقطة Azure OpenAI من نوع `*.openai.azure.com` عبر HTTPS؛ HTTP محلي للاختبارات فقط |
+| `COPILOT_AZURE_DEPLOYMENT` | غير مضبوط | اسم النشر |
+| `COPILOT_AZURE_API_VERSION` | غير مضبوط | إصدار بتاريخ محدد |
+| `COPILOT_AZURE_API_KEY` | غير مضبوط | سر لا يُعرض ولا يُسجّل |
+| `COPILOT_ENTRA_ENABLED` | `0` | مسار الرمز الاختياري، معطّل افتراضياً |
+| `COPILOT_ENTRA_TENANT_ID` | غير مضبوط | معرّف المستأجر المعتمد |
+| `COPILOT_ENTRA_API_AUDIENCE` | غير مضبوط | جمهور API مخصّص، غير جمهور تطبيق تسجيل الدخول |
+
+حدود الطلب: 1000 حرف للسؤال، 16 كيلوبايت للجسم، 20 طلباً لكل مستخدم في الدقيقة و200 طلب لكل عملية خادم في الدقيقة. لا يمكن رفع مهلة المزوّد عن 30 ثانية. الحدود المخزنة في الذاكرة لكل عملية خادم وليست موزعة على مجموعة خوادم.
+
+## المزوّد وقرارات الإنتاج
+
+يتوافق المحوّل المنفذ مع شكل طلبات Azure OpenAI Chat Completions. لم يُنفّذ Azure AI Foundry كمزوّد مستقل. لا يستخدم نشر Foundry هذا المحوّل إلا بعد تحقق Trigon من توافق نقطة النهاية والمصادقة والنشر وإصدار API المختار؛ ولا نفترض خيارات غير مدعومة.
+
+قبل الإنتاج، على Trigon اعتماد الخدمة والنشر، ومنطقة Azure ومكان إقامة البيانات، والسماح بإرسال الأسئلة والنتائج المصرّح بها خارج خادم ERP، وسياسات الاحتفاظ والتدريب ومراقبة إساءة الاستخدام والسجلات لدى المزوّد، وسياسة الاتصالات الصادرة، وقوائم المستخدمين والأدوار، والتعامل عند تعذّر المزوّد. لم يتصل التنفيذ والاختبارات المحلية بخدمة إنتاجية ولم يتخذا هذه القرارات. اترك `COPILOT_ENABLED` و`COPILOT_ENTRA_ENABLED` دون تفعيل حتى الاعتماد والمراجعة.
+
+## استثناءات الإصدار الأول
+
+لا توجد أدوات تعديل أو تنفيذ إجراءات، ولا قائمة اعتمادات الموارد البشرية العامة أو بيانات اتصال الموردين أو وصول خام للمرفقات أو روابط SharePoint الخارجية أو تقييم حر أو اختيار أدوات بالنموذج أو تحديد معدل موزع أو محوّل مستقل لـ Azure AI Foundry. تحتاج هذه الأمور إلى قرار منتج ومراجعة أمنية منفصلة ولا ينبغي اعتبارها مدعومة. يعمل Copilot في نشر خادم Node فقط؛ ولا تحتوي النسخة المستقلة في المتصفح على مسار مزوّد من جهة الخادم أو مصادقة Entra.

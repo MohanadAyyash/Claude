@@ -1,0 +1,186 @@
+openapi: 3.1.0
+info:
+  title: Trigon ERP Copilot API
+  version: 1.0.0
+  description: >
+    Read-only, deterministic tool routing. Every tool applies its existing ERP role ACL and
+    explicit field projection before the configured provider may phrase authorized results.
+    Feature access also requires COPILOT_ENABLED=1 and an ERP user-ID or role allowlist.
+servers:
+  - url: /api
+security:
+  - ErpSession: []
+  - EntraAccessToken: []
+tags:
+  - name: Copilot
+    description: No mutation tools are provided.
+paths:
+  /copilot/status:
+    get:
+      tags: [Copilot]
+      operationId: getCopilotStatus
+      summary: Get the authorized user's Copilot status
+      responses:
+        '200':
+          description: Feature state and safe configuration metadata; contains no secrets.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+        '404':
+          description: Copilot is disabled.
+  /copilot/ask:
+    post:
+      tags: [Copilot]
+      operationId: askCopilot
+      summary: Ask a question answered from one deterministic read-only ERP tool
+      description: >
+        Arabic and English routing is performed by the ERP server. The provider cannot choose
+        tools or access unprojected ERP fields. Questions are limited to 1000 characters and
+        request bodies to 16 KiB. Results are limited to 50.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        '200':
+          description: Phrased answer and authorized, tool-projected structured results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotAnswer'
+        '400':
+          description: Invalid question or JSON body.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User or requested tool is not authorized by ERP policy.
+        '413':
+          description: Request body exceeds 16 KiB.
+        '415':
+          description: Content-Type must be application/json.
+        '422':
+          description: Deterministic router does not recognize the requested topic.
+        '429':
+          description: Per-user or per-process request limit exceeded.
+        '502':
+          description: Provider failure.
+        '503':
+          description: Provider or Entra authentication is not configured.
+        '504':
+          description: Provider timeout.
+  /copilot/history:
+    get:
+      tags: [Copilot]
+      operationId: getCopilotHistory
+      summary: List the current user's own recent history
+      responses:
+        '200':
+          description: At most 50 history entries, scoped to the current ERP user.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+    delete:
+      tags: [Copilot]
+      operationId: clearCopilotHistory
+      summary: Clear the current user's own history
+      responses:
+        '200':
+          description: Number of entries cleared.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+  /copilot/feedback:
+    post:
+      tags: [Copilot]
+      operationId: submitCopilotFeedback
+      summary: Rate an answer associated with the current user's own history
+      description: Feedback is an enum rating and optional fixed reason; free-text comments are not accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [history_id, rating]
+              properties:
+                history_id:
+                  type: integer
+                  minimum: 1
+                rating:
+                  type: string
+                  enum: [helpful, not_helpful]
+                reason:
+                  type: [string, 'null']
+                  enum: [inaccurate, unclear, incomplete, other, null]
+      responses:
+        '200':
+          description: Feedback stored.
+        '400':
+          description: Invalid rating, reason, or history ID.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+        '404':
+          description: History item does not belong to this user or no longer exists.
+  /copilot/audit:
+    get:
+      tags: [Copilot]
+      operationId: getCopilotAudit
+      summary: List minimal Copilot audit events (administrator only)
+      description: Audit rows contain user ID, event, intent, outcome, status, and timestamp only; no prompts, answers, document content, or provider errors.
+      responses:
+        '200':
+          description: Up to 50 recent events.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: ERP administrator role is required.
+components:
+  securitySchemes:
+    ErpSession:
+      type: apiKey
+      in: cookie
+      name: sid
+      description: Existing Trigon ERP session cookie.
+    EntraAccessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Optional and disabled by default. Requires RS256 signature/JWKS, issuer, expiry,
+        configured tid, one dedicated ERP API aud, Copilot.Read scope, and unique user mapping
+        by (tenant_id, oid). The Microsoft login application's audience is rejected.
+  schemas:
+    CopilotAnswer:
+      type: object
+      required: [id, intent, answer, data, created_at]
+      properties:
+        id:
+          type: integer
+        intent:
+          type: string
+          enum: [project_status, project_financials, invoice_summary, procurement_status, contract_summary, project_documents, approval_queue, sync_failures]
+        answer:
+          type: string
+          maxLength: 4000
+        data:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            description: Tool-specific explicit allowlist projection with server-generated ERP deep-link references.
+        created_at:
+          type: integer
+          format: int64

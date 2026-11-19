@@ -61,6 +61,7 @@
 45. [Partners: capital, loans and current accounts](#45-partners-capital-loans-and-current-accounts)
 46. [Expense claims and employee statements](#46-expense-claims-and-employee-statements)
 47. [Petty cash held by employees](#47-petty-cash-held-by-employees)
+48. [Trigon Copilot (read-only assistant)](#48-trigon-copilot-read-only-assistant)
 
 ---
 
@@ -2128,3 +2129,11 @@ Every employee who carries petty cash has a balance in their own name, separate 
 **The employee statement** shows "Petty cash held" in brackets (owed by the employee until spent with receipts or returned). It must be zero when the employee leaves.
 
 **Notes:** the office float at the top of the page is not affected by employees' petty cash. A hand-over that was already spent, or that expenses waiting for approval rely on, cannot be deleted. An expense or a return cannot be dated before the employee held that cash. A hand-over above the payment approval limit (Spend approvals) is recorded by the administrator only. For the accountant's limit, all of an employee's petty cash requests of the same day count together. An employee with petty cash records cannot be deleted (mark them as left). A closed period blocks hand-overs and returns dated inside it. Petty cash held by employees is booked on its own account, 1030 (Employee cash custody), with a statement per employee; the office petty cash stays on 1010. Only the Petty cash pages post to 1030 (a manual journal on it is refused), and the daily check confirms that 1030 equals the petty cash all employees hold.
+
+## 48. Trigon Copilot (read-only assistant)
+
+The **Trigon Copilot** menu appears only when the administrator has enabled Copilot and allowlisted your ERP user ID or role. Ask in Arabic or English about project status, financial summaries, invoices, purchase orders/RFQs, subcontract agreements, project document metadata, spend approvals, or SharePoint sync failures.
+
+Copilot is read-only. The server selects the tool and checks your normal ERP permissions before returning any result; the AI provider only phrases the authorized result. Links open existing ERP pages, which check their own permissions again. Project attachments, file contents, filenames, supplier contact information, employee/HR and payroll data, tax returns, and ledger data are not supplied to the assistant. You can rate an answer with **Yes/No**, view your own history, or clear only your own history.
+
+If Copilot is missing from the menu, it is disabled or your user/role is not on the administrator's allowlist. Do not send sensitive information in a question. The feature must not be enabled with a production provider until Trigon approves the Azure region, residency, provider data-handling terms, and rollout allowlists. See [COPILOT.md](COPILOT.md).
