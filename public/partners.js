@@ -39,10 +39,12 @@ PAGES.partners = async id => {
   $('#al').onclick = () => allocationForm();
 };
 
-function partnerForm(p) {
+async function partnerForm(p) {
+  const emps = await api('GET', 'employees').catch(() => []);
   simpleModal({ title: p ? tr('تعديل الشريك', 'Edit partner') : tr('شريك جديد', 'New partner'), table: 'partners', row: p, after: render, fields: [
     { k: 'name', ar: 'الاسم (إنجليزي)', en: 'Name', req: 1 }, { k: 'name_ar', ar: 'الاسم بالعربي', en: 'Arabic name' },
     ...(p ? [{ k: 'active', ar: 'الحالة', en: 'Status', type: 'select', options: [['1', tr('نشط', 'Active')], ['0', tr('غير نشط', 'Inactive')]] }] : []),
+    { k: 'employee_id', ar: 'ملف الموظف (إن كان يعمل ويأخذ راتباً)', en: 'Employee record (if the partner works and draws a salary)', type: 'select', options: refOpts(emps, e => e.name, true) },
     { k: 'notes', ar: 'ملاحظات', en: 'Notes', full: 1 }] });
 }
 
@@ -147,7 +149,7 @@ async function partnerPage(id) {
   $('#st').onchange = e => { sessionStorage.ptTo = e.target.value || today(); render(); };
   $('#nt').onclick = () => partnerTxnForm(all.partners, id);
   $('#ne').onclick = () => partnerExpenseForm(all.partners, id);
-  $('#ed').onclick = () => partnerForm({ id: p.id, name: p.name, name_ar: p.name_ar, active: p.active ? '1' : '0', notes: p.notes });
+  $('#ed').onclick = () => partnerForm({ id: p.id, name: p.name, name_ar: p.name_ar, active: p.active ? '1' : '0', employee_id: p.employee_id || '', notes: p.notes });
   $('#sh').onclick = () => simpleModal({ title: tr('حصة الشريك', 'Partner share'), table: `partners/${id}/shares`, after: render, fields: [{ k: 'pct', ar: 'الحصة ٪', en: 'Share %', type: 'number', req: 1 }, { k: 'from_date', ar: 'تسري من تاريخ', en: 'Applies from', type: 'date', def: today() }] });
   document.querySelectorAll('[data-dt]').forEach(x => x.onclick = guard(async () => { if (confirmDel()) { await api('DELETE', 'partner_txns/' + x.dataset.dt); render(); } }));
   document.querySelectorAll('[data-de]').forEach(x => x.onclick = guard(async () => { if (confirm(tr('حذف هذا المصروف؟ يُحذف من المشروع ومن حساب الشريك.', 'Delete this expense? It is removed from the project and from the partner\'s account.'))) { await api('DELETE', 'partners/expense/' + x.dataset.de); render(); } }));

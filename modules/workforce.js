@@ -331,13 +331,24 @@ module.exports = ctx => {
         if (m === 'POST' && d === 'complete') {
           const ob = db.prepare('SELECT * FROM hr_offboarding WHERE employee_id=?').get(e.id); if (!ob) bad('Start the offboarding first');
           const open = checklist(e.id, 'offboarding').filter(i => !i.done), x = await readBody(req);
-          if (open.length && !x.force) bad(`${open.length} checklist items are still open`);
+          // money still open between the company and the employee: approved claims not paid back, petty cash still held
+          const owed = ctx.staffClaimsOwed ? ctx.staffClaimsOwed(e.id) : 0, held = ctx.custodyHeld ? ctx.custodyHeld(e.id) : 0, money = [];
+          if (owed > 0.005) money.push(`approved expense claims not yet paid back: ${owed}`);
+          if (held > 0.005) money.push(`petty cash still held by the employee: ${held}`);
+          const why = [...(open.length ? [`${open.length} checklist items are still open`] : []), ...(money.length ? [`Money is still open with this employee — ${money.join('; ')}`] : [])];
+          if (why.length && !x.force) bad(why.join('. '));
           db.prepare("UPDATE employees SET status='left', end_date=? WHERE id=?").run(ob.last_day, e.id);
           if (ctx.hooks.onOffboard) ctx.hooks.onOffboard(e, ob.last_day, settlement(e, ob).gratuity);   // settle the end-of-service provision
           db.prepare("UPDATE hr_offboarding SET status='completed', completed=? WHERE employee_id=?").run(today(), e.id);
-          for (const u of db.prepare('SELECT id FROM users WHERE employee_id=?').all(e.id)) { db.prepare('UPDATE users SET disabled=1 WHERE id=?').run(u.id); db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id); }
+          // every system account linked to this employee record is closed (signed out, disabled) — except an administrator's,
+          // which is only unlinked (so the company is never locked out of its own system) and reported back as a warning
+          const warnings = [];
+          for (const u of db.prepare('SELECT id, role, username FROM users WHERE employee_id=?').all(e.id)) {
+            if (u.role !== 'admin') { db.prepare('UPDATE users SET disabled=1 WHERE id=?').run(u.id); db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id); audit(req, 'disable', 'users', u.id, 'offboarding'); }
+            else { db.prepare('UPDATE users SET employee_id=NULL WHERE id=?').run(u.id); warnings.push(`The administrator account "${u.username}" was linked to this employee: it was unlinked but is still active — disable it or change its password if this person should no longer sign in`); }
+          }
           audit(req, 'complete', 'offboarding', e.id, ob.last_day);
-          return send(res, 200, { ok: 1 }), true;
+          return send(res, 200, { ok: 1, warnings }), true;
         }
       }
       return false;

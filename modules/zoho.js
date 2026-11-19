@@ -65,9 +65,9 @@ module.exports = ctx => {
     // an expense without a supplier that a partner paid from own money: Zoho would record it as paid from the company's bank or
     // cash, so it is not sent (the accountant records it in Zoho against the partner's account). A supplier bill a partner paid is
     // sent as a bill; its payment is not (see below).
-    const partnerPaid = new Set(e.payments.filter(p => p.method === 'partner').map(p => p.bill_id));
+    const partnerPaid = new Set(e.payments.filter(p => p.method === 'partner' || p.method === 'employee').map(p => p.bill_id));   // (also an employee's approved expense claim)
     const bills = e.bills.filter(b => inRange(b.date) && !(!b.party_id && partnerPaid.has(b.id)));
-    const payments = e.payments.filter(p => inRange(p.date) && !(p.method === 'cheque' && p.cheque_status === 'bounced') && p.method !== 'partner');   // paid by a partner: not a company bank/cash payment (record the owner's contribution in Zoho by hand)
+    const payments = e.payments.filter(p => inRange(p.date) && !(p.method === 'cheque' && p.cheque_status === 'bounced') && p.method !== 'partner' && p.method !== 'employee' && !p.employee_id);   // paid by a partner / an employee, or an employee reimbursement: not a company bank/cash payment (record the owner's contribution in Zoho by hand)
     return { e, invoices, bills, payments };
   }
   const invoiceDoc = (i, e) => ({

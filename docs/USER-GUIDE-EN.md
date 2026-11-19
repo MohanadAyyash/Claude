@@ -59,6 +59,7 @@
 43. [Hired labour and rented equipment](#43-hired-labour-and-rented-equipment)
 44. [Microsoft 365: SharePoint, Outlook and Teams](#44-microsoft-365-sharepoint-outlook-and-teams)
 45. [Partners: capital, loans and current accounts](#45-partners-capital-loans-and-current-accounts)
+46. [Expense claims and employee statements](#46-expense-claims-and-employee-statements)
 
 ---
 
@@ -1446,7 +1447,7 @@ Open the employee → **Onboarding & offboarding** → **Leaving & final settlem
 1. **Last working day**, **Reason** (Resignation, Termination by the company, End of contract, Other), **Notice given on**, **Other deductions**.
 2. **Start offboarding & calculate**. The system shows: **Salary to the last day**, leave encashment (on basic), end-of-service gratuity (21/30 days), notice-period shortfall (notice must be 30–90 days), **Outstanding advance**, **Deductions** and **Total**.
 3. Change the inputs and press **Recalculate** if needed; tick the offboarding checklist.
-4. **Complete & disable account** — the employee becomes "Left" and their system account is disabled.
+4. **Complete & disable account** — the employee becomes "Left" and every system account linked to them is signed out and disabled. An administrator account is only unlinked, with a warning to disable it or change its password. If approved expense claims are still owed to the employee, or they still hold petty cash, you are told and asked to confirm.
 
 <!--img-->
 
@@ -2079,3 +2080,33 @@ Positive amounts are **in the partner's favour**; amounts in brackets are **owed
 - The daily check confirms the partner accounts add up to the general ledger.
 - A closed period blocks adding or deleting any movement dated inside it.
 - A partner who works and draws a salary stays a normal employee in payroll; the partner account is separate.
+
+---
+
+## 46. Expense claims and employee statements
+
+An **expense claim** = an employee paid a company expense from own money (fuel, small items, fees…) and asks for it back.
+
+**The employee submits the claim:** menu **My account & claims** → **+ Expense claim**: date, what was paid for, amount, VAT (if on the invoice), category, project, receipt number, and a **photo of the receipt** (straight from the phone camera) → **Send for approval**.
+- The menu shows for every user linked to an employee record. An employee account is always linked; other staff accounts (engineer, manager…) are linked by the administrator: Settings → Users → **Employee**.
+- A receipt can be attached later, and the claim withdrawn, while it is pending.
+
+**Approval:** menu **Expense claims**.
+- The **manager and the administrator** approve any amount. The **accountant** approves up to a limit the administrator sets (button **Accountant's limit**; 0 = cannot approve). **Nobody approves their own claim.**
+- Approvers are notified when a claim comes in, and the employee when it is approved or rejected. A rejection needs a reason.
+- **The manager and the accountant** cannot approve until their account is linked to their own employee record (Settings → Users → Employee), so nobody can approve their own claim.
+- The accountant's limit counts **all of the employee's claims of the same day**, so a large amount cannot be split into small claims.
+- An engineer or foreman can book a claim only on a project assigned to them (or leave the project empty).
+- On approval the expense is booked on the project with its input VAT, and the amount becomes **owed to the employee** (account 2260). No company bank money moves yet.
+
+**Paying the employee:** the accountant or the administrator: **Reimburse an employee** → employee (the amount owed is shown) → amount, bank or cash → **Save**. More than the approved claims cannot be paid, nor with a date before them. An amount above the **payment approval limit** (Spend approvals) is recorded by the administrator only.
+- **Take back** (administrator only): the expense is removed and the claim is pending again, unless it was already paid.
+
+**Employee statements** (administrator, accountant, HR): for each employee what the company owes and what the employee owes:
+- **Salaries** (2200): each final net salary, what was paid, and the end-of-service gratuity when it falls due.
+- **Advances** (1300): the advance paid out in brackets (owed by the employee), and the instalments deducted from salary.
+- **Expense claims** (2260): approved claims and what was paid.
+- The **net**, with the end-of-service gratuity accrued for information. **Print** or **PDF** for any period.
+- Employees see their own statement in **My account & claims**.
+
+**Notes:** the payments of claims are kept from these pages only, and the bill of an approved claim keeps its amount and project on the Expenses page. An employee with claims cannot be deleted (mark them as left). When offboarding is completed, every linked account is closed except an administrator's, which is unlinked with a warning. A reimbursement, or taking back an approval, cannot leave the employee paid more than the approved claims on any earlier day. A manual journal on 2260 is refused. A closed period blocks approving or paying with a date inside it. The daily check confirms the statements equal the general ledger (a manual journal on 2200 or 1300 shows as a warning). Claims with no supplier are not sent to Zoho (record them there by hand).

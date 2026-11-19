@@ -165,7 +165,7 @@ function enrich() {
   return { parties, projects, invoices, bills, quotes, payments };
 }
 // cash that has really moved: pending/bounced cheques excluded
-const inCash = p => p.method !== 'offset' && p.method !== 'partner' && (p.method !== 'cheque' || p.cheque_status === 'cleared' || !p.cheque_status);
+const inCash = p => p.method !== 'offset' && p.method !== 'partner' && p.method !== 'employee' && (p.method !== 'cheque' || p.cheque_status === 'cleared' || !p.cheque_status);
 const payrollCost = (from, to) => db.prepare("SELECT * FROM payroll WHERE status='final' AND month>=? AND month<=?").all((from || '0000-00').slice(0, 7), (to || '9999-99').slice(0, 7));
 
 function projectRows() {
@@ -390,7 +390,7 @@ function clean(table, body) {
 
 const { ROLES } = ACLX, can = ACLX.can;
 const { money } = require('./lib/render');
-const SETTING_KEYS = ['print_arabic','sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
+const SETTING_KEYS = ['print_arabic','staff_approval_accountant_limit','sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
   if (ctx.hooks.afterWrite) try { ctx.hooks.afterWrite(); } catch { /* a listener never breaks the action */ }   // e.g. SharePoint sync looks again
@@ -440,7 +440,7 @@ ctx.signature = user => {
   return { html: require('./lib/docs').signatureHtml({ S, user: prof, logoCid: logo ? 'brandlogo' : null }), inline: logo ? [{ cid: 'brandlogo', mime: 'image/png', content: logo }] : [] };
 };
 // (static requires so the same code can be bundled for the browser — see standalone/)
-const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/partners'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode'), require('./modules/m365business')].map(f => f(ctx));
+const MODULES = [require('./modules/brand'), require('./modules/push'), require('./modules/documents'), require('./modules/print'), require('./modules/hr'), require('./modules/workforce'), require('./modules/payroll2'), require('./modules/contract'), require('./modules/claims'), require('./modules/ipc'), require('./modules/statements'), require('./modules/collab'), require('./modules/sales'), require('./modules/procurement'), require('./modules/scagreement'), require('./modules/assets'), require('./modules/accounting'), require('./modules/partners'), require('./modules/staffaccounts'), require('./modules/zoho'), require('./modules/controls'), require('./modules/treasury'), require('./modules/spend'), require('./modules/siteops'), require('./modules/health'), require('./modules/hired'), require('./modules/microsoft365'), require('./modules/authmode'), require('./modules/m365business')].map(f => f(ctx));
 for (const m of MODULES) if (m.tables) Object.assign(TABLES, m.tables);
 
 async function api(req, res, url) {
@@ -490,7 +490,7 @@ async function api(req, res, url) {
   if (!me) return send(res, 401, { error: 'unauthorized' });
   if (!can(me.role, method, a, b, c)) return send(res, 403, { error: 'your role does not allow this action' });
   const scope = siteScope(me);
-  if (scope) { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }
+  if (scope && a !== 'me') { if (!await scopeCheck(scope, req, method, url, a, b)) return send(res, 403, { error: 'this project is not assigned to you' }); res._scope = scope; }   // own records (me/…) are limited to the user's own employee, not to the assigned projects
   if (ctx.periodGuard) await ctx.periodGuard(req, method, url, parts);          // closed accounting period
   if (ctx.spendGuard) await ctx.spendGuard(req, method, url, parts, me);        // purchase orders / payments above the approval limit
 
@@ -532,9 +532,12 @@ async function api(req, res, url) {
       if (!ROLES.includes(body.role)) bad('Invalid role');
       if (hrOnly && body.role !== 'employee') bad('HR can only create employee accounts');
       if (body.role === 'employee') { if (!db.prepare('SELECT 1 FROM employees WHERE id=?').get(+body.employee_id)) bad('Select the employee this account belongs to'); if (db.prepare('SELECT 1 FROM users WHERE employee_id=?').get(+body.employee_id)) bad('This employee already has an account'); }
+      else if (+body.employee_id) {                                         // optional for staff accounts: their own statement and expense claims
+        if (!db.prepare('SELECT 1 FROM employees WHERE id=?').get(+body.employee_id)) bad('Unknown employee'); if (db.prepare('SELECT 1 FROM users WHERE employee_id=?').get(+body.employee_id)) bad('This employee already has an account');
+      }
       if (db.prepare('SELECT 1 FROM users WHERE username=?').get(body.username)) bad('Username already exists');
       const salt = crypto.randomBytes(16).toString('hex');
-      const r = db.prepare('INSERT INTO users(username,salt,hash,role,employee_id) VALUES(?,?,?,?,?)').run(body.username, salt, hashPw(body.password, salt), body.role, body.role === 'employee' ? +body.employee_id : null);
+      const r = db.prepare('INSERT INTO users(username,salt,hash,role,employee_id) VALUES(?,?,?,?,?)').run(body.username, salt, hashPw(body.password, salt), body.role, +body.employee_id || null);
       audit(req, 'create', 'users', Number(r.lastInsertRowid), `${body.username} (${body.role})`);
       return send(res, 200, { id: Number(r.lastInsertRowid) });
     }
@@ -553,11 +556,18 @@ async function api(req, res, url) {
         db.prepare('UPDATE users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(body.password, salt), u.id);
         db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);
       }
+      if ('employee_id' in body && !hrOnly) {                                 // link (or unlink) the employee record of a staff account
+        const eid = +body.employee_id || null, role = body.role || u.role;
+        if (!eid && role === 'employee') bad('An employee account must stay linked to its employee');
+        if (eid && !db.prepare('SELECT 1 FROM employees WHERE id=?').get(eid)) bad('Unknown employee');
+        if (eid && db.prepare('SELECT 1 FROM users WHERE employee_id=? AND id!=?').get(eid, u.id)) bad('This employee already has an account');
+        db.prepare('UPDATE users SET employee_id=? WHERE id=?').run(eid, u.id);
+      }
       if (Array.isArray(body.projects) && !hrOnly) {                          // projects a site engineer / foreman works on
         db.prepare('DELETE FROM user_projects WHERE user_id=?').run(u.id);
         for (const pid of body.projects) if (db.prepare('SELECT 1 FROM projects WHERE id=?').get(+pid)) db.prepare('INSERT OR IGNORE INTO user_projects VALUES(?,?)').run(u.id, +pid);
       }
-      audit(req, 'update', 'users', u.id, `${u.username}${body.role ? ' role=' + body.role : ''}${body.password ? ' password reset' : ''}${Array.isArray(body.projects) ? ' projects=' + body.projects.join(',') : ''}`);
+      audit(req, 'update', 'users', u.id, `${u.username}${body.role ? ' role=' + body.role : ''}${'employee_id' in body ? ' employee=' + (+body.employee_id || 'none') : ''}${body.password ? ' password reset' : ''}${Array.isArray(body.projects) ? ' projects=' + body.projects.join(',') : ''}`);
       return send(res, 200, { ok: 1 });
     }
     if (method === 'DELETE') {
@@ -814,6 +824,8 @@ async function api(req, res, url) {
       const p = { ...(cur || {}), ...row };
       if (cur && cur.method === 'partner') bad('This expense was paid by a partner — change or delete it from the Partners page');
       if (p.method === 'partner') bad('Expenses paid by a partner are recorded from the Partners page');
+      if (cur && cur.employee_id) bad('This payment belongs to an employee expense claim — change it from Expense claims');
+      if (p.method === 'employee') bad('Expenses paid by an employee are recorded as expense claims');
       if (!['in', 'out'].includes(p.kind)) bad('Payment kind must be in or out');
       if (!(Number.isFinite(+p.amount) && +p.amount > 0)) bad('Amount must be greater than zero');
       if (p.date && !/^\d{4}-\d\d-\d\d$/.test(p.date)) bad('Invalid date');
@@ -892,6 +904,9 @@ async function api(req, res, url) {
         // a bill paid (partly) by a partner from own money keeps the figures that money was recorded against
         if (db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='partner'").get(id) && ['amount', 'vat_amount', 'date', 'party_id'].some(diff))
           bad('This bill was paid by a partner — its amount, VAT, date and supplier cannot be changed here; delete the partner payment from the Partners page first');
+        // the bill of an approved employee expense claim keeps the claim's figures
+        if (db.prepare('SELECT 1 FROM payments WHERE bill_id=? AND employee_id IS NOT NULL').get(id) && ['amount', 'vat_amount', 'date', 'party_id', 'project_id'].some(diff))
+          bad('This bill comes from an approved expense claim — its amount, VAT, date, supplier and project cannot be changed here; take the approval back from Expense claims first');
         const total = round(('amount' in row ? +row.amount || 0 : cur.amount) + ('vat_amount' in row ? +row.vat_amount || 0 : cur.vat_amount));
         if (total < round(cur.paid) - 0.01) bad(`This bill cannot go below what was already paid (${money(cur.paid)})`);
       }
@@ -910,10 +925,13 @@ async function api(req, res, url) {
     }
     if (method === 'DELETE' && id) {
       if (a === 'invoices') return send(res, 409, { error: 'Tax invoices cannot be deleted (sequential numbering). Void it or issue a credit note.' });
+      if (a === 'employees' && db.prepare("SELECT (SELECT COUNT(*) FROM expense_claims WHERE employee_id=?) + (SELECT COUNT(*) FROM payments WHERE employee_id=?) n").get(id, id).n) return send(res, 409, { error: 'This employee has expense claims or payments — mark the employee as left instead' });
       if (a === 'employees' && db.prepare('SELECT COUNT(*) n FROM payroll WHERE employee_id=?').get(id).n) return send(res, 409, { error: 'employee has payroll records — mark as left instead' });
       if (a === 'payments' && reconciled(id)) return send(res, 409, { error: 'This payment is matched to a bank statement line — unmatch it first' });
       if (a === 'payments' && db.prepare("SELECT 1 FROM payments WHERE id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
       if (a === 'bills' && db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='partner'").get(id)) return send(res, 409, { error: 'This expense was paid by a partner — delete it from the Partners page' });
+      if (a === 'payments' && db.prepare('SELECT 1 FROM payments WHERE id=? AND employee_id IS NOT NULL').get(id)) return send(res, 409, { error: 'This payment belongs to an employee expense claim — change it from Expense claims' });
+      if (a === 'bills' && db.prepare("SELECT 1 FROM payments WHERE bill_id=? AND method='employee'").get(id)) return send(res, 409, { error: 'This expense comes from an approved employee expense claim — take the approval back from Expense claims' });
       if (a === 'bills') {                                                    // a bill raised by a certificate or a purchase order belongs to it
         const sc = has('sub_certs') && db.prepare('SELECT number FROM sub_certs WHERE bill_id=?').get(id), po = has('purchase_orders') && db.prepare('SELECT number FROM purchase_orders WHERE bill_id=?').get(id);
         if (sc) return send(res, 409, { error: `This bill belongs to payment certificate ${sc.number} — it cannot be deleted on its own` });

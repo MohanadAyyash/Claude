@@ -157,8 +157,10 @@ window.employeeExtras = async (m, row) => {
     if ($('#ob-calc', box)) $('#ob-calc', box).onclick = guard(async () => { await api('POST', `hr/offboarding/${row.id}`, { last_day: $('#ob-last', box).value, reason: $('#ob-reason', box).value, notice_date: $('#ob-notice', box).value || null, other_deductions: $('#ob-ded', box).value }); draw(); });
     if ($('#ob-done', box)) $('#ob-done', box).onclick = guard(async () => {
       if (!confirm(tr('إنهاء خدمة الموظف وإيقاف حسابه في النظام؟', 'End the employee’s service and disable their system account?'))) return;
-      try { await api('POST', `hr/offboarding/${row.id}/complete`, {}); }
-      catch (e) { if (/still open/.test(e.message) && confirm(e.message + '\n\n' + tr('المتابعة رغم ذلك؟', 'Continue anyway?'))) await api('POST', `hr/offboarding/${row.id}/complete`, { force: 1 }); else throw e; }
+      let r;
+      try { r = await api('POST', `hr/offboarding/${row.id}/complete`, {}); }
+      catch (e) { if (/still open/.test(e.message) && confirm(e.message + '\n\n' + tr('المتابعة رغم ذلك؟', 'Continue anyway?'))) r = await api('POST', `hr/offboarding/${row.id}/complete`, { force: 1 }); else throw e; }
+      if (r && r.warnings && r.warnings.length) alert(r.warnings.join('\n\n'));
       closeModal(); render();
     });
   };
