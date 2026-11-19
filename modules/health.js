@@ -80,6 +80,15 @@ module.exports = ctx => {
         .map(r => `payroll #${r.id} (${r.month})`);
       return bad.length ? warn(`${bad.length} row(s) to review`, bad.slice(0, 50)) : ok();
     }],
+    // VAT registration state: flags, never changes a posting. Supplier VAT recorded while not registered stays in 1200 until the tax
+    // adviser decides how input VAT before registration is treated (accounting review of 2026-11-20); nothing is reclassified.
+    ['vat_registration', 'VAT registration: documents dated before registration', () => {
+      const S = ctx.getSettings(), on = d => ctx.C.vatRegisteredOn(S, d);
+      const inv = db.prepare("SELECT number, date, items, vat_pct FROM invoices WHERE COALESCE(voided,0)=0").all().filter(i => !on(i.date) && (+i.vat_pct || 0) > 0).map(i => `invoice ${i.number}`);
+      const bil = db.prepare('SELECT id, reference, date FROM bills WHERE vat_amount > 0').all().filter(b => !on(b.date)).map(b => `bill #${b.id}`);
+      if (!inv.length && !bil.length) return ok(S.vat_registered === '0' ? 'not VAT-registered' : S.vat_effective_date ? `registered from ${S.vat_effective_date}` : 'registered (no effective date set)');
+      return warn([inv.length && `${inv.length} invoice(s) with VAT dated before the VAT registration`, bil.length && `${bil.length} supplier bill(s) with VAT dated before the VAT registration: recorded as input VAT (1200), awaiting the tax adviser — not reclassified`].filter(Boolean).join('; '), [...inv, ...bil].slice(0, 50));
+    }],
     ['partner_accounts', 'Partner accounts (capital, loans, current accounts) equal the general ledger', () => {
       if (!ctx.partnerChecks) return ok('partners module not loaded');
       const r = ctx.partnerChecks(); if (!r.length) return ok('no partners recorded');

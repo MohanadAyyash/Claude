@@ -388,6 +388,8 @@ function itemsEditor(items, boq = false) {                              // boq (
   return { html: `<div class="tw items docitems"><table><thead><tr>${boq ? `<th>${tr('القسم', 'Section')}</th>` : ''}<th>${tr('الوصف', 'Description')}</th><th>${tr('الوحدة', 'Unit')}</th><th>${tr('الكمية', 'Qty')}</th><th>${tr('السعر', 'Rate')}</th><th>${tr('الضريبة', 'VAT')}</th>${boq ? `<th>${tr('احتياطي', 'Prov.')}</th>` : ''}<th class="n">${tr('المبلغ', 'Amount')}</th><th></th></tr></thead><tbody id="items">${(items.length ? items : [{}]).map(row).join('')}</tbody></table></div>${boq ? `<datalist id="secs">${[...new Set(items.map(i => i.section).filter(Boolean))].map(x => `<option value="${esc(x)}">`).join('')}</datalist>` : ''}
     <button type="button" class="btn sec sm" id="addrow" style="margin-top:6px">+ ${tr('بند', 'Line')}</button>`, row };
 }
+// VAT-registered on a date: the setting is not "no" and the date is on or after the registration's effective date (empty = every date)
+window.vatOn = d => S.vat_registered !== '0' && (!S.vat_effective_date || !d || d >= S.vat_effective_date);
 function bindDoc(m, rowFn, vatEl, retEl) {
   const calc = () => {
     let sub = 0, prov = 0, std = 0; const isProv = tr_ => !!$('[data-k=provisional]', tr_)?.checked;            // provisional lines (quotations): outside the total
@@ -411,7 +413,7 @@ const readItems = m => [...m.querySelectorAll('#items tr')].map(r => ({ descript
 async function docModal(kind, row, preset = {}) {
   const isQ = kind === 'quotes', e = itemsEditor(row?.items || [], isQ);
   const parties = await api('GET', 'parties'), projects = isQ ? [] : await api('GET', 'projects');
-  const r = row || { date: today(), vat_pct: S.vat_registered === '0' ? 0 : S.vat_pct || 5, retention_pct: 0, validity_days: 30, status: 'draft', terms: S.terms, ...preset };
+  const r = row || { date: today(), vat_pct: vatOn(today()) ? S.vat_pct || 5 : 0, retention_pct: 0, validity_days: 30, status: 'draft', terms: S.terms, ...preset };
   const head = isQ ? [
     { k: 'number', ar: 'رقم العرض', en: 'Quote no.', def: '' }, { k: 'date', ar: 'التاريخ', en: 'Date', type: 'date' },
     { k: 'client_id', ar: 'العميل', en: 'Client', type: 'select', options: refOpts(parties.filter(p => p.type === 'client'), p => p.name) },
@@ -427,7 +429,7 @@ async function docModal(kind, row, preset = {}) {
   const isCN = r.kind === 'credit_note', dead = !!r.voided, W = {
     customer_trn_missing: tr('العميل بدون رقم ضريبي (TRN) — مطلوب في الفاتورة الضريبية للشركات', 'Client has no TRN — required on tax invoices to VAT-registered businesses'),
     customer_address_missing: tr('عنوان العميل غير مسجّل — مطلوب في الفاتورة الضريبية', 'Client address missing — required on tax invoices') };
-  const m = modal(`<h2>${isQ ? tr('عرض سعر', 'Quotation') : isCN ? tr('إشعار دائن', 'Credit note') : S.vat_registered === '0' ? tr('فاتورة', 'Invoice') : tr('فاتورة ضريبية', 'Tax invoice')} ${esc(r.number || '')} ${dead ? tag('void') : ''}</h2>
+  const m = modal(`<h2>${isQ ? tr('عرض سعر', 'Quotation') : isCN ? tr('إشعار دائن', 'Credit note') : !vatOn(r.date) ? tr('فاتورة', 'Invoice') : tr('فاتورة ضريبية', 'Tax invoice')} ${esc(r.number || '')} ${dead ? tag('void') : ''}</h2>
     ${dead ? `<p class="err">${tr('ملغاة', 'Voided')}: ${esc(r.void_reason || '')}</p>` : ''}
     ${isQ && r.accepted_at ? `<p class="ok">✔ ${tr('قبله العميل إلكترونياً', 'Accepted online by the client')}: <b>${esc(r.accepted_by)}</b> — ${esc(r.accepted_at)}${/^data:image\/png;base64,/.test(r.signature || '') ? `<br><img src="${r.signature}" alt="" style="height:60px;background:#fff;border:1px solid #ddd">` : ''}</p>` : ''}
     ${isQ && r.rejected_at ? `<p class="err">${tr('رفضه العميل', 'Declined by the client')} — ${esc(r.rejected_at)}${r.client_comment ? `: ${esc(r.client_comment)}` : ''}</p>` : ''}${(r.warnings || []).map(w => `<p class="err" style="color:var(--warn)">⚠ ${W[w] || w}</p>`).join('')}<div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>
@@ -751,6 +753,7 @@ PAGES.settings = async () => {
   main(`<h1>${tr('الإعدادات', 'Settings')}</h1>
   ${admin ? `<div class="card" id="sf"><div class="f2">${F.map(([k, a, e, t]) => field({ k, ar: a, en: e, type: t }, s[k])).join('')}
     ${field({ k: 'vat_registered', ar: 'مسجّل في ضريبة القيمة المضافة؟', en: 'VAT registered?', type: 'select', options: [['1', tr('نعم', 'Yes')], ['0', tr('لا', 'No')]] }, s.vat_registered ?? '1')}
+    ${field({ k: 'vat_effective_date', ar: 'تاريخ سريان التسجيل الضريبي (من شهادة الهيئة؛ فارغ = كل التواريخ)', en: 'VAT registration effective date (from the FTA certificate; empty = every date)', type: 'date' }, s.vat_effective_date)}
     ${field({ k: 'print_arabic', ar: 'العناوين العربية في المستندات المطبوعة (مثل: Quotation / عرض سعر)', en: 'Arabic labels on printed documents (e.g. Quotation / عرض سعر)', type: 'select', options: [['0', tr('لا — إنجليزي فقط', 'No — English only')], ['1', tr('نعم — إنجليزي وعربي', 'Yes — English and Arabic')]] }, s.print_arabic ?? '0')}
     ${field({ k: 'bank_details', ar: 'بيانات البنك (تظهر في الفاتورة)', en: 'Bank details (shown on invoices)', type: 'textarea', full: 1 }, s.bank_details)}${field({ k: 'terms', ar: 'الشروط الافتراضية لعروض الأسعار', en: 'Default quotation terms', type: 'textarea', full: 1 }, s.terms)}
     ${field({ k: 'po_notes', ar: 'ملاحظات ثابتة على أوامر الشراء (سطر لكل ملاحظة)', en: 'Standard notes on purchase orders (one per line)', type: 'textarea', full: 1 }, s.po_notes ?? poDef.notes)}${field({ k: 'sc_template', ar: 'نص اتفاقية عقد الباطن القياسي ({{ }} خانات تُعبّأ تلقائياً)', en: 'Standard sub-contract agreement wording ({{ }} fields fill in)', type: 'textarea', full: 1 }, s.sc_template ?? scDef.text)}${field({ k: 'po_conditions', ar: 'الشروط العامة لأوامر الشراء (صفحة ثانية — اتركها فارغة لعدم طباعتها)', en: 'General conditions of purchase (second page — leave empty for none)', type: 'textarea', full: 1 }, s.po_conditions ?? poDef.conditions)}</div>
@@ -782,7 +785,7 @@ PAGES.settings = async () => {
   if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
   $('#pack').onclick = guard(async () => { if (!confirm(tr('سيُركَّب الشعار والختم وتُحدَّث بيانات الشركة القانونية (الاسم، الرخصة، العنوان، ص.ب). متابعة؟', 'This installs the logos and stamp and sets the legal company details (name, licence, address, P.O. Box). Continue?'))) return; await api('POST', 'brand/pack'); S = { ...S, ...(await api('GET', 'settings')) }; toast(tr('تم تركيب الهوية', 'Brand pack installed')); boot(); });
-  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'print_arabic', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
+  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'vat_effective_date', 'print_arabic', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
   if ($('#saveE')) $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure', 'mail_method', 'graph_tenant', 'graph_client', 'graph_secret'].forEach(k => b[k] = val($('#ef'), k)); if (!b.graph_secret) delete b.graph_secret; if (!b.smtp_pass) delete b.smtp_pass; await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
   if ($('#ef')) { const mm = $('#ef [name=mail_method]'), sync = () => $('#ef').querySelectorAll('[data-mm]').forEach(d => { d.style.display = d.dataset.mm === mm.value ? '' : 'none'; }); mm.onchange = sync; sync(); }
   if ($('#test')) $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });

@@ -252,7 +252,7 @@ function corporateTaxReport(from, to) {
 function compliance() {
   const st = getSettings(), alerts = [], t = today(), soon = new Date(Date.now() + 60 * 864e5).toISOString().slice(0, 10);
   const add = (level, key, extra = {}) => alerts.push({ level, key, ...extra });
-  if (st.vat_registered !== '0' && !C.validTrn(st.trn)) add('bad', 'company_trn');
+  if (C.vatRegisteredOn(st, today()) && !C.validTrn(st.trn)) add('bad', 'company_trn');
   if (!C.validEstablishment(st.mohre_id)) add('warn', 'mohre_id');
   if (!C.validRouting(st.employer_routing)) add('warn', 'employer_routing');
   if (st.license_expiry) { if (st.license_expiry < t) add('bad', 'license_expired', { date: st.license_expiry }); else if (st.license_expiry < soon) add('warn', 'license_soon', { date: st.license_expiry }); }
@@ -390,7 +390,7 @@ function clean(table, body) {
 
 const { ROLES } = ACLX, can = ACLX.can;
 const { money } = require('./lib/render');
-const SETTING_KEYS = ['print_arabic','staff_approval_accountant_limit','sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
+const SETTING_KEYS = ['vat_effective_date','print_arabic','staff_approval_accountant_limit','sc_template','sc_signatory','legal_name','sub_cert_signatories','po_notes','po_conditions','mail_method','graph_tenant','graph_client','address_ar','license_authority','doc_prefix','company_name_ar','website','po_box','footer_text','legal_form','smtp_host','smtp_port','smtp_user','smtp_from','smtp_secure','company_name','trn','address','phone','email','vat_pct','terms','bank_details','currency','vat_registered','ct_trn','license_no','license_expiry','mohre_id','employer_routing','employer_bank','employer_iban','hr_work_hours','hr_break_min','hr_rest_day','hr_geofence','hr_ramadan_from','hr_ramadan_to','hr_midday_from','hr_midday_to','hr_midday_start','hr_midday_end','hr_sif_days','kpi_manday_target','backup_copy_dir','ap_terms_days','po_approval_limit','pay_approval_limit','vat_quarter_start'];
 function audit(req, action, tbl, rec, detail = '') {
   db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), sessionUser(req)?.username || '', action, tbl, rec, String(detail).slice(0, 500));
   if (ctx.hooks.afterWrite) try { ctx.hooks.afterWrite(); } catch { /* a listener never breaks the action */ }   // e.g. SharePoint sync looks again
@@ -586,6 +586,7 @@ async function api(req, res, url) {
       if (body.mohre_id && !C.validEstablishment(body.mohre_id)) return send(res, 400, { error: 'MOHRE establishment ID must be 13 digits' });
       if (body.employer_routing && !C.validRouting(body.employer_routing)) return send(res, 400, { error: 'Routing code must be 9 digits' });
       if (body.employer_iban && !C.validIban(body.employer_iban)) return send(res, 400, { error: 'Invalid UAE IBAN' });
+      if (body.vat_effective_date && !/^\d{4}-\d\d-\d\d$/.test(String(body.vat_effective_date).trim())) return send(res, 400, { error: 'The VAT registration effective date must be YYYY-MM-DD' });
       for (const k of SETTING_KEYS) if (k in body) ins.run(k, String(body[k] ?? '').trim());
       if (body.smtp_pass) ins.run('smtp_pass', String(body.smtp_pass));                // password only changes when a new one is typed
       if (body.graph_secret) ins.run('graph_secret', String(body.graph_secret).trim());     // same for the Microsoft 365 client secret
@@ -786,16 +787,17 @@ async function api(req, res, url) {
   if (a === 'projects' && c === 'progress-invoice' && method === 'POST') {
     const proj = db.prepare('SELECT * FROM projects WHERE id=?').get(+b);
     if (!proj) return send(res, 404, { error: 'not found' });
-    const st = getSettings(); if (st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
+    const st = getSettings();
     const lines = db.prepare('SELECT * FROM boq_items WHERE project_id=? AND done_pct>billed_pct+0.0001 ORDER BY id').all(+b);
     if (!lines.length) bad('No unbilled progress — update the completion % on the BOQ first');
     const x = await readBody(req).catch(() => ({})), date = x && x.date ? x.date : today();          // optional certificate date (end of the valuation period)
     if (!/^\d{4}-\d\d-\d\d$/.test(date)) bad('Invalid date');
+    if (C.vatRegisteredOn(st, date) && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
     const items = lines.map(i => ({ description: `${i.description} (${i.billed_pct}% → ${i.done_pct}%)`, unit: i.unit, qty: round(i.qty * (i.done_pct - i.billed_pct) / 100), rate: i.rate, vat: 'std' }));
     const rec = ctx.advanceRecoveryLine && ctx.advanceRecoveryLine(proj, round(items.reduce((s, i) => s + i.qty * i.rate, 0)));
     if (rec) items.push(rec);                                               // contract advance recovered from each progress invoice
     const r = db.prepare('INSERT INTO invoices(number,date,project_id,items,vat_pct,retention_pct,notes) VALUES(?,?,?,?,?,?,?)')
-      .run(nextNumber('invoices', 'INV'), date, proj.id, JSON.stringify(items), (st.vat_registered === '0' ? 0 : +st.vat_pct || 5), proj.retention_pct || 0, 'Progress invoice');
+      .run(nextNumber('invoices', 'INV'), date, proj.id, JSON.stringify(items), (C.vatRegisteredOn(st, date) ? +st.vat_pct || 5 : 0), proj.retention_pct || 0, 'Progress invoice');
     if (ctx.ipcSnapshot) ctx.ipcSnapshot(proj.id, Number(r.lastInsertRowid));   // payment certificate: previous / this period / cumulative per BOQ item
     db.prepare('UPDATE boq_items SET billed_pct=done_pct WHERE project_id=? AND done_pct>billed_pct+0.0001').run(+b);   // only the lines on this invoice: a line corrected downwards keeps what was billed
     audit(req, 'create', 'progress_invoice', Number(r.lastInsertRowid), `project ${proj.name}`);
@@ -860,16 +862,16 @@ async function api(req, res, url) {
       if (!id) return out(all(a));
       return send(res, 200, strip(db.prepare(`SELECT * FROM ${a} WHERE id=?`).get(id)));
     }
-    const guardInvoice = () => { const st = getSettings(); if (a === 'invoices' && st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices'); };
+    const guardInvoice = row => { const st = getSettings(); if (a === 'invoices' && C.vatRegisteredOn(st, (row && row.date) || today()) && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices'); };
     if (method === 'POST') {
       const row = clean(a, await readBody(req));
-      guardInvoice(); spec.check?.(row);
+      guardInvoice(row); spec.check?.(row);
       if (a === 'payments') checkPayment(row, null);
       if (a === 'invoices' && row.number && db.prepare('SELECT 1 FROM invoices WHERE number=?').get(row.number)) bad(`Invoice number ${row.number} already exists`);
       if (a === 'quotes' && !row.number) row.number = brandRef('quotes', 'number', db.prepare('SELECT name FROM parties WHERE id=?').get(+row.client_id)?.name);
       else if (spec.prefix && !row.number) row.number = nextNumber(a, spec.prefix);
       if (a === 'projects' && !row.code) row.code = nextNumber('projects', 'PRJ', 'code');
-      if (['quotes','invoices'].includes(a) && row.vat_pct === undefined) { const st = getSettings(); row.vat_pct = (st.vat_registered === '0' ? 0 : +st.vat_pct || 5); }                // not VAT-registered → 0%
+      if (['quotes','invoices'].includes(a) && row.vat_pct === undefined) { const st = getSettings(); row.vat_pct = (C.vatRegisteredOn(st, row.date || today()) ? +st.vat_pct || 5 : 0); }   // not VAT-registered on the document's date → 0%
       if (!row.date && spec.cols.includes('date')) row.date = today();
       const ks = Object.keys(row);
       const r = db.prepare(`INSERT INTO ${a}(${ks.join(',')}) VALUES(${ks.map(() => '?').join(',')})`).run(...Object.values(row));
