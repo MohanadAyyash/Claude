@@ -201,6 +201,7 @@ server.listen(0, async () => {
     assert.equal(ctx.db.prepare('SELECT COUNT(*) n FROM partner_txns WHERE amount=77').get().n, 1, 'only one movement was written');
     const d2 = ok(await call('POST', 'partner_txns', { ...dup, confirm_duplicate: 1 })).id;
     ok(await call('DELETE', `partner_txns/${d2}`)); ok(await call('DELETE', `partner_txns/${d1}`));
+    const d3 = ok(await call('POST', 'partner_txns', dup), 'an entry deleted to correct it can be entered again at once').id; ok(await call('DELETE', `partner_txns/${d3}`));
     const inkEx = { date: '2026-03-04', amount: 40, vat_amount: 2, description: 'Printer ink', category: 'other' };
     ok(await call('POST', `partners/${B}/expense`, inkEx)); no(await call('POST', `partners/${B}/expense`, inkEx), /DUPLICATE/);
     assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM bills WHERE description='Printer ink'").get().n, 1, 'no second bill either');
