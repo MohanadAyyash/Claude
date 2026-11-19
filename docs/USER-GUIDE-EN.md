@@ -1616,6 +1616,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
    - **Conflicts and possible duplicates** are listed first: a document edited here after it was paid in Zoho, and a document whose number already exists in Zoho without being in the send log.
    - The account table lists every Trigon account the send uses and the Zoho account it goes to (mapped, automatic, or **not mapped** — map those before sending).
 2. Daily transactions report: what was invoiced, billed, received and paid each day.
+3. **New types sent from** (administrator): from this date the send also covers office petty cash and employees' petty cash, expense claims and their reimbursement, partner movements (each partner on his own Zoho accounts), depreciation and assets, salaries paid by payment date, and payments through the same account as Trigon's ledger. Nothing dated before it is sent, and what was already sent stays as it was. Empty = not sent. Map the accounts the preflight lists as missing first.
 
 <!--/img-->
 

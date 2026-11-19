@@ -28,6 +28,7 @@ module.exports = ctx => {
   const mainBank = () => banks()[0];
   const codeOf = id => ((id && db.prepare('SELECT ledger_code FROM bank_accounts WHERE id=?').get(+id)) || mainBank()).ledger_code;
   ctx.bankAccounts = banks; ctx.bankCode = codeOf;
+  ctx.payAccount = (p, kind) => bankAcct(p, kind || p.kind);                           // the ledger account a payment moves (the Zoho bridge pays through the same account)
   ctx.expenseCode = cat => CAT[cat] || '5700';                                         // the ledger account of a bill category (also shown by the Zoho preflight)
   const acct = () => Object.fromEntries(db.prepare('SELECT * FROM accounts ORDER BY code').all().map(a => [a.code, a]));
 
@@ -95,6 +96,7 @@ module.exports = ctx => {
   }
 
   ctx.financials = financials;
+  ctx.ledgerEntries = entries;                                                          // the derived ledger, entry by entry (the Zoho bridge sends assets and depreciation from it)
 
   // ---- bank reconciliation ----
   const sameBank = (a, b) => codeOf(a) === codeOf(b);                                   // null = the main account

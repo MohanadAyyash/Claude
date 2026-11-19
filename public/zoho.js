@@ -37,7 +37,7 @@ PAGES.zoho = async () => {
     <div class="f" style="align-self:end"><button class="btn" id="z-connect">${connected ? tr('إعادة الربط', 'Reconnect') : tr('ربط', 'Connect')}</button></div></div>
     ${connected ? `<p class="ok">✔ ${tr('مرتبط', 'Connected')}${c.org_name ? ` — ${esc(c.org_name)}` : ''} <button class="btn sec sm" id="z-disc">${tr('فصل الربط', 'Disconnect')}</button></p>
       ${c.orgs.length > 1 || !c.org ? `<div class="f"><label>${tr('مؤسسة Zoho Books', 'Zoho Books organisation')}</label><select id="z-org"><option value="">—</option>${c.orgs.map(o => `<option value="${esc(o.id)}"${o.id === c.org ? ' selected' : ''}>${esc(o.name)} (${esc(o.id)})</option>`).join('')}</select></div>` : ''}` : ''}
-    <div class="f2" style="margin-top:12px"><div class="f"><label>${tr('إرسال المعاملات المؤرخة من', 'Send transactions dated from')}</label><input id="z-start" type="date" value="${esc(c.start || today())}"></div>
+    <div class="f2" style="margin-top:12px"><div class="f"><label>${tr('إرسال المعاملات المؤرخة من', 'Send transactions dated from')}</label><input id="z-start" type="date" value="${esc(c.start || today())}"></div><div class="f"><label>${tr('الأنواع الجديدة (العهد، المطالبات، الشركاء، الأصول، الرواتب حسب التاريخ) تُرسل من', 'New types (petty cash, claims, partners, assets, salaries by date) sent from')}</label><input id="z-start2" type="date" value="${esc(c.start_v2 || '')}"${admin ? '' : ' disabled'}><small class="muted">${tr('فارغ = لا تُرسل. ما قبل هذا التاريخ لا يُرسل أبداً (لا إعادة إرسال للقديم).', 'Empty = not sent. Nothing dated before it is ever sent (history is not resent).')}</small></div>
     <div class="f"><label>${tr('الإرسال التلقائي اليومي الساعة', 'Automatic daily send at hour')}</label><input id="z-hour" type="number" min="0" max="23" value="${esc(c.hour || '23')}"></div></div>
     ${chk('z-en', on, tr('تفعيل الربط', 'Enable the link'))}${chk('z-auto', c.auto === '1', tr('إرسال تلقائي كل يوم', 'Send automatically every day'))}
     ${chk('z-post', c.post === '1', tr('اعتماد الفواتير (Sent) وفواتير الموردين (Open) في Zoho مباشرة — بدون ذلك تصل كمسودات يراجعها المحاسب', 'Mark invoices as Sent and bills as Open in Zoho right away — otherwise they arrive as drafts for the accountant to review'))}
@@ -87,7 +87,7 @@ PAGES.zoho = async () => {
   });
   if ($('#z-disc')) $('#z-disc').onclick = guard(async () => { if (!confirm(tr('فصل الربط مع Zoho؟ سيتوقف الإرسال حتى تربط من جديد.', 'Disconnect from Zoho? Sending stops until you connect again.'))) return; await api('POST', 'zoho/disconnect'); render(); });
   $('#z-save').onclick = guard(async () => {
-    await api('PUT', 'zoho/config', { start: $('#z-start').value, hour: $('#z-hour').value, enabled: $('#z-en').checked ? '1' : '0', auto: $('#z-auto').checked ? '1' : '0', post: $('#z-post').checked ? '1' : '0', ...($('#z-org') ? { org: $('#z-org').value } : {}) });
+    await api('PUT', 'zoho/config', { start: $('#z-start').value, start_v2: $('#z-start2') ? $('#z-start2').value : undefined, hour: $('#z-hour').value, enabled: $('#z-en').checked ? '1' : '0', auto: $('#z-auto').checked ? '1' : '0', post: $('#z-post').checked ? '1' : '0', ...($('#z-org') ? { org: $('#z-org').value } : {}) });
     toast(tr('تم الحفظ', 'Saved')); render();
   });
   if ($('#z-test')) $('#z-test').onclick = guard(async () => {
@@ -127,7 +127,8 @@ async function zohoMapping(admin) {
 function zohoPreflight(pf) {
   const KIND = { contact: ['جهات الاتصال', 'Contacts'], invoice: ['الفواتير والإشعارات الدائنة', 'Invoices & credit notes'], bill: ['فواتير الموردين والمصروفات', 'Bills & expenses'], payment: ['المقبوضات والمدفوعات', 'Receipts & payments'],
     jv_payroll: ['قيود الرواتب', 'Payroll journals'], jv_paypaid: ['قيود صرف الرواتب', 'Salaries paid journals'], jv_eos: ['قيود مخصص نهاية الخدمة', 'End-of-service provision journals'], jv_eos_set: ['قيود تسوية نهاية الخدمة', 'End-of-service settlement journals'],
-    jv_retention: ['قيود المحتجزات', 'Retention journals'], jv_ret_release: ['قيود الإفراج عن المحتجزات', 'Retention release journals'], jv_advance: ['قيود السلف', 'Salary advance journals'] };
+    jv_retention: ['قيود المحتجزات', 'Retention journals'], jv_paypaid_d: ['قيود صرف الرواتب حسب التاريخ', 'Salaries paid (by date)'], jv_petty: ['قيود العهد وصندوق المكتب', 'Petty cash & custody journals'], jv_reimb: ['قيود تعويض المطالبات', 'Claim reimbursement journals'],
+    jv_partner: ['قيود الشركاء', 'Partner journals'], jv_palloc: ['قيود توزيع الأرباح', 'Profit allocation journals'], jv_dep: ['قيود الإهلاك', 'Depreciation journals'], jv_asset: ['قيود الأصول', 'Asset journals'], jv_ret_release: ['قيود الإفراج عن المحتجزات', 'Retention release journals'], jv_advance: ['قيود السلف', 'Salary advance journals'] };
   const ACT = { create: ['إنشاء', 'Create'], update: ['تحديث', 'Update'], unchanged: ['موجود ولم يتغير', 'Already synced, unchanged'], link: ['موجود في Zoho — سيُربط', 'Exists in Zoho — would be linked'], conflict: ['تعارض', 'Conflict'], remove: ['حذف من Zoho', 'Remove from Zoho'], void: ['إلغاء في Zoho', 'Void in Zoho'], skip: ['متروك', 'Skipped'], error: ['خطأ', 'Error'] };
   const ORDER = ['create', 'update', 'unchanged', 'link', 'conflict', 'remove', 'void', 'skip', 'error'];
   const k = x => tr(...(KIND[x] || [x, x])), act = x => tr(...(ACT[x] || [x, x]));
