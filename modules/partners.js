@@ -322,7 +322,7 @@ module.exports = ctx => {
               const id = ctx.postOnce(me, `partner_expense|${p.id}|${date}|bill ${billId}|${amt}`, x, () => {
                 const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,partner_id,notes) VALUES('out',?,?,'partner',?,?,?,?)").run(date, amt, x.reference || '', billId, p.id, x.note || '');
                 audit(req, 'create', 'partner_expense', Number(r.lastInsertRowid), `${p.name} paid bill #${billId} ${amt}`); return Number(r.lastInsertRowid);
-              });
+              }, 'payments');
               return send(res, 200, { payment_id: id, bill_id: billId }), true;
             }
             const amount = round(+x.amount), vat = round(+x.vat_amount || 0);
@@ -334,7 +334,7 @@ module.exports = ctx => {
               billId = Number(bill.lastInsertRowid);
               const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,bill_id,partner_id,notes,created_bill) VALUES('out',?,?,'partner',?,?,?,?,1)").run(date, round(amount + vat), x.reference || '', billId, p.id, String(x.note || ''));
               audit(req, 'create', 'partner_expense', Number(r.lastInsertRowid), `${p.name} ${String(x.description).trim()} ${round(amount + vat)}`); return Number(r.lastInsertRowid);
-            });
+            }, 'payments');
             return send(res, 200, { payment_id: id, bill_id: billId }), true;
           }
         }
@@ -365,7 +365,7 @@ module.exports = ctx => {
             const r = db.prepare('INSERT INTO partner_txns(partner_id,date,type,amount,method,bank_account_id,from_section,to_section,reference,note,created,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
               .run(t.partner_id, t.date, t.type, t.amount, t.method, t.bank_account_id, t.from_section, t.to_section, x.reference || '', x.note || '', new Date().toISOString(), me.username);
             audit(req, 'create', 'partner_txns', Number(r.lastInsertRowid), `${t.type} ${t.amount}`); return Number(r.lastInsertRowid);
-          });
+          }, 'partner_txns');
           return send(res, 200, { id }), true;
         }
         if (m === 'DELETE' && b) {
