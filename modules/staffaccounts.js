@@ -266,7 +266,7 @@ module.exports = ctx => {
           const id = ctx.postOnce(me, `claim_reimbursement|${e.id}|${date}|${amount}|${method}`, x, () => {
             const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,employee_id,bank_account_id,notes) VALUES('out',?,?,?,?,?,?,'claim-reimbursement')").run(date, amount, method, x.reference || `CLAIMS-${e.id}`, e.id, bank);
             audit(req, 'create', 'claim_reimbursement', Number(r.lastInsertRowid), `${e.name} ${amount}`); return Number(r.lastInsertRowid);
-          });
+          }, 'payments');
           return send(res, 200, { id }), true;
         }
         if (m === 'DELETE' && b === 'reimburse' && c) {
