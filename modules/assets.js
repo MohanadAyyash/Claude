@@ -55,11 +55,14 @@ module.exports = ctx => {
 
   // ---- petty cash ----
   const pettyState = () => {
-    const topups = db.prepare('SELECT * FROM petty_topups ORDER BY date DESC, id DESC').all();
-    const expenses = db.prepare("SELECT p.id,p.date,p.amount,b.description,b.category,b.vat_amount,b.project_id,b.id bill_id FROM payments p LEFT JOIN bills b ON b.id=p.bill_id WHERE p.method='petty' AND p.kind='out' ORDER BY p.date DESC, p.id DESC").all();
-    return { topups, expenses, balance: round(topups.reduce((s, t) => s + t.amount, 0) - expenses.reduce((s, e) => s + e.amount, 0)) };
+    // the office float: rows without an employee (petty cash held by an employee is kept per employee: modules/pettycustody.js)
+    const hasEmp = db.prepare('PRAGMA table_info(payments)').all().some(c => c.name === 'employee_id') && db.prepare('PRAGMA table_info(petty_topups)').all().some(c => c.name === 'employee_id');
+    const topups = db.prepare(`SELECT * FROM petty_topups ${hasEmp ? 'WHERE employee_id IS NULL' : ''} ORDER BY date DESC, id DESC`).all();
+    const expenses = db.prepare(`SELECT p.id,p.date,p.amount,b.description,b.category,b.vat_amount,b.project_id,b.id bill_id FROM payments p LEFT JOIN bills b ON b.id=p.bill_id WHERE p.method='petty' AND p.kind='out' ${hasEmp ? 'AND p.employee_id IS NULL' : ''} ORDER BY p.date DESC, p.id DESC`).all();
+    return { topups, expenses, balance: round(topups.reduce((s, t) => s + (t.kind === 'return' ? -t.amount : t.amount), 0) - expenses.reduce((s, e) => s + e.amount, 0)) };
   };
   ctx.pettyBalance = () => pettyState().balance;
+  ctx.pettyState = pettyState;
 
   return {
     async handle(req, res, url, [a, b], me) {

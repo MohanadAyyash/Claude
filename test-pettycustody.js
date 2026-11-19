@@ -1,0 +1,221 @@
+// Petty cash held by employees: request, approval rule, hand-over against the approved request, expenses paid from the petty
+// cash (as expense claims, same approval rule), return, the employee statement, the office float kept apart, the ledger, the
+// acknowledgement of receipt, roles, closed period, Zoho.   node --no-warnings test-pettycustody.js      Fake data only.
+const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-petty-'));
+const { server, ctx } = require('./server.js');
+
+server.listen(0, async () => {
+  const base = `http://localhost:${server.address().port}/api/`; let cookie = '';
+  let call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'Content-Type': 'application/json', cookie }, body: b ? JSON.stringify(b) : undefined }); const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { s: r.status, j, t }; };
+  // accounting invariants after every change that went through: debits = credits, and the partner, claims and petty cash
+  // sub-ledgers equal the general ledger (no FAIL in the reconciliations)
+  let INV = true, invRuns = 0;
+  const invariants = what => {
+    const f = ctx.financials('2000-01-01', '2099-12-31');
+    assert.ok(Math.abs(f.tb_debit - f.tb_credit) < 0.006, `after ${what}: debits ${f.tb_debit} ≠ credits ${f.tb_credit}`);
+    const bad = [...ctx.partnerChecks(), ...ctx.staffChecks()].filter(c => c.status === 'fail'); assert.equal(bad.length, 0, `after ${what}: ${bad.map(c => c.detail).join('; ')}`);
+    // the two-step posting through 2000 (bill, then its payment) must bring the bill back to zero: partner expenses, approved
+    // claims and expenses from petty cash leave nothing in 2000
+    const made = new Set(ctx.db.prepare('SELECT bill_id FROM payments WHERE bill_id IS NOT NULL AND (created_bill=1 OR employee_id IS NOT NULL)').all().map(r => r.bill_id));
+    const left = ctx.enrich().bills.filter(b => made.has(b.id) && Math.abs(b.balance) > 0.005); assert.equal(left.length, 0, `after ${what}: 2000 not cleared for bill(s) ${left.map(b => b.id)}`);
+    invRuns++;
+  };
+  const call0 = call;
+  call = async (m, u, b) => { const r = await call0(m, u, b); if (INV && m !== 'GET' && r.s === 200) invariants(`${m} ${u}`); return r; };
+  const ok = (r, m = '') => { assert.equal(r.s, 200, m + ' ' + JSON.stringify(r.j)); return r.j; };
+  const no = (r, re, m = '') => { assert.ok(r.s >= 400, m + ' expected a refusal, got ' + r.s + ' ' + JSON.stringify(r.j)); if (re) assert.match(JSON.stringify(r.j), re, m); return r.j; };
+  const sessions = {};
+  const as = async (u, fn) => { const keep = cookie; cookie = sessions[u] || ''; try { return await fn(); } finally { sessions[u] = cookie; cookie = keep; } };
+  const credit = async code => { const f = ok(await call('GET', 'financials?from=2000-01-01&to=2099-12-31')); const r = f.trial_balance.find(x => x.code === code); return r ? Math.round((r.credit - r.debit) * 100) / 100 : 0; };
+  const WPS = { person_code: '12345678901234', routing_code: '302620122', iban: 'AE070331234567890123456' };
+  try {
+    ok(await call('POST', 'setup', { username: 'admin', password: 'secret12', company: 'Test Contracting' })); sessions.admin = cookie;
+    ok(await call('PUT', 'settings', { trn: '100123456700003', staff_approval_accountant_limit: '500' }));
+    const prj = ok(await call('POST', 'projects', { name: 'Test Project', status: 'active' })).id;
+    const E1 = ok(await call('POST', 'employees', { name: 'Foreman One', join_date: '2026-01-01', basic: 3000, project_id: prj, ...WPS })).id;
+    const E2 = ok(await call('POST', 'employees', { name: 'Driver Two', join_date: '2026-01-01', basic: 2500, project_id: prj, ...WPS })).id;
+    // approvers are linked to their own employee records (an unlinked manager or accountant cannot approve)
+    const E3 = ok(await call('POST', 'employees', { name: 'Manager Three', join_date: '2026-01-01', basic: 9000, ...WPS })).id;
+    const E4 = ok(await call('POST', 'employees', { name: 'Accountant Four', join_date: '2026-01-01', basic: 7000, ...WPS })).id;
+    for (const [u, role, e] of [['fore1', 'foreman', E1], ['mgr', 'manager', E3], ['acc', 'accountant', E4], ['view1', 'viewer', null]]) ok(await call('POST', 'users', { username: u, password: 'pass1234', role, ...(e ? { employee_id: e } : {}) }));
+    for (const u of ['fore1', 'mgr', 'acc', 'view1']) { cookie = ''; ok(await call('POST', 'login', { username: u, password: 'pass1234' })); sessions[u] = cookie; }
+    cookie = sessions.admin;
+    const fu = ok(await call('GET', 'users')).find(u => u.username === 'fore1'); ok(await call('PUT', `users/${fu.id}`, { projects: [prj] }));   // the foreman works on the project
+
+    // the office float, as before
+    ok(await call('POST', 'petty_topups', { date: '2026-09-01', amount: 1000, note: 'office float' }));
+    assert.equal(ok(await call('GET', 'petty_topups')).balance, 1000);
+
+    // ---- request → approval → hand-over
+    const rq = await as('fore1', async () => {
+      no(await call('POST', 'me/petty/requests', { amount: 800 }), /what the petty cash is for/);
+      return ok(await call('POST', 'me/petty/requests', { amount: 800, purpose: 'Site consumables for September' })).id;
+    });
+    await as('acc', async () => {
+      const r = ok(await call('GET', 'petty_requests?status=pending')).find(x => x.id === rq); assert.equal(r.can_decide, false); assert.match(r.block, /limit/);
+      no(await call('POST', `petty_requests/${rq}/decide`, { status: 'approved' }), /accountant's approval limit/);
+      no(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-09-02', amount: 800, method: 'bank', request_id: rq }), /not approved/);
+    });
+    await as('fore1', async () => assert.equal((await call('POST', `petty_requests/${rq}/decide`, { status: 'approved' })).s, 403, 'a foreman cannot approve'));
+    await as('mgr', async () => { no(await call('POST', `petty_requests/${rq}/decide`, { status: 'rejected' }), /reason/); ok(await call('POST', `petty_requests/${rq}/decide`, { status: 'approved', note: 'ok' })); });
+    await as('mgr', async () => assert.equal((await call('POST', 'petty_custody/handover', { employee_id: E1, amount: 800, request_id: rq })).s, 403, 'the manager approves, the accounts hand over'));
+    const h1 = await as('acc', async () => {
+      no(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-09-02', amount: 900, method: 'bank', request_id: rq }), /More than the approved amount/);
+      no(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-09-02', amount: 100, method: 'cash' }), /against an approved request/);
+      const id = ok(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-09-02', amount: 800, method: 'bank', request_id: rq })).id;
+      no(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-09-02', amount: 800, method: 'bank', request_id: rq }), /not approved \(or was already paid\)/);
+      return id;
+    });
+    ok(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-09-03', amount: 100, method: 'cash', note: 'extra' }));   // the administrator may hand over directly
+    let me = await as('fore1', async () => ok(await call('GET', 'me/petty'))); assert.equal(me.held, 900); assert.equal(me.requests[0].status, 'paid');
+    assert.equal(ok(await call('GET', 'petty_topups')).balance, 1000, 'the office float is not changed by petty cash held by an employee');
+    assert.equal(await credit('1010'), -1000, '1010 is the office float only'); assert.equal(await credit('1030'), -900, '1030 = petty cash held by employees');
+
+    // ---- spending from the petty cash: an expense claim "paid from my petty cash", same approval rule
+    const c1 = await as('fore1', async () => {
+      const id = ok(await call('POST', 'me/claims', { date: '2026-09-05', description: 'Drinking water', amount: 300, vat_amount: 15, category: 'other', project_id: prj, paid_from: 'custody' })).id;
+      no(await call('POST', 'me/claims', { date: '2026-09-06', description: 'Cement bags', amount: 600, project_id: prj, paid_from: 'custody' }), /available to this employee: 585/);
+      return id;
+    });
+    await as('acc', async () => ok(await call('POST', `expense_claims/${c1}/decide`, { status: 'approved' })));
+    const bill = ok(await call('GET', 'bills')).find(b => /Drinking water/.test(b.description));
+    assert.equal(bill.project_id, prj); assert.equal(bill.vat_amount, 15); assert.equal(bill.balance, 0); assert.match(bill.description, /petty cash of Foreman One/);
+    assert.equal(await credit('2260'), 0, 'not owed to the employee: paid from the company petty cash'); assert.equal(await credit('1030'), -585); assert.equal(await credit('1010'), -1000);
+    me = await as('fore1', async () => ok(await call('GET', 'me/petty'))); assert.equal(me.held, 585);
+    let s = ok(await call('GET', `staff_statements/${E1}`)); assert.equal(s.sections.custody.closing, -585, 'cash held: owed to the company until spent or returned'); assert.equal(s.sections.custody.lines.length, 3);
+    let chk = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.equal(chk.status, 'ok', chk.detail);
+    // an own-money claim still goes to 2260
+    const c2 = await as('fore1', async () => ok(await call('POST', 'me/claims', { date: '2026-09-07', description: 'Taxi', amount: 40, project_id: prj })).id);
+    await as('acc', async () => ok(await call('POST', `expense_claims/${c2}/decide`, { status: 'approved' })));
+    assert.equal(await credit('2260'), 40);
+
+    // ---- return what is left
+    await as('acc', async () => {
+      no(await call('POST', 'petty_custody/return', { employee_id: E1, date: '2026-09-30', amount: 600, method: 'cash' }), /holds 585/);
+      const p3 = await as('fore1', async () => ok(await call('POST', 'me/claims', { date: '2026-09-08', description: 'Rope', amount: 100, project_id: prj, paid_from: 'custody' })).id);
+      no(await call('POST', 'petty_custody/return', { employee_id: E1, date: '2026-09-30', amount: 585, method: 'cash' }), /waiting for approval/);
+      await as('mgr', async () => ok(await call('POST', `expense_claims/${p3}/decide`, { status: 'rejected', note: 'not needed' })));
+      ok(await call('POST', 'petty_custody/return', { employee_id: E1, date: '2026-09-30', amount: 500, method: 'cash' }));
+    });
+    me = await as('fore1', async () => ok(await call('GET', 'me/petty'))); assert.equal(me.held, 85);
+    assert.equal(await credit('1020'), 100 - 500, 'cash on hand: 100 out (direct hand-over), 500 back');
+    chk = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.equal(chk.status, 'ok', chk.detail);
+
+    // ---- deletions keep the custody consistent; generic routes cannot touch it
+    no(await call('DELETE', `petty_topups/${h1}`), /per employee/); no(await call('PUT', `petty_topups/${h1}`, { amount: 1 }), /per employee/);
+    no(await call('DELETE', `petty_custody/${h1}`), /already spent/);
+    const ret = ok(await call('GET', 'petty_custody')).handovers.find(t => t.kind === 'return').id;
+    ok(await call('DELETE', `petty_custody/${ret}`)); assert.equal((await as('fore1', async () => ok(await call('GET', 'me/petty')))).held, 585);
+    await as('acc', async () => ok(await call('POST', 'petty_custody/return', { employee_id: E1, date: '2026-09-30', amount: 500, method: 'cash' })));
+    no(await call('DELETE', `bills/${bill.id}`), /take the approval back/);
+    no(await call('PUT', `bills/${bill.id}`, { amount: 100 }), /approved expense claim/); no(await call('PUT', `bills/${bill.id}`, { project_id: '' }), /approved expense claim/);
+
+    // ---- overview, acknowledgement of receipt
+    const ov = ok(await call('GET', 'petty_custody')); const c = ov.custodians.find(x => x.id === E1);
+    assert.equal(c.held, 85); assert.equal(ov.float, 1000); assert.equal(ov.held_by_employees, 85);
+    const doc = await call('GET', `doc/custody_receipt/${h1}`); assert.equal(doc.s, 200);
+    assert.match(doc.t, /Acknowledgement of petty cash received/); assert.match(doc.t, /Foreman One/); assert.match(doc.t, /800\.00/); assert.match(doc.t, /أقرّ/);
+
+    // ---- the old petty cash page keeps working on the office float
+    ok(await call('POST', 'petty_topups/expense', { description: 'Office tea', amount: 50, project_id: prj }));
+    assert.equal(ok(await call('GET', 'petty_topups')).balance, 950); assert.equal((await as('fore1', async () => ok(await call('GET', 'me/petty')))).held, 85);
+    chk = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.equal(chk.status, 'ok', chk.detail);
+
+    // ---- roles
+    await as('mgr', async () => { ok(await call('GET', 'petty_custody')); ok(await call('GET', 'petty_requests')); assert.equal((await call('POST', 'petty_custody/return', { employee_id: E1, amount: 1 })).s, 403); });
+    await as('view1', async () => { assert.equal((await call('GET', 'petty_custody')).s, 403); assert.equal((await call('GET', 'petty_requests')).s, 403); assert.equal((await call('GET', `doc/custody_receipt/${h1}`)).s, 403); });
+    await as('fore1', async () => { assert.equal((await call('GET', 'petty_custody')).s, 403); assert.equal((await call('GET', `petty_custody/${E2}`)).s, 403); });
+    // withdraw a pending request (own only)
+    const rq2 = await as('fore1', async () => ok(await call('POST', 'me/petty/requests', { amount: 50, purpose: 'Fuel' })).id);
+    await as('acc', async () => ok(await call('POST', 'petty_requests', { employee_id: E2, amount: 30, purpose: 'Parking' })));
+    await as('fore1', async () => ok(await call('DELETE', `me/petty/requests/${rq2}`)));
+
+    // ---- closed period
+    ok(await call('PUT', 'period', { lock_date: '2026-09-30' }));
+    no(await call('POST', 'petty_custody/handover', { employee_id: E2, date: '2026-09-15', amount: 10 }), /closed/);
+    no(await call('DELETE', `petty_custody/${h1}`), /closed/);
+    ok(await call('PUT', 'period', { lock_date: '' }));
+
+    // ---- Zoho: an expense paid from petty cash goes as a cash expense like any petty cash expense
+    const zx = await call('GET', 'zoho/export?kind=expenses'); assert.match(zx.t, /Drinking water/); assert.match(zx.t, /Petty Cash/); assert.doesNotMatch(zx.t, /Taxi/);
+
+    // ---- review fixes
+    const held = async eid => ok(await call('GET', `petty_custody/${eid}`)).held;
+    const check = async () => ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts');
+    // 1030 is a control account: only the petty cash pages post to it; 1010 (office petty cash) keeps its manual journals
+    no(await call('POST', 'journal_entries', { date: '2026-10-01', memo: 'adjust custody', lines: [{ account: '1030', debit: 5 }, { account: '1020', credit: 5 }] }), /kept from the Petty cash pages/);
+    // a manual journal on 1010 and a receipt into the office petty cash are not employees' petty cash — the daily check stays ok
+    ok(await call('POST', 'journal_entries', { date: '2026-10-01', memo: 'cash moved to petty', lines: [{ account: '1010', debit: 25 }, { account: '1020', credit: 25 }] }));
+    chk = await check(); assert.equal(chk.status, 'ok', 'journal on 1010: ' + chk.detail);
+    const inv = ok(await call('POST', 'invoices', { project_id: prj, date: '2026-10-01', number: 'INV-P1', items: [{ description: 'Work', qty: 1, rate: 100 }], vat_pct: 5 })).id;
+    ok(await call('POST', 'payments', { kind: 'in', date: '2026-10-02', amount: 20, method: 'petty', invoice_id: inv }));
+    chk = await check(); assert.equal(chk.status, 'ok', 'petty receipt: ' + chk.detail);
+    // a backdated expense from petty cash: the employee held nothing on that date
+    const old = await as('fore1', async () => ok(await call('POST', 'me/claims', { date: '2026-08-20', description: 'Old receipt', amount: 10, project_id: prj, paid_from: 'custody' })).id);
+    await as('mgr', async () => { no(await call('POST', `expense_claims/${old}/decide`, { status: 'approved' }), /did not hold enough petty cash on 2026-08-20/); ok(await call('POST', `expense_claims/${old}/decide`, { status: 'rejected', note: 'wrong date' })); });
+    // a backdated return the same
+    await as('acc', async () => no(await call('POST', 'petty_custody/return', { employee_id: E1, date: '2026-09-01', amount: 10, method: 'cash' }), /did not hold that much petty cash on 2026-09-01/));
+    // deleting an old hand-over that later expenses were paid from, even when a newer hand-over covers today's balance
+    const hB = ok(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-10-05', amount: 1000, method: 'cash' })).id;
+    no(await call('DELETE', `petty_custody/${h1}`), /already spent/);
+    ok(await call('DELETE', `petty_custody/${hB}`)); assert.equal(await held(E1), 85);
+    // deleting a hand-over while expenses from it wait for approval
+    const h2 = ok(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-10-01', amount: 50, method: 'cash' })).id;
+    const pend = await as('fore1', async () => ok(await call('POST', 'me/claims', { date: '2026-10-02', description: 'Nails', amount: 120, project_id: prj, paid_from: 'custody' })).id);
+    no(await call('DELETE', `petty_custody/${h2}`), /waiting for approval/);
+    await as('mgr', async () => ok(await call('POST', `expense_claims/${pend}/decide`, { status: 'rejected', note: 'no' })));
+    ok(await call('DELETE', `petty_custody/${h2}`));
+    // the accountant's limit counts the employee's requests of the same day (no splitting)
+    const [s1, s2] = await as('fore1', async () => [ok(await call('POST', 'me/petty/requests', { amount: 300, purpose: 'Part one' })).id, ok(await call('POST', 'me/petty/requests', { amount: 300, purpose: 'Part two' })).id]);
+    await as('acc', async () => { no(await call('POST', `petty_requests/${s1}/decide`, { status: 'approved' }), /limit/); assert.equal(ok(await call('GET', 'petty_requests?status=pending')).find(x => x.id === s1).can_decide, false); });
+    await as('fore1', async () => { ok(await call('DELETE', `me/petty/requests/${s1}`)); ok(await call('DELETE', `me/petty/requests/${s2}`)); });
+    // a hand-over above the payment approval limit: the administrator only
+    ok(await call('PUT', 'settings', { pay_approval_limit: '200' }));
+    const big = await as('acc', async () => ok(await call('POST', 'petty_requests', { employee_id: E2, amount: 300, purpose: 'Tools' })).id);
+    await as('mgr', async () => ok(await call('POST', `petty_requests/${big}/decide`, { status: 'approved' })));
+    await as('acc', async () => { const r = await call('POST', 'petty_custody/handover', { employee_id: E2, date: '2026-10-03', amount: 300, method: 'cash', request_id: big }); assert.equal(r.s, 403); assert.match(r.t, /payment approval limit/); });
+    ok(await call('POST', 'petty_custody/handover', { employee_id: E2, date: '2026-10-03', amount: 300, method: 'cash', request_id: big }));
+    ok(await call('PUT', 'settings', { pay_approval_limit: '' }));
+    chk = await check(); assert.equal(chk.status, 'ok', chk.detail);
+    // F3: an employee with petty cash records cannot be deleted
+    const r3 = await call('DELETE', `employees/${E2}`); assert.equal(r3.s, 409); assert.match(r3.t, /petty cash/);
+    const E5 = ok(await call('POST', 'employees', { name: 'Helper Five', join_date: '2026-01-01', basic: 2000, ...WPS })).id;
+    await as('acc', async () => ok(await call('POST', 'petty_requests', { employee_id: E5, amount: 20, purpose: 'Water' })));
+    assert.equal((await call('DELETE', `employees/${E5}`)).s, 409, 'a petty cash request alone also keeps the employee');
+
+    // a hand-over or a return sent twice within a minute is refused unless confirmed; the movement and its request are one transaction
+    const hd = { employee_id: E1, date: '2026-10-06', amount: 15, method: 'cash' };
+    const hx = ok(await call('POST', 'petty_custody/handover', hd)).id;
+    const hdup = await call('POST', 'petty_custody/handover', hd); assert.equal(hdup.s, 409); assert.match(hdup.j.error, /^DUPLICATE: /);
+    const rt = { employee_id: E1, date: '2026-10-07', amount: 15, method: 'cash' };
+    await as('acc', async () => { ok(await call('POST', 'petty_custody/return', rt)); const d = await call('POST', 'petty_custody/return', rt); assert.equal(d.s, 409); });
+    assert.equal(await held(E1), 85, 'one hand-over and one return of 15');
+    const tq = await as('fore1', async () => ok(await call('POST', 'me/petty/requests', { amount: 12, purpose: 'Gloves' })).id);
+    await as('mgr', async () => ok(await call('POST', `petty_requests/${tq}/decide`, { status: 'approved' })));
+    const realPrep = ctx.db.prepare.bind(ctx.db);
+    ctx.db.prepare = sql => { if (/^UPDATE petty_requests SET status='paid'/.test(sql)) throw new Error('disk full'); return realPrep(sql); };
+    const half = await as('acc', () => call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-10-08', amount: 12, method: 'cash', request_id: tq })); ctx.db.prepare = realPrep;
+    assert.equal(half.s, 500); assert.equal(await held(E1), 85, 'the hand-over was rolled back with its request');
+    assert.equal(ctx.db.prepare('SELECT status FROM petty_requests WHERE id=?').get(tq).status, 'approved');
+    invariants('the failed hand-over');
+
+    // the company's own account 1030 is never taken over: custody postings refused, the daily check fails until it is renumbered
+    const a1030 = ctx.db.prepare("SELECT * FROM accounts WHERE code='1030'").get();
+    INV = false;   // the books are broken on purpose here
+    ctx.db.prepare("UPDATE accounts SET system=0, name='Staff loans' WHERE code='1030'").run();
+    no(await call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-10-09', amount: 5, method: 'cash' }), /1030 is already used by your own account ..Staff loans/);
+    const cu = await as('fore1', async () => ok(await call('POST', 'me/claims', { date: '2026-10-09', description: 'Tape', amount: 5, project_id: prj, paid_from: 'custody' })).id);
+    await as('mgr', async () => no(await call('POST', `expense_claims/${cu}/decide`, { status: 'approved' }), /1030 is already used/));
+    chk = await check(); assert.equal(chk.status, 'fail'); assert.match(chk.detail, /1030 is already used/);
+    ctx.db.prepare('UPDATE accounts SET system=?, name=? WHERE code=?').run(a1030.system, a1030.name, '1030'); INV = true; invariants('restoring account 1030');
+    await as('mgr', async () => ok(await call('POST', `expense_claims/${cu}/decide`, { status: 'rejected', note: 'test' })));
+
+    // offboarding an employee who still holds petty cash asks for confirmation
+    ok(await call('POST', `hr/offboarding/${E1}`, { last_day: '2026-11-30', reason: 'resignation' }));
+    no(await call('POST', `hr/offboarding/${E1}/complete`, {}), /petty cash still held by the employee: 85/);
+
+    assert.ok(invRuns > 30, 'invariants were checked after every change: ' + invRuns);
+    console.log('PETTY CASH PER EMPLOYEE TESTS PASSED');
+  } catch (e) { console.error(e); process.exitCode = 1; } finally { server.close(); process.exit(process.exitCode || 0); }
+});
