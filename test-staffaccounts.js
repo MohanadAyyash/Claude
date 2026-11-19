@@ -9,7 +9,18 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 
 server.listen(0, async () => {
   const base = `http://localhost:${server.address().port}/api/`; let cookie = '';
-  const call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'Content-Type': 'application/json', cookie }, body: b ? JSON.stringify(b) : undefined }); const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { s: r.status, j, t }; };
+  let call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'Content-Type': 'application/json', cookie }, body: b ? JSON.stringify(b) : undefined }); const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { s: r.status, j, t }; };
+  // accounting invariants after every change that went through: debits = credits, and the employee sub-ledgers equal the general
+  // ledger (no FAIL in the partner or employee reconciliations). INV is off only where a test breaks the books on purpose.
+  let INV = true, invRuns = 0;
+  const invariants = what => {
+    const f = ctx.financials('2000-01-01', '2099-12-31');
+    assert.ok(Math.abs(f.tb_debit - f.tb_credit) < 0.006, `after ${what}: debits ${f.tb_debit} ≠ credits ${f.tb_credit}`);
+    const bad = [...ctx.partnerChecks(), ...ctx.staffChecks()].filter(c => c.status === 'fail'); assert.equal(bad.length, 0, `after ${what}: ${bad.map(c => c.detail).join('; ')}`);
+    invRuns++;
+  };
+  const call0 = call;
+  call = async (m, u, b) => { const r = await call0(m, u, b); if (INV && m !== 'GET' && r.s === 200) invariants(`${m} ${u}`); return r; };
   const ok = (r, m = '') => { assert.equal(r.s, 200, m + ' ' + JSON.stringify(r.j)); return r.j; };
   const no = (r, re, m = '') => { assert.ok(r.s >= 400, m + ' expected a refusal, got ' + r.s + ' ' + JSON.stringify(r.j)); if (re) assert.match(JSON.stringify(r.j), re, m); return r.j; };
   const sessions = {};
@@ -205,11 +216,34 @@ server.listen(0, async () => {
     assert.equal(ok(await call('GET', 'users')).find(u => u.id === uAdmin).employee_id, null, 'the administrator account is unlinked');
     // F9: an account code 2260 the company already used is not taken over
     const a2260 = ctx.db.prepare("SELECT * FROM accounts WHERE code='2260'").get();
+    INV = false;   // the books are broken on purpose here
     ctx.db.prepare("UPDATE accounts SET system=0, name='Other payables' WHERE code='2260'").run();
     const cF9 = await as('worker1', async () => ok(await call('POST', 'me/claims', { date: '2026-10-03', description: 'Paint', amount: 30 })).id);
     await as('mgr3', async () => no(await call('POST', `expense_claims/${cF9}/decide`, { status: 'approved' }), /already used/));
     let chk2 = ok(await call('GET', 'ops/checks')).results.find(r => r.id === 'employee_accounts'); assert.equal(chk2.status, 'fail'); assert.match(chk2.detail, /2260 is already used/);
     ctx.db.prepare('UPDATE accounts SET system=?, name=? WHERE code=?').run(a2260.system, a2260.name, '2260');
+    INV = true; invariants('restoring account 2260');
+
+    // ---- accounting review: no double posting, one transaction per posting
+    const E11 = ok(await call('POST', 'employees', { name: 'Clerk Eleven', join_date: '2026-01-01', basic: 1000, ...WPS })).id;
+    const c11 = ok(await call('POST', 'expense_claims', { employee_id: E11, date: '2026-10-12', description: 'Taxi', amount: 60 })).id;
+    ok(await call('POST', `expense_claims/${c11}/decide`, { status: 'approved' }));
+    no(await call('POST', `expense_claims/${c11}/decide`, { status: 'approved' }), /already decided/, 'approving twice does not post twice');
+    const ct = await call('POST', 'expense_claims', { employee_id: E11, date: '2026-10-12', description: 'Taxi back', amount: 60 }); ok(ct);
+    ok(await call('POST', `expense_claims/${ct.j.id}/decide`, { status: 'approved' }));
+    const rb = { employee_id: E11, date: '2026-10-20', amount: 60, method: 'bank' };
+    ok(await call('POST', 'expense_claims/reimburse', rb));
+    const rb2 = await call('POST', 'expense_claims/reimburse', rb); assert.equal(rb2.s, 409); assert.match(rb2.j.error, /^DUPLICATE: /);
+    assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM payments WHERE employee_id=? AND notes='claim-reimbursement'").get(E11).n, 1);
+    ok(await call('POST', 'expense_claims/reimburse', { ...rb, confirm_duplicate: 1 }), 'a second, confirmed reimbursement of the same amount is allowed');
+    // an approval that fails half-way leaves nothing behind: no bill without its payment
+    const c12 = ok(await call('POST', 'expense_claims', { employee_id: E11, date: '2026-10-21', description: 'Half', amount: 15 })).id;
+    const realPrep = ctx.db.prepare.bind(ctx.db);
+    ctx.db.prepare = sql => { if (/^INSERT INTO payments/.test(sql)) throw new Error('disk full'); return realPrep(sql); };
+    const half = await call('POST', `expense_claims/${c12}/decide`, { status: 'approved' }); ctx.db.prepare = realPrep;
+    assert.equal(half.s, 500); assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM bills WHERE description LIKE '%Half%'").get().n, 0, 'the bill was rolled back');
+    assert.equal(ctx.db.prepare('SELECT status FROM expense_claims WHERE id=?').get(c12).status, 'pending');
+    invariants('the failed approval');
 
     // ---- second review
     const claimFor = async (eid, date, amount) => { const id = ok(await call('POST', 'expense_claims', { employee_id: eid, date, description: 'Item ' + date, amount })).id; ok(await call('POST', `expense_claims/${id}/decide`, { status: 'approved' })); return id; };
@@ -243,6 +277,7 @@ server.listen(0, async () => {
     await as('mgr10', async () => assert.equal((await call('GET', 'me/statement')).s, 401, 'and signed out'));
     await as('mgr10x', async () => assert.ok((await call('POST', 'login', { username: 'mgr10', password: 'pass1234' })).s >= 400, 'and cannot sign in'));
 
+    assert.ok(invRuns > 40, 'invariants were checked after every change: ' + invRuns);
     console.log('EMPLOYEE ACCOUNTS TESTS PASSED');
   } catch (e) { console.error(e); process.exitCode = 1; } finally { server.close(); process.exit(process.exitCode || 0); }
 });

@@ -273,8 +273,11 @@ module.exports = ctx => {
           const short = claimsLowest(e.id, { pay: { date, amount } }); if (short) bad(`With this reimbursement dated ${date}, ${e.name} would have been paid more than the approved claims on ${short} — check the date`);
           const method = x.method === 'cash' ? 'cash' : 'bank', bank = method === 'bank' ? (+x.bank_account_id || null) : null;
           if (bank && !db.prepare('SELECT 1 FROM bank_accounts WHERE id=?').get(bank)) bad('Unknown bank account');
-          const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,employee_id,bank_account_id,notes) VALUES('out',?,?,?,?,?,?,'claim-reimbursement')").run(date, amount, method, x.reference || `CLAIMS-${e.id}`, e.id, bank);
-          audit(req, 'create', 'claim_reimbursement', Number(r.lastInsertRowid), `${e.name} ${amount}`); return send(res, 200, { id: Number(r.lastInsertRowid) }), true;
+          const id = ctx.postOnce(me, `claim_reimbursement|${e.id}|${date}|${amount}|${method}`, x, () => {
+            const r = db.prepare("INSERT INTO payments(kind,date,amount,method,reference,employee_id,bank_account_id,notes) VALUES('out',?,?,?,?,?,?,'claim-reimbursement')").run(date, amount, method, x.reference || `CLAIMS-${e.id}`, e.id, bank);
+            audit(req, 'create', 'claim_reimbursement', Number(r.lastInsertRowid), `${e.name} ${amount}`); return Number(r.lastInsertRowid);
+          }, 'payments');
+          return send(res, 200, { id }), true;
         }
         if (m === 'DELETE' && b === 'reimburse' && c) {
           if (!['admin', 'accountant'].includes(me.role)) refuse('Reimbursements are kept by the accounts');
@@ -285,16 +288,18 @@ module.exports = ctx => {
         }
         const cl = b && /^\d+$/.test(b) && claim(b); if (!cl) return send(res, 404, { error: 'not found' }), true;
         if (m === 'GET' && !c) return send(res, 200, claimView(cl)), true;
-        if (m === 'POST' && c === 'decide') { const x = await readBody(req); decide(cl, me, x, req); return send(res, 200, claimView(claim(cl.id))), true; }
+        if (m === 'POST' && c === 'decide') { const x = await readBody(req); ctx.tx(() => decide(cl, me, x, req)); return send(res, 200, claimView(claim(cl.id))), true; }
         if (m === 'POST' && c === 'receipt') { const x = await readBody(req, 12e6); return send(res, 200, { id: saveReceipt(cl, x, me, req) }), true; }
         if (m === 'POST' && c === 'undo') {                            // take back an approval: the bill and its payment go, the claim is pending again
           if (me.role !== 'admin') refuse('Only the administrator can take back an approval');
           if (cl.status !== 'approved') bad('Only an approved claim can be taken back');
           guardDate(cl.date, 'an expense');
           if (cl.paid_from !== 'custody' && (claimsOwed(cl.employee_id) - total(cl) < -0.005 || claimsLowest(cl.employee_id, { skipClaim: cl.id }))) bad('This employee was already reimbursed for this claim — delete the reimbursement first');
-          db.prepare('DELETE FROM payments WHERE id=?').run(cl.payment_id); db.prepare('DELETE FROM bills WHERE id=?').run(cl.bill_id);
-          db.prepare("UPDATE expense_claims SET status='pending', decided_by=NULL, decided_by_id=NULL, decided_at=NULL, decision_note=NULL, bill_id=NULL, payment_id=NULL WHERE id=?").run(cl.id);
-          audit(req, 'undo', 'expense_claims', cl.id, ''); return send(res, 200, { ok: 1 }), true;
+          ctx.tx(() => {
+            db.prepare('DELETE FROM payments WHERE id=?').run(cl.payment_id); db.prepare('DELETE FROM bills WHERE id=?').run(cl.bill_id);
+            db.prepare("UPDATE expense_claims SET status='pending', decided_by=NULL, decided_by_id=NULL, decided_at=NULL, decision_note=NULL, bill_id=NULL, payment_id=NULL WHERE id=?").run(cl.id);
+            audit(req, 'undo', 'expense_claims', cl.id, '');
+          }); return send(res, 200, { ok: 1 }), true;
         }
         if (m === 'DELETE' && !c) {
           if (cl.status === 'approved') bad('An approved claim is in the books — take the approval back first');

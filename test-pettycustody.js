@@ -3,11 +3,22 @@
 // acknowledgement of receipt, roles, closed period, Zoho.   node --no-warnings test-pettycustody.js      Fake data only.
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-petty-'));
-const { server } = require('./server.js');
+const { server, ctx } = require('./server.js');
 
 server.listen(0, async () => {
   const base = `http://localhost:${server.address().port}/api/`; let cookie = '';
-  const call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'Content-Type': 'application/json', cookie }, body: b ? JSON.stringify(b) : undefined }); const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { s: r.status, j, t }; };
+  let call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { 'Content-Type': 'application/json', cookie }, body: b ? JSON.stringify(b) : undefined }); const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { s: r.status, j, t }; };
+  // accounting invariants after every change that went through: debits = credits, and the partner, claims and petty cash
+  // sub-ledgers equal the general ledger (no FAIL in the reconciliations)
+  let invRuns = 0;
+  const invariants = what => {
+    const f = ctx.financials('2000-01-01', '2099-12-31');
+    assert.ok(Math.abs(f.tb_debit - f.tb_credit) < 0.006, `after ${what}: debits ${f.tb_debit} ≠ credits ${f.tb_credit}`);
+    const bad = [...ctx.partnerChecks(), ...ctx.staffChecks()].filter(c => c.status === 'fail'); assert.equal(bad.length, 0, `after ${what}: ${bad.map(c => c.detail).join('; ')}`);
+    invRuns++;
+  };
+  const call0 = call;
+  call = async (m, u, b) => { const r = await call0(m, u, b); if (m !== 'GET' && r.s === 200) invariants(`${m} ${u}`); return r; };
   const ok = (r, m = '') => { assert.equal(r.s, 200, m + ' ' + JSON.stringify(r.j)); return r.j; };
   const no = (r, re, m = '') => { assert.ok(r.s >= 400, m + ' expected a refusal, got ' + r.s + ' ' + JSON.stringify(r.j)); if (re) assert.match(JSON.stringify(r.j), re, m); return r.j; };
   const sessions = {};
@@ -167,10 +178,27 @@ server.listen(0, async () => {
     await as('acc', async () => ok(await call('POST', 'petty_requests', { employee_id: E5, amount: 20, purpose: 'Water' })));
     assert.equal((await call('DELETE', `employees/${E5}`)).s, 409, 'a petty cash request alone also keeps the employee');
 
+    // a hand-over or a return sent twice within a minute is refused unless confirmed; the movement and its request are one transaction
+    const hd = { employee_id: E1, date: '2026-10-06', amount: 15, method: 'cash' };
+    const hx = ok(await call('POST', 'petty_custody/handover', hd)).id;
+    const hdup = await call('POST', 'petty_custody/handover', hd); assert.equal(hdup.s, 409); assert.match(hdup.j.error, /^DUPLICATE: /);
+    const rt = { employee_id: E1, date: '2026-10-07', amount: 15, method: 'cash' };
+    await as('acc', async () => { ok(await call('POST', 'petty_custody/return', rt)); const d = await call('POST', 'petty_custody/return', rt); assert.equal(d.s, 409); });
+    assert.equal(await held(E1), 85, 'one hand-over and one return of 15');
+    const tq = await as('fore1', async () => ok(await call('POST', 'me/petty/requests', { amount: 12, purpose: 'Gloves' })).id);
+    await as('mgr', async () => ok(await call('POST', `petty_requests/${tq}/decide`, { status: 'approved' })));
+    const realPrep = ctx.db.prepare.bind(ctx.db);
+    ctx.db.prepare = sql => { if (/^UPDATE petty_requests SET status='paid'/.test(sql)) throw new Error('disk full'); return realPrep(sql); };
+    const half = await as('acc', () => call('POST', 'petty_custody/handover', { employee_id: E1, date: '2026-10-08', amount: 12, method: 'cash', request_id: tq })); ctx.db.prepare = realPrep;
+    assert.equal(half.s, 500); assert.equal(await held(E1), 85, 'the hand-over was rolled back with its request');
+    assert.equal(ctx.db.prepare('SELECT status FROM petty_requests WHERE id=?').get(tq).status, 'approved');
+    invariants('the failed hand-over');
+
     // offboarding an employee who still holds petty cash asks for confirmation
     ok(await call('POST', `hr/offboarding/${E1}`, { last_day: '2026-11-30', reason: 'resignation' }));
     no(await call('POST', `hr/offboarding/${E1}/complete`, {}), /petty cash still held by the employee: 85/);
 
+    assert.ok(invRuns > 30, 'invariants were checked after every change: ' + invRuns);
     console.log('PETTY CASH PER EMPLOYEE TESTS PASSED');
   } catch (e) { console.error(e); process.exitCode = 1; } finally { server.close(); process.exit(process.exitCode || 0); }
 });

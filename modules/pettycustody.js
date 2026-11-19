@@ -103,12 +103,15 @@ module.exports = ctx => {
       if (amount > free + 0.005) bad(`${e.name} holds ${h}, of which ${round(h - free)} is in expenses waiting for approval — decide those first`);
       const lo = lowest(e.id, { spend: { date, amount, kind: 'return' } }); if (lo.at) bad(`${e.name} did not hold that much petty cash on ${lo.at} — check the date`);
     }
-    const r = db.prepare('INSERT INTO petty_topups(date,amount,note,employee_id,kind,method,bank_account_id,request_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)')
-      .run(date, amount, String(x.note || (rq ? rq.purpose : '') || '').slice(0, 300), e.id, kind, method, bank, rq ? rq.id : null, x.reference || '', me.username);
-    const id = Number(r.lastInsertRowid);
-    if (rq) db.prepare("UPDATE petty_requests SET status='paid', topup_id=? WHERE id=?").run(id, rq.id);
-    audit(req, 'create', 'petty_custody', id, `${kind} ${e.name} ${amount}`);
-    return id;
+    // one transaction (the movement and its request), and not twice by a double click
+    return ctx.postOnce(me, `petty_custody|${kind}|${e.id}|${date}|${amount}|${method}`, x, () => {
+      const r = db.prepare('INSERT INTO petty_topups(date,amount,note,employee_id,kind,method,bank_account_id,request_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)')
+        .run(date, amount, String(x.note || (rq ? rq.purpose : '') || '').slice(0, 300), e.id, kind, method, bank, rq ? rq.id : null, x.reference || '', me.username);
+      const id = Number(r.lastInsertRowid);
+      if (rq) db.prepare("UPDATE petty_requests SET status='paid', topup_id=? WHERE id=?").run(id, rq.id);
+      audit(req, 'create', 'petty_custody', id, `${kind} ${e.name} ${amount}`);
+      return id;
+    }, 'petty_topups');
   }
 
   // ---------------- printable acknowledgement of receipt ----------------
@@ -193,9 +196,11 @@ module.exports = ctx => {
             if (held(t.employee_id) - t.amount < -0.005 || lowest(t.employee_id, { skip: t.id }).at) bad('This petty cash was already spent — the employee would hold less than nothing');
             if (held(t.employee_id) - t.amount - pendingSpend(t.employee_id) < -0.005) bad('Part of this petty cash is in expenses waiting for approval — decide those first');
           }
-          db.prepare('DELETE FROM petty_topups WHERE id=?').run(t.id);
-          if (t.request_id) db.prepare("UPDATE petty_requests SET status='approved', topup_id=NULL WHERE id=?").run(t.request_id);
-          audit(req, 'delete', 'petty_custody', t.id, `${t.kind} ${t.amount}`); return send(res, 200, { ok: 1 }), true;
+          ctx.tx(() => {
+            db.prepare('DELETE FROM petty_topups WHERE id=?').run(t.id);
+            if (t.request_id) db.prepare("UPDATE petty_requests SET status='approved', topup_id=NULL WHERE id=?").run(t.request_id);
+            audit(req, 'delete', 'petty_custody', t.id, `${t.kind} ${t.amount}`);
+          }); return send(res, 200, { ok: 1 }), true;
         }
         return false;
       }
