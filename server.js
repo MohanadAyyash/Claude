@@ -94,11 +94,13 @@ const tx = fn => {
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { try { db.exec('ROLLBACK'); } catch {} throw e; } finally { txDepth--; }
 };
 const recentPostings = new Map(), DUP_MS = 60000;
-const postOnce = (me, key, x, fn) => {
-  const now = Date.now(); for (const [k, t] of recentPostings) if (now - t > DUP_MS) recentPostings.delete(k);
-  const k = `${me && me.id}|${key}`;
-  if (recentPostings.has(k) && !(x && x.confirm_duplicate)) { const e = new Error('DUPLICATE: the same entry was recorded less than a minute ago — record it again?'); e.status = 409; throw e; }
-  const r = tx(fn); recentPostings.set(k, now); return r;
+// table: where fn writes the row whose id it returns — an entry deleted since then (to correct it) is no longer a duplicate
+const postOnce = (me, key, x, fn, table) => {
+  const now = Date.now(); for (const [k, v] of recentPostings) if (now - v.t > DUP_MS) recentPostings.delete(k);
+  const k = `${me && me.id}|${key}`, prev = recentPostings.get(k);
+  const still = prev && (!prev.table || db.prepare(`SELECT 1 FROM ${prev.table} WHERE id=?`).get(prev.id));
+  if (still && !(x && x.confirm_duplicate)) { const e = new Error('DUPLICATE: the same entry was recorded less than a minute ago — record it again?'); e.status = 409; throw e; }
+  const r = tx(fn); recentPostings.set(k, { t: now, table, id: r }); return r;
 };
 const countable = p => p.cheque_status !== 'bounced';           // bounced cheques never settle anything
 function enrich() {
