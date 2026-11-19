@@ -53,7 +53,7 @@ module.exports = ctx => {
   const v2From = () => cfg().start_v2 || '';
   const isV2 = d => { const s = v2From(); return !!(s && d && d >= s); };
   const PARTNER_CODES = ['3000', '2500', '3110'];                                     // each partner has his own Zoho accounts
-  const LEDGER2 = { 1010: 'Office petty cash', 1030: 'Employee cash custody', 2260: 'Expense claims owed to employees (e.g. Zoho Employee Reimbursements)', 2050: 'Cheques issued (PDC payable)', 3100: 'Retained earnings / owner current account', 3900: 'Opening balance equity', 1600: 'Fixed assets (cost)', 1690: 'Accumulated depreciation', 6100: 'Depreciation', 6150: 'Gain / loss on disposal of assets' };
+  const LEDGER2 = { 1050: 'Cheques in hand (PDC received)', 2400: 'Advances from customers', 1010: 'Office petty cash', 1030: 'Employee cash custody', 2260: 'Expense claims owed to employees (e.g. Zoho Employee Reimbursements)', 2050: 'Cheques issued (PDC payable)', 3100: 'Retained earnings / owner current account', 3900: 'Opening balance equity', 1600: 'Fixed assets (cost)', 1690: 'Accumulated depreciation', 6100: 'Depreciation', 6150: 'Gain / loss on disposal of assets' };
   const LEDGER = { 1100: 'Accounts receivable (default: Zoho Accounts Receivable)', 5200: 'Site labour salaries (projects)', 6200: 'Head-office salaries', 2200: 'Salaries payable', 2250: 'Employee deductions payable', 1300: 'Employee advances', 5260: 'End-of-service benefits (expense)', 2300: 'End-of-service provision', 1150: 'Retention receivable' };
   const partnerName = id => (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='partners'").get() && (db.prepare('SELECT name FROM partners WHERE id=?').get(id) || {}).name) || `#${id}`;
   const mapOf = (kind, key) => (db.prepare('SELECT zoho_id FROM zoho_map WHERE kind=? AND local_key=?').get(kind, String(key)) || {}).zoho_id || null;
@@ -63,7 +63,7 @@ module.exports = ctx => {
     code = String(code);
     const own = partnerId && PARTNER_CODES.includes(code), key = own ? `acct:${code}:p${partnerId}` : 'acct:' + code, m = mapOf('account', key);
     const bank = ctx.bankAccounts && ctx.bankAccounts().find(b => b.ledger_code === code);
-    const auto = m ? null : bank ? (lk.bank || lk.cash) : code === '1020' ? (lk.cash || lk.bank) : code === '1100' ? lk.ar : code === '1150' ? lk.retention : null;
+    const auto = m ? null : bank ? (lk.bank || lk.cash) : code === '1020' ? (lk.cash || lk.bank) : code === '1100' ? lk.ar : code === '2000' ? lk.ap : code === '1150' ? lk.retention : null;
     const name = (db.prepare('SELECT name FROM accounts WHERE code=?').get(code) || {}).name || LEDGER2[code] || LEDGER[code] || code;
     const label = own ? `${name} — ${partnerName(partnerId)}` : bank ? `Bank — ${bank.name}` : name;
     useAcct(key.slice(5), label, m || (auto && auto.account_id), m ? 'mapped' : auto ? 'automatic (Zoho default account of that type)' : 'missing');
@@ -99,7 +99,9 @@ module.exports = ctx => {
     type: i.kind === 'credit_note' ? 'creditnote' : 'invoice', number: i.number, date: i.date, due: i.due_date || '', client_id: i.client_id, place: PLACE[i.emirate] || 'DU', project: i.project_name || '',
     original: i.original_id ? (e.invoices.find(o => o.id === i.original_id) || {}).number || '' : '',
     notes: [i.project_name && `Project: ${i.project_name}`, i.retention > 0 && `Retention ${i.retention_pct}% = ${i.retention.toFixed(2)} AED (held by client)`, i.notes].filter(Boolean).join('\n'),
-    lines: (i.items || []).map(x => ({ name: String(x.description || '-'), quantity: +x.qty || 0, rate: +x.rate || 0, tax: x.vat === 'zero' || x.vat === 'exempt' ? x.vat : (+i.vat_pct || 0) > 0 ? 'std' : 'zero' })),
+    // adv: an advance invoice (or its credit note) and the "less: advance recovery" line of a progress invoice belong to 2400
+    lines: (i.items || []).map(x => ({ name: String(x.description || '-'), quantity: +x.qty || 0, rate: +x.rate || 0, tax: x.vat === 'zero' || x.vat === 'exempt' ? x.vat : (+i.vat_pct || 0) > 0 ? 'std' : 'zero',
+      adv: i.kind === 'advance' || i.orig_kind === 'advance' || ctx.C.isRecovery(x) })),
     voided: !!i.voided, total: Math.abs(i.total),
   });
   const billDoc = (b, e) => {
@@ -119,9 +121,10 @@ module.exports = ctx => {
   const payHash = d => hashOf([d.amount, d.date, d.inbound, d.inv ? 'i' + d.inv.id : d.bill ? 'b' + d.bill.id : '']);
   const payDoc = (p, e) => {
     const inv = p.invoice_id ? e.invoices.find(i => i.id === p.invoice_id) : null, bill = p.bill_id ? e.bills.find(b => b.id === p.bill_id) : null;
-    return { inbound: p.kind === 'in', amount: round(p.amount), date: p.method === 'cheque' && p.cheque_date ? p.cheque_date : p.date, mode: MODE[p.method] || 'banktransfer', inv, bill,
+    const v2 = isV2(p.date);
+    return { inbound: p.kind === 'in', amount: round(p.amount), date: p.method === 'cheque' && p.cheque_date && (!v2 || p.cheque_date > p.date) ? p.cheque_date : p.date, mode: MODE[p.method] || 'banktransfer', inv, bill,
       memo: [p.reference, inv && inv.number, bill && (bill.reference || bill.description), p.is_retention ? 'retention release' : '', p.method === 'cheque' && p.cheque_date ? `cheque ${p.cheque_date}` : ''].filter(Boolean).join(' · ') || `TRG-PAY${p.id}`,
-      party_id: inv ? inv.client_id : bill ? bill.party_id : null, cash: ['cash', 'petty'].includes(p.method), v2: isV2(p.date) };
+      party_id: inv ? inv.client_id : bill ? bill.party_id : null, cash: ['cash', 'petty'].includes(p.method), v2 };
   };
 
   // ---------- push ----------
@@ -132,7 +135,7 @@ module.exports = ctx => {
     const coa = ((await cl.get('/chartofaccounts', { filter_by: 'AccountType.Active' })).chartofaccounts || []);
     const tax = (pct, re) => taxes.find(t => +t.tax_percentage === pct && t.tax_type !== 'tax_group' && (!re || re.test(t.tax_name || '')));
     const expense = coa.filter(a => EXPENSE_TYPES.includes(a.account_type));
-    return { std: tax(5), zero: tax(0, /zero/i), exempt: tax(0, /exempt/i), bank: banks.find(a => a.account_type === 'bank'), cash: banks.find(a => a.account_type === 'cash'), ar: coa.find(a => a.account_type === 'accounts_receivable'), retention: coa.find(a => /retention/i.test(a.account_name || '') && /asset/.test(a.account_type || '')),
+    return { std: tax(5), zero: tax(0, /zero/i), exempt: tax(0, /exempt/i), bank: banks.find(a => a.account_type === 'bank'), cash: banks.find(a => a.account_type === 'cash'), ar: coa.find(a => a.account_type === 'accounts_receivable'), ap: coa.find(a => a.account_type === 'accounts_payable'), retention: coa.find(a => /retention/i.test(a.account_name || '') && /asset/.test(a.account_type || '')),
       coa: [...coa, ...banks], expense, assets: coa.filter(a => a.account_type === 'fixed_asset'), cogs: expense.find(a => /^cost of goods sold$/i.test(a.account_name || '')) || expense.find(a => a.account_type === 'cost_of_goods_sold') || expense[0] };   // the standard account, not another COGS account (e.g. site salaries)
   }
   const taxOf = (lk, k) => (k === 'std' ? lk.std : k === 'zero' ? lk.zero : k === 'exempt' ? lk.exempt : null);
@@ -197,7 +200,7 @@ module.exports = ctx => {
     expense2: { path: '/expenses', key: 'expense', id: 'expense_id' },                  // an expense paid through the account that paid it (new types)
   };
   const LOCKED = ['paid', 'partially_paid', 'closed'];                                  // money has been applied in Zoho → never overwrite
-  const lineItems = (lines, lk, pid) => lines.map(l => { const t = taxOf(lk, l.tax); return { name: l.name.slice(0, 100), description: l.name.length > 100 ? l.name : '', quantity: l.quantity, rate: l.rate, ...(t ? { tax_id: t.tax_id } : {}), ...projectRef(pid) }; });
+  const lineItems = (lines, lk, pid, adv) => lines.map(l => { const t = taxOf(lk, l.tax); return { name: l.name.slice(0, 100), description: l.name.length > 100 ? l.name : '', quantity: l.quantity, rate: l.rate, ...(t ? { tax_id: t.tax_id } : {}), ...(adv && l.adv ? { account_id: adv } : {}), ...projectRef(pid) }; });
 
   async function pushDoc(cl, kind, localId, type, vals, { voided, find, label }, run) {
     const t = DOC[type], h = hashOf(vals), r = rec(kind, localId), q = t.num ? { ignore_auto_number_generation: 'true' } : undefined;
@@ -269,7 +272,8 @@ module.exports = ctx => {
   const ym = m => +m.replace('-', ''), mEnd = m => `${m}-${String(ctx.C.daysInMonth(m)).padStart(2, '0')}`;
   const has = t => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
   // a payroll row's cost by project: the attendance split when there is one, else its own project (null = head office)
-  const split = r => { const al = has('payroll_alloc') ? db.prepare('SELECT project_id, amount FROM payroll_alloc WHERE payroll_id=?').all(r.id) : []; return al.length ? al : [{ project_id: r.project_id || null, amount: r.gross }]; };
+  // a payroll row's cost by project: the one allocation engine (modules/payroll2.js), shared with Trigon's ledger and project costs
+  const split = r => (ctx.payrollSplit ? ctx.payrollSplit(r) : [{ project_id: r.project_id || null, amount: r.gross }]);
   function journals(from, to) {
     const out = [], inR = d => (!from || d >= from) && (!to || d <= to), add = (byProj, acctProj, acctHq, dc, desc) => Object.entries(byProj).map(([p, a]) => ({ acct: p === 'null' ? acctHq : acctProj, dc, amount: round(a), project_id: p === 'null' ? null : +p, desc }));
     const months = db.prepare("SELECT month, MAX(paid_date) paid, SUM(paid_date IS NULL) unpaid FROM payroll WHERE status='final' GROUP BY month").all();
@@ -331,7 +335,7 @@ module.exports = ctx => {
   }
   // ---------- new types: movements that only touch the ledger, sent as balanced journals with Trigon's own account codes ----------
   // (codes: true — each line is resolved with zAcct, per partner for 3000 / 2500 / 3110). Only records dated from start_v2.
-  const V2_KINDS = ['jv_petty', 'jv_reimb', 'jv_partner', 'jv_palloc', 'jv_dep', 'jv_asset'];
+  const V2_KINDS = ['jv_petty', 'jv_reimb', 'jv_partner', 'jv_palloc', 'jv_dep', 'jv_asset', 'jv_pdc', 'jv_pdc_clr'];
   const dcLines = (lines, partner) => lines.flatMap(([acct, dr, cr]) => [...(dr > 0.004 ? [{ acct, dc: 'debit', amount: round(dr), partner }] : []), ...(cr > 0.004 ? [{ acct, dc: 'credit', amount: round(cr), partner }] : [])]);
   function ledgerJournals(from, to, all = false) {
     const out = [], inR = d => isV2(d) && (all || ((!from || d >= from) && (!to || d <= to)));
@@ -348,7 +352,22 @@ module.exports = ctx => {
     for (const p of e.payments) {
       if (!(p.kind === 'out' && p.employee_id && !p.bill_id) || !inR(p.date)) continue;
       out.push({ kind: 'jv_reimb', local_id: p.id, date: p.date, ref: `REIMB-${p.id}`, notes: `Expense claims reimbursed${p.reference ? ' — ' + p.reference : ''}`, codes: true, voided: p.cheque_status === 'bounced',
-        lines: dcLines([['2260', p.amount, 0], [ctx.payAccount(p, 'out'), 0, p.amount]]) });
+        lines: dcLines([['2260', p.amount, 0], [ctx.pdcTwoStep && ctx.pdcTwoStep(p) ? '2050' : ctx.payAccount(p, 'out'), 0, p.amount]]) });
+    }
+    // post-dated cheques (Trigon's ledger rules): into 1050 / 2050 against the customer / supplier on the cheque's date, and out again
+    // on the cheque date once cleared (when Zoho also receives the payment itself, applied to the invoice / bill)
+    for (const p of e.payments) {
+      if (!(ctx.pdcTwoStep && ctx.pdcTwoStep(p)) || !inR(p.date)) continue;
+      const inv = p.invoice_id && e.invoices.find(i => i.id === p.invoice_id), bill = p.bill_id && e.bills.find(b => b.id === p.bill_id), cleared = p.cheque_status === 'cleared';
+      const reimb = p.kind === 'out' && p.employee_id && !p.bill_id;
+      if (!reimb && !(p.kind === 'in' ? inv : bill)) continue;                          // a cheque not linked to a document is not sent to Zoho
+      const party = p.kind === 'in' ? { acct: p.is_retention ? '1150' : '1100', customer: p.is_retention ? undefined : inv.client_id } : bill ? { acct: '2000', customer: bill.party_id || undefined, sundry: !bill.party_id } : null;
+      const pdc = p.kind === 'in' ? '1050' : '2050', with_ = (l, x) => ({ ...l, ...(x && x.customer ? { customer: x.customer } : {}), ...(x && x.sundry ? { sundry: true } : {}) });
+      if (!reimb) out.push({ kind: 'jv_pdc', local_id: p.id, date: p.date, ref: `PDC-${p.id}`, notes: `Post-dated cheque ${p.kind === 'in' ? 'received' : 'issued'}${p.reference ? ' — ' + p.reference : ''} (due ${p.cheque_date})`, codes: true,
+        lines: p.kind === 'in' ? [{ acct: pdc, dc: 'debit', amount: round(p.amount) }, with_({ acct: party.acct, dc: 'credit', amount: round(p.amount) }, party)] : [with_({ acct: '2000', dc: 'debit', amount: round(p.amount) }, party), { acct: pdc, dc: 'credit', amount: round(p.amount) }] });
+      if (cleared && inR(p.cheque_date)) out.push({ kind: 'jv_pdc_clr', local_id: p.id, date: p.cheque_date, ref: `PDC-CLR-${p.id}`, notes: `Post-dated cheque cleared${p.reference ? ' — ' + p.reference : ''}`, codes: true,
+        lines: reimb ? [{ acct: pdc, dc: 'debit', amount: round(p.amount) }, { acct: ctx.payAccount(p, 'out'), dc: 'credit', amount: round(p.amount) }]
+          : p.kind === 'in' ? [with_({ acct: party.acct, dc: 'debit', amount: round(p.amount) }, party), { acct: pdc, dc: 'credit', amount: round(p.amount) }] : [{ acct: pdc, dc: 'debit', amount: round(p.amount) }, with_({ acct: '2000', dc: 'credit', amount: round(p.amount) }, party)] });
     }
     // partners: capital, loans, current account, transfers, profit allocation — the ledger's own lines, each partner on his accounts
     for (const x of ctx.partnerEntries ? ctx.partnerEntries() : []) {
@@ -382,7 +401,7 @@ module.exports = ctx => {
       if (!j.codes) { const code = l.acct === 'bank' ? '1000' : l.acct === 'cash' ? '1020' : l.acct === 'ar' ? '1100' : String(l.acct), mapped = mapOf('account', 'acct:' + code);
         useAcct(code, LEDGER[code] || (code === '1000' ? 'Bank' : code === '1020' ? 'Cash on hand' : code), acc, mapped ? 'mapped' : acc ? 'automatic (Zoho default account of that type)' : 'missing'); }
       if (!acc && !j.codes) throw new Error(`map our account ${l.acct === 'ar' ? '1100 (Accounts receivable)' : l.acct}${LEDGER[l.acct] ? ' (' + LEDGER[l.acct] + ')' : ''} to a Zoho account first`);
-      lines.push({ account_id: acc, debit_or_credit: l.dc, amount: round(l.amount), description: l.desc || '', ...(l.customer ? { customer_id: await contactId(cl, l.customer, run) } : {}), ...projectRef(l.project_id) });
+      lines.push({ account_id: acc, debit_or_credit: l.dc, amount: round(l.amount), description: l.desc || '', ...(l.customer ? { customer_id: await contactId(cl, l.customer, run) } : l.sundry ? { customer_id: await sundryId(cl, run) } : {}), ...projectRef(l.project_id) });
     }
     const vals = { journal_date: j.date, reference_number: j.ref.slice(0, 100), notes: j.notes, line_items: lines }, h = hashOf(vals), r = rec(j.kind, j.local_id);
     if (r && ['ok', 'error'].includes(r.status) && r.zoho_id) {                   // also after a failed update: the journal exists there, so it is updated, not posted twice
@@ -455,8 +474,13 @@ module.exports = ctx => {
         if (!i.client_id) throw new Error('invoice project has no client');
         if (!lk.std && i.vat > 0.004) throw new Error('this invoice has VAT but Zoho Books has no 5% VAT tax — set up UAE VAT in Zoho first');
         const d = invoiceDoc(i, e), cust = await contactId(cl, i.client_id, run), credit = d.type === 'creditnote';
-        const vals = { customer_id: cust, [credit ? 'creditnote_number' : 'invoice_number']: d.number, date: d.date, ...(!credit && d.due ? { due_date: d.due } : {}),
-          reference_number: (credit ? d.original : d.project).slice(0, 100), place_of_supply: d.place, is_inclusive_tax: false, notes: d.notes, line_items: lineItems(d.lines, lk, i.project_id) };
+        const head = { customer_id: cust, [credit ? 'creditnote_number' : 'invoice_number']: d.number, date: d.date, ...(!credit && d.due ? { due_date: d.due } : {}),
+          reference_number: (credit ? d.original : d.project).slice(0, 100), place_of_supply: d.place, is_inclusive_tax: false, notes: d.notes };
+        // new rules: advance lines on "advances from customers" (2400) until recovered, like Trigon's ledger. An invoice already sent
+        // the old way and unchanged since keeps its content (history is not rewritten)
+        const old = { ...head, line_items: lineItems(d.lines, lk, i.project_id) }, sent = rec('invoice', i.id);
+        const adv = isV2(i.date) && d.lines.some(l => l.adv) && !(sent && sent.zoho_id && sent.hash === hashOf(old)) ? zAcct('2400', lk) : null;
+        const vals = adv ? { ...head, line_items: lineItems(d.lines, lk, i.project_id, adv) } : old;
         await pushDoc(cl, 'invoice', i.id, d.type, vals, { voided: d.voided, find: { [credit ? 'creditnote_number' : 'invoice_number']: d.number }, label: i.number }, run);
       });
       for (const b of bills) await each('bill', b.id, b.reference || b.description || `#${b.id}`, async () => {

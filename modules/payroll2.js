@@ -135,6 +135,9 @@ module.exports = ctx => {
     db.prepare('INSERT INTO eos_settlements(employee_id,date,provision,gratuity,created) VALUES(?,?,?,?,?)').run(e.id, lastDay, prov, round(+gratuityDue || 0), now());
   };
   // ledger lines (accounting.js): provision Dr 5260 / Cr 2300; settlement Dr 2300 (all provided) / Cr 2200 (gratuity due) / the difference to 5260
+  // a payroll row's cost by project: the attendance allocation when there is one, else its own project (null = head office).
+  // The one engine for the ledger (from the ledger rules date), the project costs and the Zoho payroll journal.
+  ctx.payrollSplit = r => { const al = db.prepare('SELECT project_id, amount FROM payroll_alloc WHERE payroll_id=?').all(r.id); return al.length ? al : [{ project_id: r.project_id || null, amount: r.gross }]; };
   ctx.eosEntries = () => [
     ...db.prepare('SELECT month, SUM(amount) a FROM eos_provisions GROUP BY month').all().map(r => ({ date: monthEnd(r.month), ref: `EOS-${r.month}`, memo: `End-of-service provision ${r.month}`, lines: [['5260', r.a, 0], ['2300', 0, r.a]] })),
     ...db.prepare('SELECT s.*, e.name FROM eos_settlements s JOIN employees e ON e.id=s.employee_id').all().map(s => {

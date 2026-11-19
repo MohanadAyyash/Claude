@@ -1873,6 +1873,7 @@ The administrator acts directly, and that action is recorded as the approval in 
 3. Corrections go into the open period: a **credit note** for an invoice, or a journal entry with a new date.
 4. Still possible: recording a new payment with an open date against an old invoice, and changing a pending cheque from a closed period to cleared or bounced.
 5. To reopen: clear the date and save. Every closing and reopening is written to the audit log.
+6. **Ledger rules aligned with Zoho** (same card): from the date you set, site and head-office salaries (5200 / 6200) follow the attendance allocation (the same as the project costs and the Zoho journal), and a post-dated cheque stays in 1050 (received) / 2050 (issued) until its cheque date, moving to the bank only then and only once cleared. Earlier periods do not change. The date must come after the closing date, and cannot be moved while it is inside a closed period. The daily check confirms that project allocations + head office = payroll expense exactly.
 
 <!--img-->
 
