@@ -16,6 +16,9 @@ server.listen(0, async () => {
     const f = ctx.financials('2000-01-01', '2099-12-31');
     assert.ok(Math.abs(f.tb_debit - f.tb_credit) < 0.006, `after ${what}: debits ${f.tb_debit} ≠ credits ${f.tb_credit}`);
     const bad = ctx.partnerChecks().filter(c => c.status === 'fail'); assert.equal(bad.length, 0, `after ${what}: ${bad.map(c => c.detail).join('; ')}`);
+    // the two-step posting through 2000 (bill, then its payment) must bring the bill back to zero: nothing is left in 2000
+    const made = new Set(ctx.db.prepare('SELECT bill_id FROM payments WHERE bill_id IS NOT NULL AND created_bill=1').all().map(r => r.bill_id));
+    const left = ctx.enrich().bills.filter(b => made.has(b.id) && Math.abs(b.balance) > 0.005); assert.equal(left.length, 0, `after ${what}: 2000 not cleared for bill(s) ${left.map(b => b.id)}`);
     invRuns++;
   };
   const call0 = call;
