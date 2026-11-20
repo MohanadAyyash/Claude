@@ -7,13 +7,32 @@ const { project } = require('../lib/copilot-policy');
 const list = value => String(value || '').split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
 const loadJose = () => { try { return require('jose'); } catch { return null; } };
 const loopback = hostname => ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname.toLowerCase());
+const { randomUUID } = require('node:crypto');
 module.exports = ctx => {
   const { db, send } = ctx;
   db.exec(`CREATE TABLE IF NOT EXISTS copilot_history (
     id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    question TEXT NOT NULL, answer TEXT NOT NULL, created_at INTEGER NOT NULL, auth_fingerprint TEXT
+    question TEXT NOT NULL, answer TEXT NOT NULL, created_at INTEGER NOT NULL, auth_fingerprint TEXT,
+    intent TEXT, data_json TEXT, context_json TEXT, conversation_id TEXT
   );
   CREATE INDEX IF NOT EXISTS copilot_history_user_created ON copilot_history(user_id, created_at DESC);
+  CREATE TABLE IF NOT EXISTS copilot_conversations (
+    id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, auth_fingerprint TEXT
+  );
+  CREATE INDEX IF NOT EXISTS copilot_conversations_user_updated ON copilot_conversations(user_id, updated_at DESC);
+  CREATE TABLE IF NOT EXISTS copilot_memory (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL, project_id INTEGER, created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS copilot_memory_user_created ON copilot_memory(user_id, created_at DESC);
+  CREATE TABLE IF NOT EXISTS copilot_preferences (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    personalization_enabled INTEGER NOT NULL DEFAULT 1,
+    language_counts TEXT NOT NULL DEFAULT '{}', intent_counts TEXT NOT NULL DEFAULT '{}',
+    project_counts TEXT NOT NULL DEFAULT '{}', entity_counts TEXT NOT NULL DEFAULT '{}', filter_counts TEXT NOT NULL DEFAULT '{}',
+    notice_seen INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0
+  );
   CREATE TABLE IF NOT EXISTS copilot_feedback (
     id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     history_id INTEGER NOT NULL REFERENCES copilot_history(id) ON DELETE CASCADE,
@@ -31,9 +50,23 @@ module.exports = ctx => {
     if (!db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   };
   addCol('copilot_history', 'auth_fingerprint', 'TEXT');
+  addCol('copilot_history', 'intent', 'TEXT');
+  addCol('copilot_history', 'data_json', 'TEXT');
+  addCol('copilot_history', 'context_json', 'TEXT');
+  addCol('copilot_history', 'conversation_id', 'TEXT');
+  addCol('copilot_preferences', 'entity_counts', "TEXT NOT NULL DEFAULT '{}'");
   addCol('copilot_audit', 'authorized_count', 'INTEGER NOT NULL DEFAULT 0');
   addCol('copilot_audit', 'redacted', 'INTEGER NOT NULL DEFAULT 0');
   addCol('copilot_audit', 'duration_ms', 'INTEGER');
+  db.exec(`CREATE INDEX IF NOT EXISTS copilot_history_conversation ON copilot_history(user_id,conversation_id,created_at,id);
+    CREATE TRIGGER IF NOT EXISTS copilot_purge_disabled_user AFTER UPDATE OF disabled ON users
+    WHEN NEW.disabled=1 AND COALESCE(OLD.disabled,0)<>1
+    BEGIN
+      DELETE FROM copilot_conversations WHERE user_id=NEW.id;
+      DELETE FROM copilot_history WHERE user_id=NEW.id;
+      DELETE FROM copilot_memory WHERE user_id=NEW.id;
+      DELETE FROM copilot_preferences WHERE user_id=NEW.id;
+    END;`);
 
   const windows = { global: [], users: new Map() }, jwksSets = new Map();
   const now = () => Date.now();
@@ -49,9 +82,19 @@ module.exports = ctx => {
   const timeoutMs = () => configuredInt('COPILOT_TIMEOUT_MS', PROVIDER_TIMEOUT_MS, 1000, PROVIDER_TIMEOUT_MS);
   const userLimit = () => configuredInt('COPILOT_USER_LIMIT', USER_LIMIT, 1, 1000);
   const globalLimit = () => configuredInt('COPILOT_GLOBAL_LIMIT', GLOBAL_LIMIT, 1, 10000);
-  const historyDays = () => configuredInt('COPILOT_HISTORY_RETENTION_DAYS', 30, 1, 3650);
+  const historyDays = () => configuredInt('COPILOT_HISTORY_RETENTION_DAYS', 90, 1, 3650);
   const provider = require('../lib/ai-provider')({ fail, timeoutMs });
-  const pruneHistory = () => db.prepare('DELETE FROM copilot_history WHERE created_at < ?').run(now() - historyDays() * 864e5);
+  const pruneHistory = () => {
+    const cutoff = now() - historyDays() * 864e5;
+    db.prepare('DELETE FROM copilot_history WHERE created_at < ?').run(cutoff);
+    db.prepare('DELETE FROM copilot_conversations WHERE updated_at < ?').run(cutoff);
+  };
+  for (const row of db.prepare('SELECT id,user_id,question,created_at,auth_fingerprint FROM copilot_history WHERE conversation_id IS NULL ORDER BY id').all()) {
+    const id = randomUUID();
+    db.prepare('INSERT INTO copilot_conversations(id,user_id,title,created_at,updated_at,auth_fingerprint) VALUES(?,?,?,?,?,?)')
+      .run(id, row.user_id, String(row.question).slice(0, 100), row.created_at, row.created_at, row.auth_fingerprint);
+    db.prepare('UPDATE copilot_history SET conversation_id=? WHERE id=? AND conversation_id IS NULL').run(id, row.id);
+  }
   pruneHistory();
 
   function auditEvent(userId, event, intent, outcome, status, metrics = {}) {
@@ -183,6 +226,214 @@ module.exports = ctx => {
     if (/\b(invoices?|tax invoices?|credit notes?)\b|فواتير|فاتوره|اشعارات دائنه/.test(q)) return 'invoice_summary';
     if (/\b(revenue|invoiced|costs?|profit|margin|contract value|receivables?|collections?|financials?)\b|ايراد|تكلفه|ارباح|الربح|الهامش|المستحق|المقبوض|قيمه العقود/.test(q)) return 'project_financials';
     if (/\bprojects?\b|\bsites?\b|مشروع|مشاريع/.test(q)) return 'project_status';
+    return null;
+  }
+
+  const PERSONALIZATION_DEFAULT = process.env.COPILOT_PERSONALIZATION_ENABLED !== '0';
+  const COUNTER_COLUMNS = ['language_counts', 'intent_counts', 'project_counts', 'entity_counts', 'filter_counts'];
+  const COUNTER_KEYS = new Set(['language_counts', 'intent_counts', 'project_counts', 'entity_counts', 'filter_counts']);
+  const jsonObject = raw => {
+    try { const value = JSON.parse(raw || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+    catch { return {}; }
+  };
+  const jsonArray = raw => {
+    try { const value = JSON.parse(raw || '[]'); return Array.isArray(value) ? value : []; }
+    catch { return []; }
+  };
+  function preferenceRow(userId) {
+    db.prepare('INSERT OR IGNORE INTO copilot_preferences(user_id,personalization_enabled,updated_at) VALUES(?,?,?)')
+      .run(userId, PERSONALIZATION_DEFAULT ? 1 : 0, now());
+    return db.prepare('SELECT * FROM copilot_preferences WHERE user_id=?').get(userId);
+  }
+  function personalizationOn(userId) {
+    return PERSONALIZATION_DEFAULT && preferenceRow(userId).personalization_enabled === 1;
+  }
+  function projectAccessible(user, projectId) {
+    if (!Number.isSafeInteger(+projectId) || +projectId < 1 || !ctx.can(user.role, 'GET', 'projects')) return false;
+    const scope = projectIds(user);
+    return (!scope || scope.has(+projectId)) && !!db.prepare('SELECT 1 FROM projects WHERE id=?').get(+projectId);
+  }
+  function purgeInaccessibleProjectPreferences(user) {
+    const pref = preferenceRow(user.id);
+    const projectCounts = jsonObject(pref.project_counts), allowed = {};
+    for (const [id, count] of Object.entries(projectCounts)) {
+      if (projectAccessible(user, +id) && Number.isSafeInteger(count) && count > 0) allowed[id] = count;
+    }
+    if (JSON.stringify(projectCounts) !== JSON.stringify(allowed)) {
+      db.prepare('UPDATE copilot_preferences SET project_counts=?,updated_at=? WHERE user_id=?')
+        .run(JSON.stringify(allowed), now(), user.id);
+    }
+    for (const item of db.prepare('SELECT id,project_id FROM copilot_memory WHERE user_id=? AND project_id IS NOT NULL').all(user.id)) {
+      if (!projectAccessible(user, item.project_id)) db.prepare('DELETE FROM copilot_memory WHERE id=? AND user_id=?').run(item.id, user.id);
+    }
+  }
+  function memoryPayload(user) {
+    purgeInaccessibleProjectPreferences(user);
+    const pref = preferenceRow(user.id), counts = {};
+    for (const key of COUNTER_COLUMNS) counts[key] = jsonObject(pref[key]);
+    const projects = Object.entries(counts.project_counts)
+      .filter(([id]) => projectAccessible(user, +id))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id, count]) => ({ id: +id, name: db.prepare('SELECT name FROM projects WHERE id=?').get(+id)?.name || '', count }));
+    return {
+      items: db.prepare('SELECT id,content,created_at,project_id FROM copilot_memory WHERE user_id=? ORDER BY created_at DESC,id DESC').all(user.id),
+      personalization_enabled: PERSONALIZATION_DEFAULT && pref.personalization_enabled === 1,
+      first_use_notice: pref.notice_seen !== 1,
+      preferences: {
+        language: Object.entries(counts.language_counts).sort((a, b) => b[1] - a[1])[0]?.[0] || null,
+        intents: Object.entries(counts.intent_counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([intent, count]) => ({ intent, count })),
+        projects,
+        entities: Object.entries(counts.entity_counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([entity, count]) => ({ entity, count })),
+        filters: Object.entries(counts.filter_counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([filter, count]) => ({ filter, count })),
+      },
+    };
+  }
+  function presentationPreferences(user) {
+    const output = { currency: null, include_vat: false, language: null };
+    for (const row of db.prepare('SELECT content FROM copilot_memory WHERE user_id=? ORDER BY created_at DESC,id DESC').all(user.id)) {
+      const q = normalize(row.content);
+      if (!output.language && /\b(?:answer|reply|respond|speak)\s+in\s+arabic\b|(?:اجب|أجب|رد|تحدث).{0,15}بالعربي/.test(q)) output.language = 'ar';
+      if (!output.language && /\b(?:answer|reply|respond|speak)\s+in\s+english\b|(?:اجب|أجب|رد|تحدث).{0,15}بالانجليزي/.test(q)) output.language = 'en';
+      if (!output.currency && /\baed\b|درهم/.test(q)) output.currency = 'AED';
+      if (/\bvat\b|ضريبة/.test(q)) output.include_vat = true;
+    }
+    return output;
+  }
+  function policyOverrideMemory(content) {
+    const q = normalize(content);
+    return /\b(?:ignore|override|bypass|change|disable|forget|break).{0,50}(?:policy|rules|authorization|access|allowlist|exclusion|salary|payroll|wps|bank|secret|token|password)|\b(?:show|reveal|allow|permit).{0,40}(?:salary|salaries|payroll|wps|iban|bank details?|emirates id|passport|secrets?|tokens?|passwords?)\b/.test(q) ||
+      /(?:تجاهل|تجاوز|غيّر|غير|اعرض|اظهر|اكشف).{0,40}(?:السياسة|الصلاحيات|الرواتب|الراتب|الآيبان|الهوية|كلمة المرور)/.test(q);
+  }
+  function sensitiveMemory(content) {
+    const q = normalize(content);
+    return /\b(?:payroll|salary|salaries|wps|iban|bank details?|bank account|emirates id|identity number|national id|passport|medical information|personal address|personal phone|password|secret|token|credential|webhook|private key|encryption key|totp|setup token|session token|password hash)\b|784-\d{4}-\d{7}-\d|AE\d{2}[A-Z0-9]{19,}|الرواتب|الراتب|أجور|راتب|الآيبان|ايبان|تفاصيل بنكية|بيانات بنكية|رقم الهوية|جواز السفر|الهوية الإماراتية|الهوية الاماراتية|معلومات طبية|العنوان الشخصي|الهاتف الشخصي|كلمة المرور|كلمة سر|مفتاح تشفير|توكن|رمز جلسة/.test(q);
+  }
+  function addMemory(user, content) {
+    const value = String(content || '').trim();
+    if (!value || Array.from(value).length > 300) throw fail(400, 'Memory must contain 1–300 characters');
+    if (policyOverrideMemory(value)) throw fail(422, 'Memory cannot change Copilot policy, exclusions, or authorization');
+    if (sensitiveMemory(value)) throw fail(422, 'Sensitive information cannot be saved in Copilot memory');
+    const scope = projectIds(user), projectId = projectFilter(value, scope);
+    const mentionsProject = /\b(?:project|site)\b|مشروع|موقع/.test(normalize(value));
+    if (mentionsProject && projectId === 0) throw fail(403, 'I could not match that to a project you can access');
+    const count = db.prepare('SELECT COUNT(*) n FROM copilot_memory WHERE user_id=?').get(user.id).n;
+    if (count >= 50) throw fail(409, 'Your memory is full; delete an item before adding another');
+    const result = db.prepare('INSERT INTO copilot_memory(user_id,content,project_id,created_at) VALUES(?,?,?,?)')
+      .run(user.id, value, projectId || null, now());
+    return Number(result.lastInsertRowid);
+  }
+  function incrementCounter(pref, column, key) {
+    if (!COUNTER_KEYS.has(column) || !key || typeof key !== 'string') return;
+    const counts = jsonObject(pref[column]);
+    counts[key] = Math.min(1_000_000, (Number.isSafeInteger(counts[key]) ? counts[key] : 0) + 1);
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 30);
+    db.prepare(`UPDATE copilot_preferences SET ${column}=?,updated_at=? WHERE user_id=?`)
+      .run(JSON.stringify(Object.fromEntries(entries)), now(), pref.user_id);
+  }
+  function learnUsage(user, question, intent, data) {
+    if (!personalizationOn(user.id)) return;
+    const pref = preferenceRow(user.id), q = normalize(question);
+    incrementCounter(pref, 'language_counts', /[\u0600-\u06ff]/.test(question) ? 'ar' : 'en');
+    incrementCounter(pref, 'intent_counts', intent);
+    const entity = ({ project_status: 'project', project_financials: 'project', project_documents: 'document',
+      invoice_summary: 'invoice', procurement_status: 'purchase_order', quotation_summary: 'quotation',
+      contract_summary: 'contract', certificate_summary: 'certificate', approval_queue: 'approval', sync_failures: 'sync' })[intent];
+    if (entity) incrementCounter(pref, 'entity_counts', entity);
+    for (const id of new Set((data || []).map(row => Number(row.project_id || (intent.startsWith('project_') ? row.id : 0))).filter(Number.isSafeInteger).filter(id => id > 0))) {
+      if (projectAccessible(user, id)) incrementCounter(preferenceRow(user.id), 'project_counts', String(id));
+    }
+    for (const filter of ['overdue', 'outstanding', 'open', 'active', 'expiring', 'approval']) {
+      const rx = ({ overdue: /\boverdue|late|past due|متأخر/, outstanding: /\boutstanding|unpaid|receivable|المستحق|غير مدفوع/,
+        open: /\bopen\b|مفتوح/, active: /\bactive\b|نشط/, expiring: /\bexpir|تنتهي|انتهاء/, approval: /\bapproval|pending approval|اعتماد/ })[filter];
+      if (rx.test(q)) incrementCounter(preferenceRow(user.id), 'filter_counts', filter);
+    }
+  }
+
+  const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  function createConversation(user, title, fingerprint) {
+    const id = randomUUID(), at = now();
+    db.prepare('INSERT INTO copilot_conversations(id,user_id,title,created_at,updated_at,auth_fingerprint) VALUES(?,?,?,?,?,?)')
+      .run(id, user.id, String(title || 'New conversation').slice(0, 100), at, at, fingerprint);
+    return { id, user_id: user.id, title: String(title || 'New conversation').slice(0, 100), created_at: at, updated_at: at, auth_fingerprint: fingerprint };
+  }
+  function ownConversation(user, id) {
+    if (typeof id !== 'string' || !CONVERSATION_ID.test(id)) return null;
+    return db.prepare('SELECT * FROM copilot_conversations WHERE id=? AND user_id=?').get(id, user.id) || null;
+  }
+  function messageContext(intent, data, question, prior = null) {
+    const scope = {
+      project_id: prior?.project_id || null,
+      record_ids: [],
+      filters: {},
+    };
+    const q = normalize(question);
+    const filters = ['overdue', 'outstanding', 'open', 'active', 'expiring', 'approval'];
+    for (const filter of filters) {
+      const rx = ({ overdue: /\boverdue|late|past due|متأخر/, outstanding: /\boutstanding|unpaid|receivable|المستحق|غير مدفوع/,
+        open: /\bopen\b|مفتوح/, active: /\bactive\b|نشط/, expiring: /\bexpir|تنتهي|انتهاء/, approval: /\bapproval|pending approval|اعتماد/ })[filter];
+      if (rx.test(q)) scope.filters[filter] = true;
+      else if (prior?.filters?.[filter]) scope.filters[filter] = true;
+    }
+    const records = [], referencedProjects = new Set();
+    for (const row of data || []) {
+      const projectId = Number(row.project_id || (intent === 'project_documents' ? row.entity_id :
+        ['project_status', 'project_financials'].includes(intent) ? row.id : 0));
+      if (Number.isSafeInteger(projectId) && projectId > 0) {
+        referencedProjects.add(projectId);
+        if (!records.some(item => item.kind === 'project' && item.id === projectId)) records.push({ kind: 'project', id: projectId });
+      }
+      const recordId = Number(row.id || row.ref_id || row.entity_id || 0);
+      if (Number.isSafeInteger(recordId) && recordId > 0) {
+        records.push({ kind: intent, id: recordId });
+      }
+    }
+    if (referencedProjects.size === 1) scope.project_id = [...referencedProjects][0];
+    else if (referencedProjects.size > 1) scope.project_id = null;
+    scope.record_ids = records.slice(0, RESULT_LIMIT);
+    return scope;
+  }
+  function saveMessage(user, conversation, question, answer, intent, data, context, fingerprint) {
+    const createdAt = now();
+    let historyId;
+    ctx.tx(() => {
+      const firstMessage = !db.prepare('SELECT 1 FROM copilot_history WHERE user_id=? AND conversation_id=? LIMIT 1')
+        .get(user.id, conversation.id);
+      if (firstMessage && ['New conversation', 'محادثة جديدة'].includes(conversation.title)) {
+        db.prepare('UPDATE copilot_conversations SET title=? WHERE id=? AND user_id=?')
+          .run(String(question).slice(0, 100), conversation.id, user.id);
+      }
+      const result = db.prepare(`INSERT INTO copilot_history(user_id,question,answer,created_at,auth_fingerprint,intent,data_json,context_json,conversation_id)
+        VALUES(?,?,?,?,?,?,?,?,?)`).run(user.id, question, answer, createdAt, fingerprint, intent || null,
+        JSON.stringify(data || []), JSON.stringify(context || {}), conversation.id);
+      historyId = Number(result.lastInsertRowid);
+      db.prepare('UPDATE copilot_conversations SET updated_at=?,auth_fingerprint=? WHERE id=? AND user_id=?')
+        .run(createdAt, fingerprint, conversation.id, user.id);
+    });
+    return historyId;
+  }
+  function parseContext(raw, user) {
+    const value = jsonObject(raw);
+    const projectId = Number.isSafeInteger(+value.project_id) && projectAccessible(user, +value.project_id) ? +value.project_id : null;
+    return {
+      intent: typeof value.intent === 'string' && ['project_status', 'project_financials', 'invoice_summary', 'procurement_status',
+        'quotation_summary', 'contract_summary', 'certificate_summary', 'project_documents', 'approval_queue', 'sync_failures'].includes(value.intent)
+        ? value.intent : null,
+      project_id: projectId,
+      record_ids: Array.isArray(value.record_ids) ? value.record_ids.filter(item => item && typeof item.kind === 'string' &&
+        Number.isSafeInteger(+item.id) && +item.id > 0).slice(0, RESULT_LIMIT).map(item => ({ kind: item.kind.slice(0, 40), id: +item.id })) : [],
+      filters: value.filters && typeof value.filters === 'object' && !Array.isArray(value.filters)
+        ? Object.fromEntries(['overdue', 'outstanding', 'open', 'active', 'expiring', 'approval'].filter(key => value.filters[key] === true).map(key => [key, true])) : {},
+    };
+  }
+  function isGreeting(question) {
+    return /^(?:hi|hello|hey|good morning|good afternoon|good evening|thanks|thank you|what can you do\??|help)\s*[!.؟?]*$/i.test(question.trim()) ||
+      /^(?:مرحبا|مرحباً|اهلا|أهلاً|السلام عليكم|شكرا|شكراً|ماذا تستطيع|ماذا يمكنك|ما الذي يمكنك فعله)\s*[!.؟?]*$/i.test(question.trim());
+  }
+  function memoryCommand(question) {
+    const match = /^(?:remember(?:\s+that)?|please remember(?:\s+that)?|تذكّر(?:\s+أن)?|تذكر(?:\s+أن)?)\s*[:،]?\s*([\s\S]+)$/i.exec(question.trim());
+    if (match) return { action: 'save', content: match[1].trim() };
+    if (/^(?:what do you remember about me\??|what do you remember\??|ماذا تتذكر عني[؟?]?)$/i.test(question.trim())) return { action: 'list' };
     return null;
   }
 
@@ -617,18 +868,115 @@ module.exports = ctx => {
       return send(res, 200, statusPayload(user, true)), true;
     }
 
+    if (action === 'conversations' && req.method === 'GET' && !parts[2]) {
+      pruneHistory();
+      const stale = db.prepare('SELECT id FROM copilot_conversations WHERE user_id=? AND (auth_fingerprint IS NULL OR auth_fingerprint<>?)').all(user.id, fingerprint);
+      for (const row of stale) {
+        db.prepare('DELETE FROM copilot_history WHERE user_id=? AND conversation_id=?').run(user.id, row.id);
+        db.prepare('DELETE FROM copilot_conversations WHERE user_id=? AND id=?').run(user.id, row.id);
+      }
+      return send(res, 200, db.prepare('SELECT id,title,created_at,updated_at FROM copilot_conversations WHERE user_id=? ORDER BY updated_at DESC,id DESC')
+        .all(user.id)), true;
+    }
+    if (action === 'conversations' && req.method === 'POST' && !parts[2]) {
+      if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return send(res, 415, { error: 'Content-Type must be application/json' }), true;
+      const body = await readBoundedJson(req), title = typeof body.title === 'string' ? body.title.trim().slice(0, 100) : '';
+      const conversation = createConversation(user, title || 'New conversation', fingerprint);
+      auditEvent(user.id, 'conversation_create', null, 'completed', 201, { redacted: true });
+      return send(res, 201, { id: conversation.id, title: conversation.title, created_at: conversation.created_at }), true;
+    }
+    if (action === 'conversations' && req.method === 'DELETE' && parts[2]) {
+      const conversation = ownConversation(user, parts[2]);
+      if (!conversation) return send(res, 404, { error: 'Conversation not found' }), true;
+      ctx.tx(() => {
+        db.prepare('DELETE FROM copilot_history WHERE user_id=? AND conversation_id=?').run(user.id, conversation.id);
+        db.prepare('DELETE FROM copilot_conversations WHERE user_id=? AND id=?').run(user.id, conversation.id);
+        auditEvent(user.id, 'conversation_delete', null, 'completed', 200, { redacted: true });
+      });
+      return send(res, 200, { deleted: true }), true;
+    }
+
     if (action === 'history' && req.method === 'GET') {
       pruneHistory();
-      db.prepare('DELETE FROM copilot_history WHERE user_id=? AND (auth_fingerprint IS NULL OR auth_fingerprint<>?)').run(user.id, fingerprint);
-      return send(res, 200, db.prepare('SELECT id,question,answer,created_at FROM copilot_history WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT ?').all(user.id, resultLimit())), true;
+      const stale = db.prepare('SELECT id FROM copilot_conversations WHERE user_id=? AND (auth_fingerprint IS NULL OR auth_fingerprint<>?)').all(user.id, fingerprint);
+      for (const row of stale) {
+        db.prepare('DELETE FROM copilot_history WHERE user_id=? AND conversation_id=?').run(user.id, row.id);
+        db.prepare('DELETE FROM copilot_conversations WHERE user_id=? AND id=?').run(user.id, row.id);
+      }
+      const conversationId = url.searchParams.get('conversation_id');
+      if (conversationId && !ownConversation(user, conversationId)) return send(res, 404, { error: 'Conversation not found' }), true;
+      const rows = conversationId
+        ? db.prepare('SELECT id,question,answer,created_at,intent,data_json FROM copilot_history WHERE user_id=? AND conversation_id=? ORDER BY created_at,id')
+          .all(user.id, conversationId)
+        : db.prepare('SELECT id,question,answer,created_at,intent,data_json,conversation_id FROM copilot_history WHERE user_id=? ORDER BY created_at DESC,id DESC')
+          .all(user.id);
+      return send(res, 200, rows.map(row => ({ id: row.id, question: row.question, answer: row.answer, created_at: row.created_at,
+        intent: row.intent, conversation_id: row.conversation_id || conversationId || null,
+        data: jsonArray(row.data_json) }))), true;
     }
     if (action === 'history' && req.method === 'DELETE') {
       let r;
       ctx.tx(() => {
-        r = db.prepare('DELETE FROM copilot_history WHERE user_id=?').run(user.id);
+        r = db.prepare('DELETE FROM copilot_conversations WHERE user_id=?').run(user.id);
+        db.prepare('DELETE FROM copilot_history WHERE user_id=?').run(user.id);
         auditEvent(user.id, 'history_clear', null, 'completed', 200, { redacted: true });
       });
       return send(res, 200, { cleared: Number(r.changes) }), true;
+    }
+    if (action === 'memory' && req.method === 'GET' && !parts[2]) {
+      return send(res, 200, memoryPayload(user)), true;
+    }
+    if (action === 'memory' && req.method === 'POST') {
+      if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return send(res, 415, { error: 'Content-Type must be application/json' }), true;
+      const body = await readBoundedJson(req), id = addMemory(user, body.content);
+      auditEvent(user.id, 'memory_add', null, 'completed', 201, { redacted: true });
+      return send(res, 201, { id }), true;
+    }
+    if (action === 'memory' && req.method === 'DELETE') {
+      const id = parts[2] ? Number(parts[2]) : null;
+      if (parts[2] && (!Number.isSafeInteger(id) || id < 1)) return send(res, 400, { error: 'Invalid memory item' }), true;
+      const result = id
+        ? db.prepare('DELETE FROM copilot_memory WHERE user_id=? AND id=?').run(user.id, id)
+        : db.prepare('DELETE FROM copilot_memory WHERE user_id=?').run(user.id);
+      if (id && !result.changes) return send(res, 404, { error: 'Memory item not found' }), true;
+      auditEvent(user.id, id ? 'memory_delete' : 'memory_clear', null, 'completed', 200, { redacted: true });
+      return send(res, 200, { deleted: Number(result.changes) }), true;
+    }
+    if (action === 'personalization' && req.method === 'POST') {
+      if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return send(res, 415, { error: 'Content-Type must be application/json' }), true;
+      const body = await readBoundedJson(req);
+      if (typeof body.enabled !== 'boolean') return send(res, 400, { error: 'enabled must be a boolean' }), true;
+      preferenceRow(user.id);
+      db.prepare('UPDATE copilot_preferences SET personalization_enabled=?,updated_at=? WHERE user_id=?')
+        .run(body.enabled && PERSONALIZATION_DEFAULT ? 1 : 0, now(), user.id);
+      auditEvent(user.id, 'personalization_toggle', null, body.enabled ? 'enabled' : 'disabled', 200, { redacted: true });
+      return send(res, 200, { enabled: personalizationOn(user.id) }), true;
+    }
+    if (action === 'preferences' && req.method === 'DELETE') {
+      preferenceRow(user.id);
+      db.prepare(`UPDATE copilot_preferences SET language_counts='{}',intent_counts='{}',project_counts='{}',
+        entity_counts='{}',filter_counts='{}',updated_at=? WHERE user_id=?`).run(now(), user.id);
+      auditEvent(user.id, 'preferences_reset', null, 'completed', 200, { redacted: true });
+      return send(res, 200, { reset: true }), true;
+    }
+    if (action === 'notice' && req.method === 'POST') {
+      preferenceRow(user.id);
+      db.prepare('UPDATE copilot_preferences SET notice_seen=1,updated_at=? WHERE user_id=?').run(now(), user.id);
+      return send(res, 200, { seen: true }), true;
+    }
+    if (action === 'export' && req.method === 'GET') {
+      pruneHistory();
+      const conversations = db.prepare('SELECT id,title,created_at,updated_at FROM copilot_conversations WHERE user_id=? ORDER BY created_at,id')
+        .all(user.id);
+      const messages = db.prepare(`SELECT id,conversation_id,question,answer,intent,data_json,created_at FROM copilot_history
+        WHERE user_id=? ORDER BY created_at,id`).all(user.id).map(row => {
+        let data = [];
+        try { const parsed = JSON.parse(row.data_json || '[]'); if (Array.isArray(parsed)) data = parsed; } catch {}
+        return { ...row, data_json: undefined, data };
+      });
+      const feedback = db.prepare(`SELECT f.history_id,f.rating,f.reason,f.created_at FROM copilot_feedback f
+        JOIN copilot_history h ON h.id=f.history_id WHERE f.user_id=? ORDER BY f.created_at,h.id`).all(user.id);
+      return send(res, 200, { conversations, messages, feedback, ...memoryPayload(user) }), true;
     }
     if (action === 'feedback' && req.method === 'POST') {
       if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return send(res, 415, { error: 'Content-Type must be application/json' }), true;
@@ -660,18 +1008,124 @@ module.exports = ctx => {
       if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) throw fail(415, 'Content-Type must be application/json');
       const body = await readBoundedJson(req), question = typeof body.question === 'string' ? body.question.trim() : '';
       if (!question || Array.from(question).length > QUESTION_LIMIT) throw fail(400, 'Question must contain 1–1000 characters');
+      let conversation = body.conversation_id ? ownConversation(user, body.conversation_id) : null;
+      if (body.conversation_id && !conversation) throw fail(404, 'Conversation not found');
+      if (!conversation) conversation = createConversation(user, question.slice(0, 100), fingerprint);
+      let previous = null;
+      if (conversation.auth_fingerprint !== fingerprint) {
+        db.prepare('DELETE FROM copilot_history WHERE user_id=? AND conversation_id=?').run(user.id, conversation.id);
+        db.prepare('UPDATE copilot_conversations SET auth_fingerprint=? WHERE user_id=? AND id=?').run(fingerprint, user.id, conversation.id);
+        conversation.auth_fingerprint = fingerprint;
+      } else {
+        const last = db.prepare('SELECT context_json FROM copilot_history WHERE user_id=? AND conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 1')
+          .get(user.id, conversation.id);
+        if (last) previous = parseContext(last.context_json, user);
+      }
+      const command = memoryCommand(question);
+      if (unsafeQuestion(question)) throw fail(422, 'That topic is not available in Copilot. Ask about an authorized project, invoice, procurement, contract, document, approval, or sync status instead.');
+      if (command?.action === 'save') {
+        addMemory(user, command.content);
+        const answer = /[\u0600-\u06ff]/.test(question) ? 'تم حفظ المعلومة في ذاكرتك الشخصية. يمكنك عرضها أو حذفها من «ذاكرتي».' : 'Saved to your private memory. View or delete it in “My memory”.';
+        const context = previous || {};
+        const historyId = saveMessage(user, conversation, question, answer, null, [], context, fingerprint);
+        auditEvent(user.id, 'memory_add', null, 'completed', 200, { redacted: true });
+        return send(res, 200, { id: historyId, conversation_id: conversation.id, answer, data: [], created_at: now(), intent: null }), true;
+      }
+      if (command?.action === 'list') {
+        const memories = memoryPayload(user).items;
+        const answer = memories.length
+          ? (/[\u0600-\u06ff]/.test(question) ? `هذه المعلومات المحفوظة لك فقط:\n${memories.map(item => `• ${item.content}`).join('\n')}` : `These are your private saved items:\n${memories.map(item => `• ${item.content}`).join('\n')}`)
+          : (/[\u0600-\u06ff]/.test(question) ? 'لا توجد معلومات محفوظة في ذاكرتك بعد.' : 'You have no saved memory items yet.');
+        const historyId = saveMessage(user, conversation, question, answer, null, [], previous || {}, fingerprint);
+        return send(res, 200, { id: historyId, conversation_id: conversation.id, answer, data: [], created_at: now(), intent: null }), true;
+      }
+      if (isGreeting(question)) {
+        const answer = /[\u0600-\u06ff]/.test(question)
+          ? 'أستطيع عرض حالة المشاريع وملخصاتها المالية المصرح بها، والفواتير، والمشتريات وأوامر الشراء، والعروض، والعقود، والمستندات، والاعتمادات، وحالة مزامنة SharePoint. لا أنفذ أي إجراء.'
+          : 'I can summarize authorized project status and financials, invoices, procurement and POs, quotations, contracts, documents, approvals, and SharePoint sync status. I cannot take actions.';
+        const historyId = saveMessage(user, conversation, question, answer, 'help', [], previous || {}, fingerprint);
+        return send(res, 200, { id: historyId, conversation_id: conversation.id, intent: 'help', answer, data: [], created_at: now() }), true;
+      }
       intent = route(question);
-      if (!intent) throw fail(422, 'Supported topics: project status and financial summaries, invoices, procurement, quotations, subcontracts, subcontract certificates, project documents, approvals, and SharePoint sync status');
+      const q = normalize(question);
+      const followup = /^(?:and|also|for|only|which|what about|filter|that|those|them|it)\b|^(?:و|وكمان|وأيضا|ايضا|بالنسبة|لـ|فقط|ما حال|أي منها)|^(?:show|list|find)\b.*\b(?:for|about)\s+(?:it|that|this|them|those)\b|^(?:اعرض|أظهر|اظهر)\b.*(?:له|لها|لهم|ذلك|هذا|هذه)/i.test(q);
+      const refersToSingle = /^(?:(?:and\s+)?(?:for|about)\s+(?:it|that|this|them|those)\b|(?:show|list|find|open|explain|summarize)\b.*\b(?:for|about)\s+(?:it|that|this|them|those)\b|which one\b|(?:له|لها|لهم|ذلك|هذا|هذه|ايهم|أيهم)\b)/i.test(q);
+      if (refersToSingle && (!previous?.intent || (!previous.project_id && previous.record_ids.length > 1))) {
+        const answer = /[\u0600-\u06ff]/.test(question) ? 'أي سجل تقصد؟ اذكر اسم المشروع أو رقمه.' : 'Which record do you mean? Please specify the project or record number.';
+        const historyId = saveMessage(user, conversation, question, answer, 'clarification', [], previous || {}, fingerprint);
+        return send(res, 200, { id: historyId, conversation_id: conversation.id, intent: 'clarification', clarification: true, answer, data: [], created_at: now() }), true;
+      }
+      if (!intent && followup && previous?.intent) {
+        intent = previous.intent;
+      }
+      if (!intent) {
+        if (followup && previous) {
+          const answer = /[\u0600-\u06ff]/.test(question) ? 'ما السؤال أو المشروع الذي تريد متابعته؟ اذكره لأتحقق من الصلاحيات قبل البحث.' : 'Which question or project should I follow up on? Please specify it so I can check access before searching.';
+          const historyId = saveMessage(user, conversation, question, answer, 'clarification', [], {}, fingerprint);
+          return send(res, 200, { id: historyId, conversation_id: conversation.id, intent: 'clarification', clarification: true, answer, data: [], created_at: now() }), true;
+        }
+        throw fail(422, 'Supported topics: project status and financial summaries, invoices, procurement, quotations, subcontracts, subcontract certificates, project documents, approvals, and SharePoint sync status');
+      }
+      let effectiveQuestion = question, assumedProject = null, assumedFilter = null;
+      let explicitProject = projectFilter(question, projectIds(user));
+      let contextualProject = previous?.project_id && projectAccessible(user, previous.project_id) ? previous.project_id : null;
+      if (explicitProject == null && !contextualProject && personalizationOn(user.id)) {
+        const pref = preferenceRow(user.id), projects = jsonObject(pref.project_counts);
+        const top = Object.entries(projects).sort((a, b) => b[1] - a[1]).find(([id]) => projectAccessible(user, +id));
+        if (top) contextualProject = +top[0];
+        if (!contextualProject) {
+          contextualProject = db.prepare('SELECT project_id FROM copilot_memory WHERE user_id=? AND project_id IS NOT NULL ORDER BY created_at DESC,id DESC')
+            .all(user.id).map(row => +row.project_id).find(id => projectAccessible(user, id)) || null;
+        }
+      }
+      if (explicitProject == null && contextualProject) {
+        const row = db.prepare('SELECT name FROM projects WHERE id=?').get(contextualProject);
+        if (row?.name) {
+          effectiveQuestion = `${question} project ${row.name}`;
+          if (!previous?.project_id) assumedProject = row.name;
+        }
+      }
+      const filterForIntent = {
+        project_status: ['active'], invoice_summary: ['outstanding'],
+        procurement_status: ['overdue', 'open', 'approval'],
+        quotation_summary: ['open'], contract_summary: ['expiring'],
+      }[intent] || [];
+      const filterTerms = { overdue: 'overdue', outstanding: 'outstanding', open: 'open', active: 'active', expiring: 'expiring', approval: 'pending approval' };
+      const explicitFilters = {
+        overdue: /\boverdue|late|past due|متأخر/, outstanding: /\boutstanding|unpaid|receivable|المستحق|غير مدفوع/,
+        open: /\bopen\b|مفتوح/, active: /\bactive\b|نشط/, expiring: /\bexpir|تنتهي|انتهاء/, approval: /\bapproval|pending approval|اعتماد/,
+      };
+      const questionWithProject = normalize(effectiveQuestion);
+      if (personalizationOn(user.id) && !filterForIntent.some(filter => explicitFilters[filter].test(questionWithProject)) &&
+          !filterForIntent.some(filter => previous?.intent === intent && previous.filters[filter])) {
+        const preferred = Object.entries(jsonObject(preferenceRow(user.id).filter_counts))
+          .sort((a, b) => b[1] - a[1]).find(([filter]) => filterForIntent.includes(filter));
+        if (preferred) {
+          assumedFilter = preferred[0];
+          effectiveQuestion += ` ${filterTerms[assumedFilter]}`;
+        }
+      }
+      if (previous?.intent === intent && followup) {
+        for (const [filter, term] of Object.entries(filterTerms)) {
+          if (previous.filters[filter] && !new RegExp(`\\b${term.replace(' ', '\\s+')}\\b`).test(normalize(effectiveQuestion))) {
+            effectiveQuestion += ` ${term}`;
+          }
+        }
+      }
       const tools = {
         project_status: projectStatus, project_financials: projectFinancials, invoice_summary: invoiceSummary,
         procurement_status: procurementStatus, quotation_summary: quotationSummary, contract_summary: contractSummary,
         certificate_summary: certificateSummary, project_documents: projectDocuments,
         approval_queue: approvalQueue, sync_failures: syncFailures,
       };
-      const data = tools[intent](user, question);
+      const data = tools[intent](user, effectiveQuestion);
       authorizedCount = data.length; redacted = true;
       pruneHistory();
-      const answer = data.length ? await provider.phrase(question, intent, data)
+      const pref = preferenceRow(user.id), formatting = presentationPreferences(user);
+      const learnedLanguage = personalizationOn(user.id)
+        ? Object.entries(jsonObject(pref.language_counts)).sort((a, b) => b[1] - a[1])[0]?.[0] : null;
+      const language = formatting.language || learnedLanguage || (/[\u0600-\u06ff]/.test(question) ? 'ar' : 'en');
+      let answer = data.length ? await provider.phrase(effectiveQuestion, intent, data, language, formatting)
         : /[\u0600-\u06ff]/.test(question) ? 'لم يتم العثور على نتائج ERP مسموح بها لهذا السؤال.' : 'No matching authorized ERP records were found.';
       const latestUser = currentUser(user.id);
       if (!latestUser || latestUser.disabled) {
@@ -683,15 +1137,17 @@ module.exports = ctx => {
         return send(res, 403, { error: 'Copilot is not enabled for this ERP user' }), true;
       }
       if (authFingerprint(latestUser) !== fingerprint) throw fail(403, 'ERP permissions changed during this request; please try again');
-      const created_at = now();
-      let historyId;
-      ctx.tx(() => {
-        const result = db.prepare('INSERT INTO copilot_history(user_id,question,answer,created_at,auth_fingerprint) VALUES(?,?,?,?,?)')
-          .run(user.id, question, answer, created_at, fingerprint);
-        historyId = Number(result.lastInsertRowid);
-        auditEvent(user.id, 'ask', intent, 'completed', 200, { authorizedCount, redacted, durationMs: now() - started });
-      });
-      return send(res, 200, { id: historyId, intent, answer, data, created_at });
+      const context = messageContext(intent, data, effectiveQuestion, { ...previous, project_id: contextualProject });
+      context.intent = intent;
+      learnUsage(user, question, intent, data);
+      if (assumedFilter) {
+        const label = { overdue: 'overdue', outstanding: 'outstanding', open: 'open', active: 'active', expiring: 'expiring', approval: 'pending approval' }[assumedFilter];
+        answer = language === 'ar' ? `بافتراض التصفية: ${label}. ${answer}` : `Assuming filter: ${label}. ${answer}`;
+      }
+      if (assumedProject) answer = language === 'ar' ? `بافتراض مشروع ${assumedProject}: ${answer}` : `Assuming project ${assumedProject}: ${answer}`;
+      const created_at = now(), historyId = saveMessage(user, conversation, question, answer, intent, data, context, fingerprint);
+      auditEvent(user.id, 'ask', intent, 'completed', 200, { authorizedCount, redacted, durationMs: now() - started });
+      return send(res, 200, { id: historyId, intent, answer, data, created_at, conversation_id: conversation.id });
     } catch (e) {
       const status = Number.isInteger(e.status) ? e.status : 500;
       const outcome = status === 422 ? 'unsupported' : status === 429 ? 'rate_limited' : [401, 403].includes(status) ? 'denied' : 'failed';

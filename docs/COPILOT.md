@@ -2,6 +2,8 @@
 
 The Copilot feature is an opt-in, read-only assistant. It is disabled by default and does not change ERP accounting, payroll, VAT, invoice, approval, or Microsoft 365 business flows. Do not enable it against production data or connect a production AI service until Trigon has approved the open decisions below.
 
+See the [Copilot threat model](COPILOT-THREAT-MODEL.md) for assets, trust boundaries, mitigations, privacy controls, and residual risks.
+
 ## What is implemented
 
 - The English/Arabic UI is available only to an authenticated user who is allowed by the server.
@@ -21,12 +23,26 @@ The Copilot feature is an opt-in, read-only assistant. It is disabled by default
 |---|---|
 | `GET /api/copilot/status` | Safe limits and provider metadata; admin-only operational aggregate details, including anonymous rate-limit counts |
 | `POST /api/copilot/ask` | Deterministically select one authorized read-only tool and phrase its projected results |
-| `GET /api/copilot/history` | Current user's recent question/answer history |
-| `DELETE /api/copilot/history` | Clear only the current user's history |
+| `GET/POST /api/copilot/conversations` | List or create the current user's server-side conversations |
+| `DELETE /api/copilot/conversations/{id}` | Delete one conversation owned by the current user |
+| `GET /api/copilot/history?conversation_id={id}` | Load one owned conversation; without an ID, list the user's recent history |
+| `DELETE /api/copilot/history` | Clear only the current user's conversations and history |
+| `GET/POST/DELETE /api/copilot/memory` | Read, add, or clear the current user's explicit memory; DELETE may target one item |
+| `POST /api/copilot/personalization` | Enable or disable only the current user's learned preferences |
+| `DELETE /api/copilot/preferences` | Reset only the current user's learned counters |
+| `GET /api/copilot/export` | Export only the current user's history, feedback, memory, and preferences |
 | `POST /api/copilot/feedback` | Store a helpful/not-helpful rating and optional fixed reason code for the user's own history item; no free-text feedback |
 | `GET /api/copilot/audit` | Admin-only structured events; no prompts, answers, document content, or provider errors |
 
-History is pruned after the configured retention period. History, feedback and Copilot audit rows are removed from sanitized backup copies, never from the live database.
+History and conversations are pruned after the configured retention period. History, feedback, audit, memory, and learned preferences are removed from sanitized backup copies, never from the live database.
+
+## Conversation continuity, memory, and personalization
+
+Conversations persist server-side per ERP user across sessions/devices for `COPILOT_HISTORY_RETENTION_DAYS` (default 90). Users can delete one conversation or clear all history and export their own Copilot data. Every message and follow-up checks the current active user, feature allowlist, ERP role ACL, and project assignment again. Context is limited to the last intent, bounded filters, and referenced entity/project IDs; prior answers and data are not an authorization source. A role/project access change invalidates prior thread contents before further handling.
+
+Users may explicitly save up to 50 memory items, each no longer than 300 characters, by saying “remember that …” / “تذكّر أن …”. **My memory / ذاكرتي** lists and deletes notes and transparent learned preferences. “What do you remember about me?” lists only the signed-in user's notes. Sensitive payroll/salary, identity, bank, credential, token, or secret content and policy-override instructions are rejected. Raw memory text is never sent to the provider.
+
+With `COPILOT_PERSONALIZATION_ENABLED=1` (default), deterministic per-user aggregates may rank suggested prompts, select and disclose an accessible default project/filter, and choose the answer language. Users may disable personalization or reset the aggregates. It never grants access; inaccessible project references are ignored and purged. There are no activity timelines, productivity/performance scores, personal-trait or mood inferences, or HR/payroll uses. A bilingual first-use notice explains what is remembered and how to view/delete it. Memory/preferences/conversations are part of the owner's export, excluded from sanitized backups, and deleted when the ERP account is disabled. Admins cannot inspect another user's conversations, memory, or preferences.
 
 ## Identity and authorization
 
@@ -45,7 +61,8 @@ The shipped `.env.example` keeps the feature and Entra path disabled. Use only a
 | `COPILOT_USER_LIMIT` | 20 | Integer 1–1000 queries per ERP user per minute |
 | `COPILOT_GLOBAL_LIMIT` | 200 | Integer 1–10000 queries per server process per minute |
 | `COPILOT_TIMEOUT_MS` | 30000 | Integer 1000–30000 |
-| `COPILOT_HISTORY_RETENTION_DAYS` | 30 | Integer 1–3650 |
+| `COPILOT_HISTORY_RETENTION_DAYS` | 90 | Integer 1–3650 |
+| `COPILOT_PERSONALIZATION_ENABLED` | `1` | `0` disables learned personalization globally; users can also disable it for themselves |
 | `COPILOT_PROVIDER` | `azure-openai` | `azure-openai`, `azure-foundry`, or test-only `mock` |
 | `COPILOT_AZURE_ENDPOINT` | unset | HTTPS `*.openai.azure.com` resource endpoint; local loopback HTTP only in tests |
 | `COPILOT_AZURE_DEPLOYMENT` | unset | Deployment name |
@@ -102,12 +119,26 @@ The updater downloads the configured default-branch head, so merging PR #21 upda
 |---|---|
 | `GET /api/copilot/status` | حدود ومعلومات مزوّد آمنة؛ حالة تشغيلية مجمعة للمسؤول فقط |
 | `POST /api/copilot/ask` | اختيار أداة قراءة فقط بشكل حتمي وصياغة نتيجتها المسموح بها |
-| `GET /api/copilot/history` | سجل أسئلة وأجوبة المستخدم الحالي |
-| `DELETE /api/copilot/history` | مسح سجل المستخدم الحالي فقط |
+| `GET/POST /api/copilot/conversations` | عرض محادثات المستخدم الحالي أو إنشاء محادثة |
+| `DELETE /api/copilot/conversations/{id}` | حذف محادثة يملكها المستخدم الحالي |
+| `GET /api/copilot/history?conversation_id={id}` | تحميل محادثة المستخدم؛ وبدون المعرّف يعرض سجله الأخير |
+| `DELETE /api/copilot/history` | مسح محادثات وسجل المستخدم الحالي فقط |
+| `GET/POST/DELETE /api/copilot/memory` | قراءة أو إضافة أو مسح ذاكرة المستخدم فقط؛ ويمكن حذف عنصر واحد |
+| `POST /api/copilot/personalization` | تشغيل أو إيقاف تفضيلات المستخدم المتعلّمة |
+| `DELETE /api/copilot/preferences` | إعادة ضبط مؤشرات الاستخدام للمستخدم فقط |
+| `GET /api/copilot/export` | تصدير سجل المستخدم وتقييماته وذاكرته وتفضيلاته فقط |
 | `POST /api/copilot/feedback` | تقييم مفيد/غير مفيد ورمز سبب ثابت لسجل المستخدم نفسه، دون نص حر |
 | `GET /api/copilot/audit` | أحداث منظمة للمسؤول فقط، بلا أسئلة أو إجابات أو محتوى مستندات أو أخطاء مزوّد |
 
-يُحذف السجل بعد مدة الاحتفاظ المضبوطة. لا تُحفظ بيانات السجل أو التقييم أو تدقيق Copilot في نسخ قاعدة البيانات المنقّحة؛ ولا تُحذف من قاعدة البيانات الحية بسبب النسخ الاحتياطي.
+تُحذف المحادثات والسجل بعد مدة الاحتفاظ المضبوطة. لا تُحفظ بيانات السجل أو التقييم أو التدقيق أو الذاكرة أو التفضيلات في نسخ قاعدة البيانات المنقّحة؛ ولا تُحذف من قاعدة البيانات الحية بسبب النسخ الاحتياطي.
+
+## استمرارية المحادثة والذاكرة والتخصيص
+
+تُحفظ المحادثات على الخادم لكل مستخدم ERP، وتبقى متاحة عبر الجلسات والأجهزة لمدة `COPILOT_HISTORY_RETENTION_DAYS` (الافتراضي 90 يوماً). يستطيع المستخدم حذف محادثة واحدة أو مسح كل سجله وتصدير بيانات Copilot الخاصة به. يعيد كل سؤال ومتابعة فحص هوية المستخدم النشطة وقائمة السماح وصلاحية ERP وتعيين المشروع الحالي. يقتصر السياق على النية الأخيرة والفلاتر المحدودة ومعرّفات السجلات والمشروع؛ ولا تُعد الإجابات أو البيانات السابقة دليلاً للصلاحية. تغيّر الدور أو الوصول للمشروع يبطل محتوى المحادثة السابق قبل المتابعة.
+
+يمكن للمستخدم حفظ 50 ملاحظة صريحة كحد أقصى، لا تتجاوز كل منها 300 حرف، بعبارة «تذكّر أن …» أو “remember that …”. تعرض **ذاكرتي / My memory** الملاحظات والتفضيلات المتعلّمة بوضوح. ويعرض سؤال «ماذا تتذكر عني؟» ملاحظات صاحب الحساب فقط. تُرفض بيانات الرواتب والهوية والبنوك والاعتمادات والرموز والأسرار الحساسة، كما تُرفض محاولات تغيير سياسة Copilot. لا يُرسل نص الذاكرة الخام إلى مزوّد الذكاء الاصطناعي.
+
+عند `COPILOT_PERSONALIZATION_ENABLED=1` (الافتراضي)، يمكن للمجاميع الحتمية الخاصة بالمستخدم ترتيب الاقتراحات وتحديد مشروع أو فلتر افتراضي مسموح به مع الإفصاح عنه واختيار لغة الإجابة. يستطيع المستخدم إيقاف التخصيص أو إعادة ضبط المجاميع. لا تمنح الذاكرة صلاحية؛ تُهمل وتُحذف تفضيلات المشاريع التي لم يعد المستخدم يصل إليها. لا توجد جداول نشاط أو درجات إنتاجية أو استنتاجات عن السمات أو المزاج أو استخدام للموارد البشرية والرواتب. يظهر إشعار عربي/إنجليزي يشرح ما يُحفظ وكيفية عرضه أو حذفه. تدخل الذاكرة والتفضيلات والمحادثات في تصدير صاحبها، وتُستبعد من النسخ المنقّحة، وتحذف عند تعطيل حساب ERP. لا يستطيع المسؤول الاطلاع على محادثات أو ذاكرة أو تفضيلات مستخدم آخر.
 
 ## الهوية والصلاحيات
 
@@ -126,7 +157,8 @@ The updater downloads the configured default-branch head, so merging PR #21 upda
 | `COPILOT_USER_LIMIT` | 20 | من 1 إلى 1000 استعلام لكل مستخدم بالدقيقة |
 | `COPILOT_GLOBAL_LIMIT` | 200 | من 1 إلى 10000 استعلام لكل عملية خادم بالدقيقة |
 | `COPILOT_TIMEOUT_MS` | 30000 | عدد صحيح من 1000 إلى 30000 |
-| `COPILOT_HISTORY_RETENTION_DAYS` | 30 | عدد صحيح من 1 إلى 3650 |
+| `COPILOT_HISTORY_RETENTION_DAYS` | 90 | عدد صحيح من 1 إلى 3650 |
+| `COPILOT_PERSONALIZATION_ENABLED` | `1` | `0` يوقف التخصيص المتعلّم على الخادم؛ ويمكن للمستخدم إيقافه لحسابه |
 | `COPILOT_PROVIDER` | `azure-openai` | `azure-openai` أو `azure-foundry` أو `mock` للاختبارات فقط |
 | `COPILOT_AZURE_ENDPOINT` | غير مضبوط | نقطة Azure OpenAI من نوع `*.openai.azure.com` عبر HTTPS؛ HTTP محلي للاختبارات فقط |
 | `COPILOT_AZURE_DEPLOYMENT` | غير مضبوط | اسم النشر |

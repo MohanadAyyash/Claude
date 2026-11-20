@@ -44,6 +44,8 @@ paths:
         tools or access unprojected ERP fields. Questions are limited to 1000 characters and
         request bodies to 16 KiB. Each tool returns at most 50 records. ERP references and
         validated SharePoint links are returned to the ERP UI only and are withheld from the provider.
+        An optional conversation_id keeps a private server-side thread; every follow-up reruns
+        active-user, role ACL, project-scope, and feature-allowlist checks.
       requestBody:
         required: true
         content:
@@ -56,6 +58,10 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 1000
+                conversation_id:
+                  type: string
+                  format: uuid
+                  description: Optional conversation owned by the current ERP user.
       responses:
         '200':
           description: Phrased answer and authorized, tool-projected structured results.
@@ -87,10 +93,208 @@ paths:
     get:
       tags: [Copilot]
       operationId: getCopilotHistory
-      summary: List the current user's own recent history
+      summary: List the current user's own history or load one conversation
+      parameters:
+        - in: query
+          name: conversation_id
+          schema:
+            type: string
+            format: uuid
+          description: Optional conversation ID; only conversations owned by the current user are returned.
       responses:
         '200':
           description: At most 50 history entries, scoped to the current ERP user.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+  /copilot/conversations:
+    get:
+      tags: [Copilot]
+      operationId: listCopilotConversations
+      summary: List the current user's own conversations
+      responses:
+        '200':
+          description: Current user's conversations, newest first.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+    post:
+      tags: [Copilot]
+      operationId: createCopilotConversation
+      summary: Create a private conversation for the current ERP user
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  maxLength: 100
+      responses:
+        '201':
+          description: New conversation owned by the current ERP user.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+  /copilot/conversations/{conversation_id}:
+    delete:
+      tags: [Copilot]
+      operationId: deleteCopilotConversation
+      summary: Delete one conversation belonging to the current user
+      parameters:
+        - in: path
+          name: conversation_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Conversation and its messages deleted.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+        '404':
+          description: Conversation is not owned by this user or no longer exists.
+  /copilot/memory:
+    get:
+      tags: [Copilot]
+      operationId: getCopilotMemory
+      summary: Read the current user's own notes and transparent preferences
+      responses:
+        '200':
+          description: Private notes and aggregate preferences for the current ERP user only.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotMemory'
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+    post:
+      tags: [Copilot]
+      operationId: addCopilotMemory
+      summary: Add one explicit private memory note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 300
+      responses:
+        '201':
+          description: Note saved for the current user.
+        '400':
+          description: Empty or overlong memory item.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User or referenced project is not authorized.
+        '422':
+          description: Sensitive content or policy-override instruction is rejected.
+        '409':
+          description: The user's 50-item memory limit has been reached.
+    delete:
+      tags: [Copilot]
+      operationId: clearCopilotMemory
+      summary: Delete all explicit memory notes belonging to the current user
+      responses:
+        '200':
+          description: Number of notes deleted.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+  /copilot/memory/{memory_id}:
+    delete:
+      tags: [Copilot]
+      operationId: deleteCopilotMemoryItem
+      summary: Delete one explicit memory item owned by the current user
+      parameters:
+        - in: path
+          name: memory_id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Note deleted.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+        '404':
+          description: Note is not owned by this user or no longer exists.
+  /copilot/personalization:
+    post:
+      tags: [Copilot]
+      operationId: setCopilotPersonalization
+      summary: Set the current user's personalization toggle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Current user's personalization state.
+        '400':
+          description: enabled must be a boolean.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+  /copilot/preferences:
+    delete:
+      tags: [Copilot]
+      operationId: resetCopilotPreferences
+      summary: Reset the current user's learned preference aggregates
+      responses:
+        '200':
+          description: Preferences reset.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+  /copilot/export:
+    get:
+      tags: [Copilot]
+      operationId: exportCopilotData
+      summary: Export the current user's own Copilot data
+      responses:
+        '200':
+          description: User-owned conversations, messages, feedback, memory, and preferences.
+        '401':
+          description: No active ERP identity.
+        '403':
+          description: User is not on the feature allowlist.
+  /copilot/notice:
+    post:
+      tags: [Copilot]
+      operationId: acknowledgeCopilotPrivacyNotice
+      summary: Acknowledge the first-use privacy notice for the current user
+      responses:
+        '200':
+          description: Notice acknowledged.
         '401':
           description: No active ERP identity.
         '403':
@@ -195,6 +399,7 @@ components:
           maximum: 50
         history_retention_days:
           type: integer
+          default: 90
         provider_configured:
           type: boolean
         provider:
@@ -263,16 +468,21 @@ components:
           type: [integer, 'null']
     CopilotAnswer:
       type: object
-      required: [id, intent, answer, data, created_at]
+      required: [id, answer, data, created_at, conversation_id]
       properties:
         id:
           type: integer
         intent:
-          type: string
-          enum: [project_status, project_financials, invoice_summary, procurement_status, quotation_summary, contract_summary, certificate_summary, project_documents, approval_queue, sync_failures]
+          type: [string, 'null']
+          enum: [project_status, project_financials, invoice_summary, procurement_status, quotation_summary, contract_summary, certificate_summary, project_documents, approval_queue, sync_failures, help, clarification, null]
         answer:
           type: string
           maxLength: 4000
+        conversation_id:
+          type: string
+          format: uuid
+        clarification:
+          type: boolean
         data:
           type: array
           maxItems: 50
@@ -282,3 +492,48 @@ components:
         created_at:
           type: integer
           format: int64
+    CopilotMemory:
+      type: object
+      required: [items, personalization_enabled, first_use_notice, preferences]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [id, content, created_at, project_id]
+            properties:
+              id:
+                type: integer
+              content:
+                type: string
+                maxLength: 300
+                description: Untrusted private note; never used as policy or sent verbatim to the provider.
+              created_at:
+                type: integer
+                format: int64
+              project_id:
+                type: [integer, 'null']
+        personalization_enabled:
+          type: boolean
+        first_use_notice:
+          type: boolean
+        preferences:
+          type: object
+          description: Transparent, per-user aggregate preferences only; never grant access.
+          properties:
+            language:
+              type: [string, 'null']
+              enum: [ar, en, null]
+            intents:
+              type: array
+              maxItems: 5
+            projects:
+              type: array
+              maxItems: 5
+            entities:
+              type: array
+              maxItems: 5
+            filters:
+              type: array
+              maxItems: 5

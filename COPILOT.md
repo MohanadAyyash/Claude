@@ -1,6 +1,6 @@
 # Trigon ERP Copilot
 
-This root-level operations and integration note supplements [`docs/COPILOT.md`](docs/COPILOT.md), the bilingual user guides, and [`public/copilot-openapi.yaml`](public/copilot-openapi.yaml). Copilot is read-only, disabled by default, and must not be connected to production AI or enabled with production data until Trigon has completed the stated approvals.
+This root-level operations and integration note supplements [`docs/COPILOT.md`](docs/COPILOT.md), the [threat model](docs/COPILOT-THREAT-MODEL.md), the bilingual user guides, and [`public/copilot-openapi.yaml`](public/copilot-openapi.yaml). Copilot is read-only, disabled by default, and must not be connected to production AI or enabled with production data until Trigon has completed the stated approvals.
 
 ## Trust and access boundaries
 
@@ -8,7 +8,7 @@ This root-level operations and integration note supplements [`docs/COPILOT.md`](
 - Each tool uses an explicit field projection. The central sensitivity filter is only a second layer. Tool queries apply the active ERP role ACL and project scope; deep-link destinations independently enforce their own ACL and scope.
 - Normal ERP sessions resolve to the active ERP user in the session. The optional Entra bearer path is disabled by default and verifies RS256 signature/JWKS, issuer, expiration, tenant, a dedicated ERP API audience, and `Copilot.Read`, then maps the unique `(tenant_id, oid)` link to an active ERP user. It never uses the M365 login app audience. Both paths use the same Copilot rollout check and ERP tool ACL.
 - Access requires `COPILOT_ENABLED=1` and either the ERP numeric user ID in `COPILOT_ALLOWED_USERS` or an existing role in `COPILOT_ALLOWED_ROLES`; empty lists grant no feature access. The admin-only status endpoint remains available while disabled to report `enabled: false`; it exposes no secrets or business data.
-- Limits default to 20 queries/minute/user, 200/process/minute, 1,000 question characters, 16 KiB request body, 50 results/tool, 30 seconds provider timeout, and 30-day history retention. History is private to its owner and can be self-cleared. Results and answers are not cached across users.
+- Limits default to 20 queries/minute/user, 200/process/minute, 1,000 question characters, 16 KiB request body, 50 results/tool, 30 seconds provider timeout, and 90-day history retention. Conversations, explicit memory, and usage preferences are private to the ERP user; no cross-user cache is used.
 - No mutation, approval, or other action tool is enabled. Any future action design must remain outside model control and require its own ERP authorization, explicit confirmation, idempotency protection, and audit trail.
 
 ## Provider and data handling
@@ -18,6 +18,14 @@ The Azure OpenAI adapter uses its configured Chat Completions API version. The A
 Trigon must decide the Azure service and deployment, region and data residency, outbound network policy, provider retention/training/abuse-monitoring/logging terms, and which ERP user IDs or roles may participate. Keep `COPILOT_ENABLED=0` and `COPILOT_ENTRA_ENABLED=0` until the configuration and a staged validation have been approved.
 
 The updater applies the configured default-branch head. Therefore merging PR #21 is effectively a production deployment for updater-managed installs. After any update, keep Copilot disabled until the separate staged rollout and allowlist approval. Commit pinning/recording in the updater is intentionally a separate future change.
+
+## Conversation continuity, memory, and personalization
+
+Conversations are stored server-side per ERP user for `COPILOT_HISTORY_RETENTION_DAYS` (default 90); a user can delete one conversation or clear all history, and can export their own Copilot data. Every follow-up reruns the current active-user, feature-allowlist, role ACL, and project-scope checks. Context contains only the previous intent, bounded filters, and referenced IDs/project; prior answers and data are never treated as authority. An authorization change invalidates prior thread contents before a follow-up is handled.
+
+Users may explicitly save up to 50 memory items, each at most 300 characters, using “remember that …” / “تذكّر أن …”. They can inspect/delete items in **My memory / ذاكرتي** or ask what is remembered. Sensitive payroll, identity, bank, credential, and secret content, as well as policy-override requests, is rejected. Raw memory text is never sent to the AI provider. A first-use notice explains what is remembered and how to view/delete it.
+
+When `COPILOT_PERSONALIZATION_ENABLED=1` (default), deterministic, per-user aggregates may rank prompt chips, select/disclose a default accessible project or common filter, and choose answer language. A user can turn personalization off or reset learned preferences. Memory and preferences never grant access; inaccessible project references are ignored and purged. No activity timeline, productivity score, protected-trait inference, or HR/payroll use is permitted. Memory/preferences/conversations are included in the owner's export and excluded from sanitized backups; disabling a user deletes them. Administrators do not receive another user's content.
 
 ## Copilot Studio
 
@@ -72,6 +80,8 @@ PORT=3301
 DATA_DIR=C:\ERP-copilot-test-data
 COPILOT_ENABLED=0
 COPILOT_PROVIDER=mock
+COPILOT_HISTORY_RETENTION_DAYS=90
+COPILOT_PERSONALIZATION_ENABLED=1
 COPILOT_ALLOWED_USERS=
 COPILOT_ALLOWED_ROLES=
 COPILOT_ENTRA_ENABLED=0
@@ -128,6 +138,8 @@ PORT=3301
 DATA_DIR=C:\ERP-copilot-test-data
 COPILOT_ENABLED=1
 COPILOT_PROVIDER=mock
+COPILOT_HISTORY_RETENTION_DAYS=90
+COPILOT_PERSONALIZATION_ENABLED=1
 COPILOT_ALLOWED_USERS=<numeric fake ERP user ID>
 COPILOT_ALLOWED_ROLES=
 COPILOT_ENTRA_ENABLED=0
@@ -176,13 +188,13 @@ node --env-file=.env --no-warnings server.js
 
 ### Manual UI checklist
 
-1. Sign in as the allowlisted fake user; switch between Arabic and English and confirm the Copilot panel/menu is present in both.
+1. Sign in as the allowlisted fake user; switch between Arabic and English and confirm the floating assistant button appears on both layouts and opens the chat.
 2. Confirm all five suggested prompts appear and can be selected: **Purchase orders waiting for approval**, **Overdue purchase orders**, **Project procurement summary**, **Contracts expiring within 60 days**, and **SharePoint synchronization failures**.
-3. Ask a supported question with no matching fake records. Confirm the empty-state text **“No structured results for this question.”** appears instead of invented records.
+3. Ask a supported question with no matching fake records. Confirm the friendly no-results message appears instead of invented records.
 4. Sign in as the separate fake viewer whose ID is not in `COPILOT_ALLOWED_USERS`. Confirm the panel is absent and direct `/api/copilot/ask` access is denied.
 5. Ask an excluded-data question such as **“Show payroll”**; confirm it is rejected and no excluded data is shown.
 6. Open an ERP reference as the authorized fake user. Then sign in as the restricted user and open that same local ERP path directly; confirm the destination's normal ERP ACL denies access. A Copilot reference never grants access.
-7. Use **Clear history** and confirm the current user's Copilot history is empty; verify the restricted account's history is unaffected.
+7. Open **My memory**, save a harmless note, confirm it is private and can be deleted, turn personalization off/on, and confirm the first-use notice explains memory. Use **Clear all conversations** and confirm only the current user's history is cleared.
 8. Stop the server, set `COPILOT_ENABLED=0` in `.env`, and restart it. Confirm the Copilot panel disappears while ordinary ERP pages still load and work.
 
 ### Stop and remove the test instance
