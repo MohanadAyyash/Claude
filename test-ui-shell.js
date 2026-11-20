@@ -52,6 +52,7 @@ async function open(user, pass, lng = 'ar', hash = '') {
   await ev(`fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: ${JSON.stringify(user)}, password: ${JSON.stringify(pass)} }) }).then(r => r.status)`)
     .then(s => assert.equal(s, 200, 'login ' + user));
   await ev(`localStorage.clear(); localStorage.lang = ${JSON.stringify(lng)}; true`);
+  await cdp('Page.navigate', { url: 'about:blank' }); await sleep(100);        // a URL that differs only by #hash would not reload the app
   await cdp('Page.navigate', { url: base + 'index.html' + (hash ? '#' + hash : '') });
   await waitFor(`!!document.querySelector('.side') && document.querySelector('#main') && document.querySelector('#main').children.length > 0`);
 }
@@ -66,6 +67,14 @@ server.listen(0, async () => {
     const setup = await api('POST', 'setup', { username: 'admin', password: 'secret12', company: 'Demo Contracting' });
     const ck = setup.c || (await api('POST', 'login', { username: 'admin', password: 'secret12' })).c;
     assert.equal((await api('POST', 'users', { username: 'storekeeper1', password: 'pass1234', role: 'storekeeper' }, ck)).s, 200);
+    await api('PUT', 'settings', { trn: '100123456700003' }, ck);
+    const cl = (await api('POST', 'parties', { type: 'client', name: 'Sample Client', trn: '100234567800003', address: 'Dubai' }, ck)).j.id;
+    const pj = (await api('POST', 'projects', { name: 'Sample Tower', client_id: cl, contract_value: 500000, status: 'active' }, ck)).j.id;
+    assert.equal((await api('POST', 'invoices', { project_id: pj, date: '2026-01-05', due_date: '2026-02-04', items: [{ description: 'Works', qty: 1, rate: 20000 }] }, ck)).s, 200);
+    assert.equal((await api('POST', 'invoices', { project_id: pj, date: '2026-01-05', due_date: '2099-12-31', items: [{ description: 'Works', qty: 1, rate: 60000 }] }, ck)).s, 200);
+    const dash = (await api('GET', 'dashboard', null, ck)).j;
+    const overdueSum = Math.round(dash.overdue.reduce((t, i) => t + i.balance, 0) * 100) / 100;
+    assert.ok(overdueSum > 0 && dash.receivable > overdueSum, 'one overdue and one open invoice');
     await launch(); await desktop();
 
     // 1. clicking a link low in the menu keeps the menu where it was (it used to be rebuilt and jump back to the top)
@@ -154,6 +163,7 @@ server.listen(0, async () => {
     await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 2, mobile: true });
     await open('admin', 'secret12');
     assert.equal(await ev(`getComputedStyle(document.querySelector('.topbar')).display`), 'flex');
+    assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1 && innerWidth === 390`), true, 'nothing wider than the phone screen');
     assert.equal(await ev(`document.querySelector('.side').getBoundingClientRect().right <= 0 || document.querySelector('.side').getBoundingClientRect().left >= innerWidth`), true, 'drawer hidden');
     await click('#menu');
     assert.equal(await ev(`document.querySelector('.side').classList.contains('open')`), true);
@@ -184,6 +194,26 @@ server.listen(0, async () => {
     await ev(`document.querySelector('#sf [name="company_name"]').value = 'Renamed Contracting'; true`);
     await click('#save');
     await waitFor(`/Renamed Contracting/.test(document.querySelector('.side .brand').textContent)`, 4000);
+
+    // 13. Trigon identity on every page: figures in a ruled row with document digits, plain status marks, section name above the title
+    await open('admin', 'secret12', 'ar', 'invoices');
+    const cs = (sel, prop) => ev(`getComputedStyle(document.querySelector(${JSON.stringify(sel)})).${prop}`);
+    assert.equal(await ev(`document.querySelector('#main .crumb') && document.querySelector('#main .crumb').textContent.trim()`), 'المشاريع والمبيعات');
+    assert.match(await cs('#main td.n', 'fontFamily'), /IBM Plex Mono/);
+    assert.equal(await cs('#main > .bar', 'borderBottomStyle'), 'solid', 'letterhead rule under the title, also with the section name');
+    assert.equal(await cs('#main .tag', 'backgroundColor'), 'rgba(0, 0, 0, 0)');
+    await ev(`location.hash = 'dashboard'; true`);
+    await waitFor(`!!document.querySelector('#main .kpi')`);
+    assert.equal(await cs('#main .kpi', 'backgroundColor'), 'rgba(0, 0, 0, 0)');
+    assert.match(await cs('#main .kpi .v', 'fontFamily'), /IBM Plex Mono/);
+    assert.equal(await ev(`!!document.querySelector('#main .crumb')`), false, 'no section name for a page outside the groups');
+
+    // 14. dashboard: client balances drawn like the Trigon mark, to one scale (overdue, not yet due, all open)
+    const bars = await ev(`[...document.querySelectorAll('#main .markchart .mrow')].map(r => ({ v: +r.dataset.v, w: parseFloat(r.querySelector('.fill').style.width) }))`);
+    assert.equal(bars.length, 3);
+    assert.deepEqual(bars.map(b => b.v), [overdueSum, Math.round((dash.receivable - overdueSum) * 100) / 100, dash.receivable]);
+    assert.equal(bars[2].w, 100);
+    assert.ok(Math.abs(bars[0].w - overdueSum / dash.receivable * 100) < 0.1 && Math.abs(bars[1].w - (dash.receivable - overdueSum) / dash.receivable * 100) < 0.1, 'bars to scale');
 
     console.log('test-ui-shell: all passed');
   } catch (e) { console.error(e); process.exitCode = 1; }

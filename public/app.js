@@ -199,6 +199,8 @@ const render = async () => {
   try {
     await (PAGES[p] || PAGES[landing()])(id);
     if (ME.role !== 'employee' && $('#main').children.length) { let bar = $('#main .bar'); if (!bar) { const h = $('#main h1'); bar = document.createElement('div'); bar.className = 'bar'; if (h) { h.replaceWith(bar); bar.append(h); bar.insertAdjacentHTML('beforeend', '<span class="sp"></span>'); } else $('#main').prepend(bar); } bar.insertAdjacentHTML('beforeend', `<button class="btn sec sm noprint" id="prt">🖨 ${tr('طباعة بالترويسة', 'Print on letterhead')}</button>`); $('#prt').onclick = printReport; }
+    const h1 = $('#main .bar > h1'), sec = NAVT.find(x => x.key !== null && x.key === navGroupOf(NAVT, p));   // section name above the page title
+    if (h1 && sec) { const t = document.createElement('div'); t.className = 'ttl'; h1.replaceWith(t); t.innerHTML = `<div class="crumb">${esc(tr(sec.ar, sec.en))}</div>`; t.append(h1); }
     if (GUIDE[p] && $('#main .bar') && !$('#hlp')) $('#main .bar').insertAdjacentHTML('beforeend', `<a class="btn sec sm noprint" id="hlp" target="_blank" rel="noopener" href="${guideUrl(p)}" title="${tr('شرح هذه الصفحة في دليل الاستخدام', 'How to use this page (user guide)')}">❓ ${tr('مساعدة', 'Help')}</a>`);
   }
   catch (e) {
@@ -317,12 +319,19 @@ PAGES.dashboard = async () => {
    ${kpi(tr('الرصيد النقدي', 'Cash balance'), d.cash, d.cash >= 0 ? 'ok' : 'bad')}
    ${kpi(tr('مستحقات على العملاء', 'Receivables'), d.receivable, 'warn')}${kpi(tr('محتجزات لدى العملاء', 'Retention held by clients'), d.retention_held)}
    ${kpi(tr('مستحقات للموردين', 'Payables'), d.payable, 'bad')}</div>
-  <div class="card"><h2>${tr('التدفق النقدي — آخر ٦ أشهر', 'Cash flow — last 6 months')} <span class="muted" style="font-weight:400">(<span class="pos">■</span> ${tr('مقبوضات', 'In')} <span class="neg">■</span> ${tr('مدفوعات', 'Out')})</span></h2>
-   <div class="bars">${d.months.map(m => `<div class="m"><div class="pair"><div class="b in" style="height:${m.in / mx * 100}%" title="${money(m.in)}"></div><div class="b out" style="height:${m.out / mx * 100}%" title="${money(m.out)}"></div></div>${m.month}</div>`).join('')}</div></div>
+  <div class="duo">${markChart(d)}<div class="card"><h2>${tr('التدفق النقدي — آخر ٦ أشهر', 'Cash flow — last 6 months')} <span class="muted" style="font-weight:400">(<span class="pos">■</span> ${tr('مقبوضات', 'In')} <span class="neg">■</span> ${tr('مدفوعات', 'Out')})</span></h2>
+   <div class="bars">${d.months.map(m => `<div class="m"><div class="pair"><div class="b in" style="height:${m.in / mx * 100}%" title="${money(m.in)}"></div><div class="b out" style="height:${m.out / mx * 100}%" title="${money(m.out)}"></div></div>${m.month}</div>`).join('')}</div></div></div>
   ${d.alerts.length ? `<div class="card"><h2>${tr('تنبيهات الامتثال', 'Compliance alerts')} <a href="#compliance" style="font-size:12px">${tr('عرض الكل', 'view all')}</a></h2>${alertList(d.alerts.slice(0, 5))}</div>` : ''}
   ${d.overdue.length ? `<div class="card"><h2 class="neg">${tr('فواتير متأخرة', 'Overdue invoices')}</h2><div class="tw"><table><tbody>${d.overdue.map(i => `<tr class="click" onclick="go('invoices')"><td>${esc(i.number)}</td><td>${esc(i.client_name || '')}</td><td>${esc(i.due_date)}</td><td class="n neg">${money(i.balance)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
   <h2>${tr('ربحية المشاريع', 'Project profitability')}</h2>${projTable(d.projects)}`);
 };
+// client balances as the three bars of the Trigon mark, all to one scale: overdue, not yet due, all open balances (from the dashboard figures)
+function markChart(d) {
+  const r2 = x => Math.round(x * 100) / 100, overdue = r2(d.overdue.reduce((t, i) => t + i.balance, 0)), total = r2(d.receivable), rows = [
+    [tr('متأخرة السداد', 'Overdue'), overdue, 'late'], [tr('لم يحن موعدها', 'Not yet due'), r2(total - overdue), ''], [tr('كل الأرصدة المفتوحة', 'All open balances'), total, '']];
+  return `<div class="card markchart"><h2>${tr('ذمم العملاء', 'Client balances')}</h2>${rows.map(([l, v, c]) => `<div class="mrow ${c}" data-v="${v}"><div class="ml"><span>${l}</span><b>${money(v)}</b></div><div class="track"><div class="fill" style="width:${total > 0 ? Math.max(0, Math.min(100, v / total * 100)).toFixed(2) : 0}%"></div></div></div>`).join('')}
+    <div class="muted cap">${tr('أرصدة فواتير العملاء المفتوحة، بنفس المقياس.', 'Open client invoice balances, drawn to one scale.')} <a href="#aging">${tr('أعمار الديون', 'Ageing')}</a></div></div>`;
+}
 const projTable = rows => `<div class="tw"><table><thead><tr><th>${tr('المشروع', 'Project')}</th><th class="n">${tr('قيمة العقد', 'Contract')}</th><th class="n">${tr('المفوتر', 'Invoiced')}</th><th class="n">${tr('التكلفة', 'Cost')}</th><th class="n">${tr('الربح', 'Profit')}</th><th class="n">%</th><th class="n">${tr('مستحق التحصيل', 'Receivable')}</th></tr></thead><tbody>
   ${rows.map(p => `<tr class="click" onclick="go('projects/${p.id}')"><td>${esc(p.code || '')} ${esc(p.name)}</td><td class="n">${money(p.contract_value)}</td><td class="n">${money(p.invoiced)}</td><td class="n">${money(p.cost)}</td><td class="n ${p.profit >= 0 ? 'pos' : 'neg'}">${money(p.profit)}</td><td class="n">${p.margin}%</td><td class="n">${money(p.receivable)}</td></tr>`).join('') || `<tr><td colspan="7" class="muted">${tr('لا توجد مشاريع', 'No projects yet')}</td></tr>`}</tbody></table></div>`;
 

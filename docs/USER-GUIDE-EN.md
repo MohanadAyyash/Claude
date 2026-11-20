@@ -107,7 +107,7 @@
 ![The dashboard after signing in](../public/guide/img/en/03-dashboard.jpg)
 
 1. The side menu: every section of the system in collapsible groups (click a title to open it), with **Go to…** above them; you only see what your role allows. Language and Logout buttons are at its bottom.
-2. Company KPIs: active projects, contract value, invoiced, expenses, profit, cash, receivables and retention. Below: cash flow, compliance alerts, overdue invoices and profit per project.
+2. Company KPIs: active projects, contract value, invoiced, expenses, profit, cash, receivables and retention. Below: **Client balances** as three bars to one scale (overdue, not yet due, all open balances), cash flow, compliance alerts, overdue invoices and profit per project.
 3. Prints the current page on the company letterhead with stamp and signature. It is on every page.
 
 <!--/img-->

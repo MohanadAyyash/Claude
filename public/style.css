@@ -97,6 +97,22 @@ body[data-role=viewer] #prt{display:inline-block}
 }
 .side a.guide{margin:10px 12px 0;border:1px solid var(--line);border-radius:4px;text-align:center;opacity:1}
 
+/* Trigon identity on the pages (from the reference prototype, option D) */
+.main{padding-inline:30px}
+.ttl{display:flex;flex-direction:column}.crumb{font-size:12px;color:var(--mute)}
+.grid:has(>.kpi){gap:14px 0;padding-block:4px 16px;border-bottom:1px solid var(--line)}
+.kpi{background:none;border:0;border-inline-start:1px solid var(--line);border-radius:0;padding:2px 16px}
+.kpi .v{font-family:"IBM Plex Mono","IBM Plex Sans Arabic",monospace;font-weight:500;font-variant-numeric:tabular-nums}
+td.n,th.n,.totals div span:last-child{font-family:"IBM Plex Mono","IBM Plex Sans Arabic",monospace;font-size:13px}
+.tag,.tag.paid,.tag.active,.tag.accepted,.tag.completed,.tag.overdue,.tag.rejected,.tag.cancelled,.tag.partial,.tag.unpaid,.tag.sent,.tag.retention,.tag.hold{background:none;padding:0;border-radius:0;font-weight:600;display:inline-flex;align-items:center;gap:6px}
+.tag::before{content:"";width:10px;height:3px;background:currentColor;flex-shrink:0}
+.tag{color:var(--mute)}.tag.paid,.tag.active,.tag.accepted,.tag.completed{color:#2E6B4E}.tag.overdue,.tag.rejected,.tag.cancelled{color:#A33B32}.tag.partial,.tag.unpaid,.tag.sent,.tag.retention,.tag.hold{color:#8C6420}
+.duo{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:16px;align-items:start}.duo>.card{margin-bottom:16px}
+.markchart .mrow{margin-bottom:12px}.markchart .ml{display:flex;justify-content:space-between;gap:10px;font-size:12px}
+.markchart .ml b{font-family:"IBM Plex Mono",monospace;font-weight:500}
+.markchart .track{height:14px;margin-top:3px;direction:ltr}.markchart .fill{height:100%;background:var(--brand)}.markchart .late .fill{background:#A33B32}
+.markchart .cap{font-size:11px;border-top:1px solid var(--line);padding-top:8px}
+@media(max-width:800px){.duo{grid-template-columns:1fr}.main{padding-inline:12px}.kpi{padding:2px 10px}}
 /* iPhone / iPad home-screen app: the page runs under the clock / status bar (black-translucent), so everything that starts at the
    top of the screen keeps clear of it. env(safe-area-inset-*) is 0 on computers and older phones, so nothing moves there. */
 .login{margin-top:calc(10vh + env(safe-area-inset-top))}
@@ -121,4 +137,4 @@ body[data-role=viewer] #prt{display:inline-block}
 #gotores button:hover,#gotores button.sel{background:#ECEAE4}
 .gotoempty{padding:10px}
 /* page title: thin Steel Blue rule under it, like the letterhead */
-.main>.bar:has(>h1){border-bottom:1.5px solid var(--brand);padding-bottom:10px;margin-bottom:16px}.main>.bar>h1{margin:0}
+.main>.bar:has(>h1,>.ttl){border-bottom:1.5px solid var(--brand);padding-bottom:10px;margin-bottom:16px}.main>.bar>h1{margin:0}
