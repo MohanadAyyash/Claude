@@ -102,3 +102,4 @@ body[data-role=viewer] #prt{display:inline-block}
   .modal{padding-top:calc(16px + env(safe-area-inset-top))}          /* forms open full screen: their title was hidden under the clock */
   .login{margin-top:calc(6vh + env(safe-area-inset-top))}
 }
+.side .g:not(.open) .items{display:none}

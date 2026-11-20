@@ -108,14 +108,25 @@ const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
 ];
 const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role) && (n[0] !== 'myaccount' || ME.employee_id));   // my account: only for a user linked to an employee
 const landing = () => ({ employee: 'portal', hr: 'hrdash', foreman: 'attendance', site_engineer: 'sitediary', qs: 'projects', procurement: 'po', storekeeper: 'stock' }[ME.role] || 'dashboard');
+let NAVT = [];                                                            // menu sections for this user (nav.js navTree)
+const navLink = n => `<a data-r="${n[0]}">${tr(n[1], n[2])}</a>`;
+// open one group of the side menu and close the others (null: close all); remembered for the next visit
+function navOpen(key) {
+  document.querySelectorAll('.side .g').forEach(g => { const on = g.dataset.g === key; g.classList.toggle('open', on); g.querySelector('.gh').setAttribute('aria-expanded', on); });
+  try { if (key) localStorage.navOpen = key; else delete localStorage.navOpen; } catch { /* private window */ }
+}
+// mark the current page in the menu and open its group; the menu itself is not redrawn, so it keeps its scroll position
+function markRoute() {
+  const r = route.split('/')[0];
+  document.querySelectorAll('.side a[data-r]').forEach(a => a.classList.toggle('on', a.dataset.r === r));
+  const key = navGroupOf(NAVT, r); if (key) navOpen(key);
+  const a = $(`.side a[data-r="${r}"]`); if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest' });
+}
 function shell() {
   const ok = allowedNav(), okSet = new Set(ok.map(n => n[0]));
-  let links = '', pending = '';
-  for (const n of NAV) {
-    if (n[0] === '#') { pending = `<div class="grp">${tr(n[1], n[2])}</div>`; continue; }
-    if (!okSet.has(n[0])) continue;
-    links += pending + `<a data-r="${n[0]}" class="${route.split('/')[0] === n[0] ? 'on' : ''}">${tr(n[1], n[2])}</a>`; pending = '';
-  }
+  NAVT = navTree(NAV, okSet);
+  const links = NAVT.map(s => s.key === null ? s.items.map(navLink).join('')
+    : `<div class="g" data-g="${esc(s.key)}"><button type="button" class="gh" aria-expanded="false"><span class="bar"></span><span class="t">${tr(s.ar, s.en)}</span><span class="cnt">${s.items.length}</span></button><div class="items">${s.items.map(navLink).join('')}</div></div>`).join('');
   $('#app').innerHTML = `<div class="topbar"><button type="button" id="menu" aria-label="menu">☰</button>${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="">` : `<b>${esc(S.company_name || '')}</b>`}</div><div class="scrim" id="scrim"></div><div class="shell"><nav class="side"><div class="brand">${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="${esc(S.company_name || '')}">` : esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
     ${links}
     <a class="guide" href="${guideUrl()}" target="_blank" rel="noopener">📘 ${tr('دليل الاستخدام', 'User guide')}</a><div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
@@ -123,13 +134,18 @@ function shell() {
   const drawer = open => { $('.side').classList.toggle('open', open); $('#scrim').classList.toggle('on', open); };
   $('#menu').onclick = () => drawer(!$('.side').classList.contains('open')); $('#scrim').onclick = () => drawer(false);
   document.querySelectorAll('.side a[data-r]').forEach(a => a.onclick = () => { drawer(false); go(a.dataset.r); });
+  document.querySelectorAll('.side .g .gh').forEach(b => b.onclick = () => { const g = b.parentElement; navOpen(g.classList.contains('open') ? null : g.dataset.g); });
   $('#lang').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('#out').onclick = async () => { await api('POST', 'logout'); boot(); };
+  let saved = null; try { saved = localStorage.navOpen; } catch { /* private window */ }
+  if (saved && NAVT.some(s => s.key === saved)) navOpen(saved);           // the current page's group (markRoute) wins over the remembered one
+  markRoute();
   render();
   if (window.onShell) onShell();                                          // mobile.js: bell, install button
 }
 const go = r => { location.hash = r; };
-window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };
+// moving between pages redraws only the page, never the menu (it used to jump back to the top on every click)
+window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) { markRoute(); render(); if (window.onShell) onShell(); } };
 // user guide (public/guide, built from docs/USER-GUIDE-*.md by tools/build-guide.js): the section that explains each page
 const GUIDE = { hired: 43, cheques: 35, cashflow: 36, guarantees: 37, spend: 38, equipment: 41, schedule: 42, dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
   employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31, partners: 45, myaccount: 46, claims: 46, staffaccounts: 46 };
