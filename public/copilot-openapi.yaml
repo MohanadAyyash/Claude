@@ -5,7 +5,8 @@ info:
   description: >
     Read-only, deterministic tool routing. Every tool applies its existing ERP role ACL and
     explicit field projection before the configured provider may phrase authorized results.
-    Feature access also requires COPILOT_ENABLED=1 and an ERP user-ID or role allowlist.
+    Feature access also requires COPILOT_ENABLED=1 and an ERP user-ID or role allowlist. Intent routing is deterministic;
+    the model receives only projected facts, never ERP or SharePoint links, SQL, arbitrary URLs, or tool choices.
 servers:
   - url: /api
 security:
@@ -22,7 +23,11 @@ paths:
       summary: Get the authorized user's Copilot status
       responses:
         '200':
-          description: Feature state and safe configuration metadata; contains no secrets.
+          description: Feature state, limits and safe provider metadata; admin-only operational aggregate details are omitted for other roles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotStatus'
         '401':
           description: No active ERP identity.
         '403':
@@ -37,7 +42,8 @@ paths:
       description: >
         Arabic and English routing is performed by the ERP server. The provider cannot choose
         tools or access unprojected ERP fields. Questions are limited to 1000 characters and
-        request bodies to 16 KiB. Results are limited to 50.
+        request bodies to 16 KiB. Each tool returns at most 50 records. ERP references and
+        validated SharePoint links are returned to the ERP UI only and are withheld from the provider.
       requestBody:
         required: true
         content:
@@ -143,6 +149,13 @@ paths:
       responses:
         '200':
           description: Up to 50 recent events.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 50
+                items:
+                  $ref: '#/components/schemas/CopilotAuditEvent'
         '401':
           description: No active ERP identity.
         '403':
@@ -163,6 +176,70 @@ components:
         configured tid, one dedicated ERP API aud, Copilot.Read scope, and unique user mapping
         by (tenant_id, oid). The Microsoft login application's audience is rejected.
   schemas:
+    CopilotStatus:
+      type: object
+      required: [enabled, intents, max_results, history_retention_days, provider_configured, provider, rate_limit]
+      properties:
+        enabled:
+          type: boolean
+        intents:
+          type: array
+          items:
+            type: string
+            enum: [project_status, project_financials, invoice_summary, procurement_status, quotation_summary, contract_summary, certificate_summary, project_documents, approval_queue, sync_failures]
+        max_results:
+          type: integer
+          minimum: 1
+          maximum: 50
+        history_retention_days:
+          type: integer
+        provider_configured:
+          type: boolean
+        provider:
+          type: string
+          enum: [azure-openai, azure-foundry, mock, unconfigured]
+        rate_limit:
+          type: object
+          required: [user_per_minute, process_per_minute]
+          properties:
+            user_per_minute:
+              type: integer
+            process_per_minute:
+              type: integer
+        operational_status:
+          type: object
+          description: Administrator-only safe aggregate. Not returned to other ERP roles.
+          properties:
+            last_success_at:
+              type: [integer, 'null']
+            average_duration_ms:
+              type: integer
+            recent_failure_count:
+              type: integer
+    CopilotAuditEvent:
+      type: object
+      required: [user_id, event, outcome, created_at, authorized_count, redacted]
+      properties:
+        user_id:
+          type: integer
+        event:
+          type: string
+        intent:
+          type: [string, 'null']
+        outcome:
+          type: string
+        http_status:
+          type: [integer, 'null']
+        created_at:
+          type: integer
+          format: int64
+        authorized_count:
+          type: integer
+        redacted:
+          type: integer
+          enum: [0, 1]
+        duration_ms:
+          type: [integer, 'null']
     CopilotAnswer:
       type: object
       required: [id, intent, answer, data, created_at]
@@ -171,7 +248,7 @@ components:
           type: integer
         intent:
           type: string
-          enum: [project_status, project_financials, invoice_summary, procurement_status, contract_summary, project_documents, approval_queue, sync_failures]
+          enum: [project_status, project_financials, invoice_summary, procurement_status, quotation_summary, contract_summary, certificate_summary, project_documents, approval_queue, sync_failures]
         answer:
           type: string
           maxLength: 4000
@@ -180,7 +257,7 @@ components:
           maxItems: 50
           items:
             type: object
-            description: Tool-specific explicit allowlist projection with server-generated ERP deep-link references.
+            description: Tool-specific explicit field projection. Optional href/sharepoint_url fields are UI-only and are not provided to the AI provider.
         created_at:
           type: integer
           format: int64
