@@ -82,6 +82,62 @@ const out = [];
     // the scrubber itself
     assert.equal(Z.scrub(`a ${SECRET} b ${RT} Zoho-oauthtoken ${AT} client_id=${CID}&refresh_token=x`, SECRETS), 'a [hidden] b [hidden] Zoho-oauthtoken [hidden] client_id=[hidden]&refresh_token=[hidden]');
     assert.equal(Z.scrub('token 1000.abcdef0123456789.zz'), 'token [hidden]', 'anything shaped like a Zoho token, even when not passed');
+    // ---- preflight network rules: one retry of a GET after a connect timeout, nothing else retried
+    const real = globalThis.fetch, calls = [];
+    const ctimeout = () => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('Connect Timeout Error (attempted address: www.zohoapis.com:443, timeout: 30000ms)'), { code: 'UND_ERR_CONNECT_TIMEOUT' }) });
+    const htimeout = () => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('Headers Timeout Error'), { code: 'UND_ERR_HEADERS_TIMEOUT' }) });
+    const json = (status, o) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
+    let books = () => null;                                            // per scenario: what the n-th Books request does (null → the stand-in server)
+    globalThis.fetch = async (url, o = {}) => { const u = new URL(url), m = (o.method || 'GET').toUpperCase(), kind = u.pathname.startsWith('/books/') ? 'books' : 'token';
+      calls.push(`${m} ${kind}`); if (kind === 'books') { const n = calls.filter(c => c.endsWith('books')).length, a = books(n); if (a instanceof Error) throw a; if (a) return a; } return real(url, o); };
+    const pclient = () => client({ net: { connectRetry: true, retryDelay: 50, timeout: 1500 } }), reset = () => { calls.length = 0; };
+    oauth = () => ({ status: 200, body: { access_token: AT, api_domain: '', token_type: 'Bearer', expires_in: 3600 } });
+    try {
+      // first Books GET: connect timeout, then the retry succeeds
+      reset(); books = n => n === 1 ? ctimeout() : null;
+      { const t0 = Date.now(), r = await pclient().get('/organizations'); assert.equal(r.organizations[0].name, 'Fake Org'); assert.deepEqual(calls, ['POST token', 'GET books', 'GET books']); assert.ok(Date.now() - t0 >= 50, 'bounded delay before the retry'); }
+      reset(); books = n => n === 1 ? ctimeout() : null;
+      { const p = await pclient().probe(); assert.equal(p.http_status, 401); assert.equal(p.attempts, 2); assert.deepEqual(calls, ['GET books', 'GET books'], 'probe: no token'); }
+      out.push('connect timeout on the first Books GET → one retry, which succeeds (organisations read and probe)');
+      // both attempts time out → reported once, two attempts, never a third
+      reset(); books = () => ctimeout();
+      { const e = await pclient().get('/organizations').then(() => assert.fail('should fail'), x => x); clean('both timeouts', e.diag);
+        assert.equal(e.diag.timeout_type, 'connect'); assert.equal(e.diag.attempts, 2); assert.equal(e.diag.cause_code, 'UND_ERR_CONNECT_TIMEOUT'); assert.deepEqual(calls, ['POST token', 'GET books', 'GET books']); }
+      reset(); { const e = await pclient().probe().then(() => assert.fail('should fail'), x => x); assert.equal(e.diag.attempts, 2); assert.equal(calls.length, 2); }
+      // a response timeout (connected, no answer) is not retried: the request may have reached Zoho
+      reset(); books = () => htimeout();
+      { const e = await pclient().get('/organizations').then(() => assert.fail(), x => x); assert.equal(e.diag.timeout_type, 'response'); assert.equal(e.diag.attempts, 1); assert.equal(calls.filter(c => c === 'GET books').length, 1); }
+      out.push('both attempts time out → reported with attempts 2; a response timeout is not retried');
+      // 401 / 403 / Zoho errors: one request, no access-token renewal, no retry
+      for (const [st, body, kind] of [[401, { code: 57, message: 'You are not authorized to perform this operation' }, 'authorization_rejected'], [403, { code: 57, message: 'Forbidden' }, 'authorization_rejected'], [400, { code: 6041, message: 'Invalid value passed for organization_id' }, 'zoho_error'], [200, { code: 1002, message: 'Organization does not exist' }, 'zoho_error']]) {
+        reset(); books = () => json(st, body);
+        const e = await pclient().get('/organizations').then(() => assert.fail('should fail'), x => x); clean('no retry', e.diag);
+        assert.equal(e.diag.kind, kind, String(st)); assert.equal(e.diag.http_status, st); assert.equal(e.diag.attempts, 1); assert.deepEqual(calls, ['POST token', 'GET books'], `HTTP ${st}: not retried, token not renewed`); }
+      // an OAuth error: one token request, nothing else
+      reset(); oauth = () => ({ status: 200, body: { error: 'invalid_code' } }); books = () => null;
+      { const e = await pclient().get('/organizations').then(() => assert.fail(), x => x); assert.equal(e.diag.stage, 'oauth'); assert.deepEqual(calls, ['POST token']); }
+      out.push('401, 403, Zoho errors and OAuth errors are not retried (and the token is not renewed)');
+      // the hard guard: a modifying call in read-only mode never leaves the client
+      oauth = () => ({ status: 200, body: { access_token: AT, api_domain: '', token_type: 'Bearer', expires_in: 3600 } });
+      for (const m of ['post', 'put', 'del']) { reset(); await pclient()[m]('/invoices', m === 'del' ? undefined : {}).then(() => assert.fail(), e => assert.match(e.message, /read-only/)); assert.deepEqual(calls, [], m + ': nothing sent'); }
+      // the normal sync (no preflight options) keeps its behaviour: a 401 renews the token once
+      reset(); books = n => n === 1 ? json(401, { code: 57, message: 'expired' }) : null;
+      { const r = await client({ cache: {} }).get('/organizations'); assert.equal(r.organizations[0].name, 'Fake Org'); assert.deepEqual(calls, ['POST token', 'GET books', 'POST token', 'GET books']); }
+      out.push('modifying calls stay impossible in read-only mode; the normal sync is unchanged (401 → renew once)');
+    } finally { globalThis.fetch = real; }
+
+    // a real stalled TLS handshake (TCP accepted, no TLS answer) with a raised connect limit: Node's UND_ERR_CONNECT_TIMEOUT
+    { const net = require('net'), silent = net.createServer(() => {}); const p = await listen(silent);
+      try { await real('data:,'); const G = globalThis[Symbol.for('undici.globalDispatcher.1')], dispatcher = new G.constructor({ connect: { timeout: 600 } });
+        const t0 = Date.now(), e = await Z.http(`https://127.0.0.1:${p}/books/v3/organizations`, { method: 'GET' }, 5000, SECRETS, dispatcher).then(() => assert.fail(), x => x);
+        assert.equal(e.diag.kind, 'timeout'); assert.equal(e.diag.timeout_type, 'connect'); assert.equal(e.diag.cause_code, 'UND_ERR_CONNECT_TIMEOUT'); assert.ok(Date.now() - t0 < 4000, 'the raised/lowered connect limit is honoured');
+        assert.match(e.diag.cause, /timeout: 600ms/); }
+      finally { silent.close(); }
+      out.push('a stalled TLS handshake → connect timeout at the configured connect limit'); }
+    // ZOHO_PREFLIGHT_TIMEOUT_MS
+    const { preflightTimeout } = require('./scripts/zoho-preflight.js');
+    assert.deepEqual([undefined, '', 'abc', '5000', '45000', '999999'].map(preflightTimeout), [30000, 30000, 30000, 10000, 45000, 120000]);
+    out.push('ZOHO_PREFLIGHT_TIMEOUT_MS: default 30 s, between 10 s and 120 s');
   } finally { srv.close(); }
 
   // 5. the .env check — compared with what Node itself reads, so the check cannot drift from Node's parser

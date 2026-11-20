@@ -33,7 +33,7 @@ module.exports = ctx => {
   const client = (c, readOnly = false) => {
     if (!c.client_id || !c.client_secret || !c.refresh_token) throw new Error('Connect to Zoho first (Client ID, Client Secret and a grant code)');
     if (!c.org) throw new Error('Choose the Zoho Books organisation first');
-    return Z.createClient({ accounts: accountsUrl(c), client_id: c.client_id, client_secret: c.client_secret, refresh_token: c.refresh_token, api_domain: c.api_domain, org: c.org, cache: tokenCache, readOnly });
+    return Z.createClient({ accounts: accountsUrl(c), client_id: c.client_id, client_secret: c.client_secret, refresh_token: c.refresh_token, api_domain: c.api_domain, org: c.org, cache: tokenCache, readOnly, net: readOnly ? ctx.zohoNet || null : null });
   };
 
   const hashOf = o => { const s = JSON.stringify(o); let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return String(h >>> 0); };
@@ -371,6 +371,8 @@ module.exports = ctx => {
     return { credentials, connected: !!(c.client_id && c.client_secret && c.refresh_token), organization_id: c.org || '', data_centre: c.dc, uae: c.dc === 'ae', accounts_url: acc, api_base_url: api ? api + '/books/v3' : '', expected_api_base_url: expected ? expected + '/books/v3' : '',
       data_centre_ok: dcOk, note: mock ? 'development mock (ZOHO_ACCOUNTS_URL set) — data centre not checked' : dcOk ? `API and sign-in on the ${c.dc} data centre` : `the API domain ${api || '(none)'} does not belong to the ${c.dc} data centre (expected ${expected})` };
   }
+  ctx.zohoNet = null;                                                                  // set by scripts/zoho-preflight.js only (timeouts, one connect retry)
+  ctx.zohoProbe = () => client(cfg(), true).probe();                                   // read-only connectivity probe, no token, no organisation
   ctx.zohoConnection = () => connection(cfg());
   ctx.zohoOrganization = async () => { const c = cfg(); const o = ((await client(c, true).get('/organizations')).organizations || []).find(x => String(x.organization_id) === String(c.org)); return o ? { id: String(o.organization_id), name: o.name, currency: o.currency_code, country: o.country || '' } : null; };
   ctx.zohoPreflight = (from, to) => sync({ trigger: 'preflight', user: 'preflight script', from, to, dryRun: true });

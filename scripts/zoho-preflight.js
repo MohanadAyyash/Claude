@@ -62,7 +62,10 @@ function inspectEnv(buf) {
 // network settings that change how Node connects (names only — a proxy URL can carry a password)
 const NETVARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'NODE_USE_ENV_PROXY', 'NODE_EXTRA_CA_CERTS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_OPTIONS'];
 const netEnv = env => Object.fromEntries(NETVARS.map(k => [k, env[k] != null || env[k.toLowerCase()] != null ? 'set' : 'not set']));
-module.exports = { decide, requests, inspectEnv, netEnv };                            // (tests)
+// ZOHO_PREFLIGHT_TIMEOUT_MS: the connect limit and the first-response limit of each request (the whole request: twice that).
+// Default 30 s; at least 10 s (Node's own connect limit) and at most 120 s; anything unreadable → the default.
+const preflightTimeout = v => { const n = Math.round(Number(v)); return v == null || v === '' || !Number.isFinite(n) ? 30000 : Math.min(120000, Math.max(10000, n)); };
+module.exports = { decide, requests, inspectEnv, netEnv, preflightTimeout };          // (tests)
 if (require.main !== module) return;
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? (process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : true) : d; };
@@ -85,16 +88,34 @@ const outDir = path.resolve(String(arg('out', path.join(path.dirname(dataDir), `
 
 // ---------- 2. install the guard before any Trigon code is loaded ----------
 const realFetch = globalThis.fetch;
+// timing of each request from Node's own diagnostic events (only timestamps are kept — never headers, bodies or tokens).
+// The preflight's Zoho requests are made one at a time, so the events belong to the request in flight.
+const { performance } = require('perf_hooks'), dc = require('diagnostics_channel');
+let current = null; const mark = k => () => { if (current && current.t[k] == null) current.t[k] = performance.now(); };
+for (const [ch, k] of [['undici:client:beforeConnect', 'connect_start'], ['undici:client:connected', 'connected'], ['undici:client:connectError', 'connect_failed'], ['undici:client:sendHeaders', 'sent'], ['undici:request:headers', 'first_response']]) dc.subscribe(ch, mark(k));
+const ms = (a, b) => a != null && b != null ? Math.round(b - a) : null;
+function timing(t, end) {
+  const connectEnd = t.connected != null ? t.connected : t.connect_failed;
+  return { connection: t.connect_start != null ? 'new' : t.sent != null ? 'reused' : 'not opened', connect_tls_ms: ms(t.connect_start, connectEnd), connect_ok: t.connect_start != null ? t.connected != null : null,
+    first_response_ms: ms(t.sent, t.first_response), total_ms: ms(t.start, end) };
+}
 globalThis.fetch = async (url, opts) => {
-  const decision = decide(url, opts), entry = requests[requests.length - 1];
-  if (decision === 'BLOCKED') { entry.outcome = 'not sent'; throw new Error(`read-only preflight: ${String((opts && opts.method) || 'GET').toUpperCase()} ${new URL(String(url)).host}${new URL(String(url)).pathname} refused — not sent`); }
+  const decision = decide(url, opts), entry = requests[requests.length - 1], u = new URL(String(url));
+  entry.organization_id = u.searchParams.has('organization_id') ? 'set' : 'not sent';
+  entry.authorization = opts && opts.headers && opts.headers.Authorization ? 'token (hidden)' : 'none';
+  if (decision === 'BLOCKED') { entry.outcome = 'not sent'; throw new Error(`read-only preflight: ${String((opts && opts.method) || 'GET').toUpperCase()} ${u.host}${u.pathname} refused — not sent`); }
+  if (u.protocol === 'data:') return realFetch(url, opts);
+  entry.t = { start: performance.now() }; current = entry;
   try { const r = await realFetch(url, opts); entry.outcome = 'HTTP ' + r.status; return r; }
   catch (e) { entry.outcome = 'failed ' + ((e.cause && (e.cause.code || e.cause.name)) || e.name || ''); throw e; }
+  finally { entry.timing = timing(entry.t, performance.now()); delete entry.t; if (current === entry) current = null; }
 };
 
 // ---------- 3. load Trigon on the copy, with every scheduler off ----------
 Object.assign(process.env, { DATA_DIR: dataDir, ZOHO_NO_SCHEDULER: '1', SALES_NO_SCHEDULER: '1', BACKUP_NO_SCHEDULER: '1', M365_SYNC_INTERVAL_SECONDS: '3600' });
 const ask = q => arg('yes') ? (console.log(q + ' YES (--yes)'), Promise.resolve(true)) : new Promise(res => { const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); rl.question(q + ' Type YES to continue: ', a => { rl.close(); res(a.trim() === 'YES'); }); });
+const writeLog = () => { fs.mkdirSync(outDir, { recursive: true }); fs.writeFileSync(path.join(outDir, 'request-log.csv'), 'time,method,host,path,decision,outcome,organization_id,authorization,connection,connect_tls_ms,first_response_ms,total_ms\n'
+  + requests.map(x => [x.time, x.method, x.host, x.path, x.decision, x.outcome || '', x.organization_id || '', x.authorization || '', ...(x.timing ? [x.timing.connection, x.timing.connect_tls_ms ?? '', x.timing.first_response_ms ?? '', x.timing.total_ms ?? ''] : ['', '', '', ''])].join(',')).join('\n') + '\n'); };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 (async () => {
@@ -124,32 +145,69 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
   console.log(`Network: Node ${network.node} on ${network.platform}; ${NETVARS.map(k => `${k} ${network[k]}`).join(', ')}`);
   const signIn = { credentials, env_file: envInfo, network };
   if (envInfo.blocking.length) die('The .env of this program folder is not read correctly (above) — nothing was sent. Re-create it as UTF-8 without BOM (see ZOHO-PREFLIGHT.md) and run again.', 3);
-  console.log('\nNext: one access-token request to the sign-in server, then GET /organizations (read only).');
+  // time limits of this run: Node's own connect limit (10 s) is raised for the preflight's requests only
+  const T = preflightTimeout(process.env.ZOHO_PREFLIGHT_TIMEOUT_MS);
+  let dispatcher = null;
+  try { await realFetch('data:,');                                                    // no network: makes Node create its HTTP agent
+    const G = globalThis[Symbol.for('undici.globalDispatcher.1')]; if (G && typeof G.constructor === 'function') dispatcher = new G.constructor({ connect: { timeout: T }, headersTimeout: T, bodyTimeout: T }); }
+  catch { dispatcher = null; }
+  ctx.zohoNet = { timeout: 2 * T, dispatcher, connectRetry: true, retryDelay: 2000 };
+  const limits = { connect_ms: dispatcher ? T : 10000, first_response_ms: dispatcher ? T : 300000, request_ms: 2 * T, source: process.env.ZOHO_PREFLIGHT_TIMEOUT_MS ? 'ZOHO_PREFLIGHT_TIMEOUT_MS' : 'default', connect_limit_raised: !!dispatcher, connect_retry: 'one retry of a GET after a connect timeout, 2 s later; 401 / 403 / Zoho / OAuth errors are not retried' };
+  signIn.limits = limits;
+  console.log(`Time limits: connect (DNS + TCP + TLS) ${limits.connect_ms} ms${dispatcher ? '' : " (Node's default — could not be raised on this Node)"}, first response ${limits.first_response_ms} ms, whole request ${limits.request_ms} ms (${limits.source}); ${limits.connect_retry}`);
+
+  console.log('\nNext (read only): a connectivity probe to the Zoho Books host (GET, no token, no organisation), one access-token request, then GET /organizations.');
   if (!conn.connected) die('Not connected to Zoho in this copy — nothing to check.', 2);
   if (!(await ask('Read the organisation name from Zoho?'))) die('Stopped by the user — nothing was sent.', 3);
-  let org = null, failure = null;
-  try { org = await ctx.zohoOrganization(); } catch (e) { failure = e; console.error('  ✖ ' + e.message); }
-  if (failure) {
-    const d = failure.diag || { stage: 'other', kind: 'error', cause: String(failure.message).slice(0, 300) };
-    const tokenStep = d.stage === 'oauth' || (requests.length > 0 && requests[requests.length - 1].decision === 'access token');   // the request that failed was the token request
-    signIn.result = { step: tokenStep ? 'access-token request' : 'GET /organizations', ...d };
-    console.log(`\n  ${tokenStep ? 'Access-token request' : 'Zoho Books read'} FAILED — diagnosis (no secret is shown)`);
-    const line = (k, v) => v != null && v !== '' && !(Array.isArray(v) && !v.length) && console.log(`    ${(k + ':').padEnd(22)}${Array.isArray(v) ? v.join(', ') : v}`);
-    line('stage', d.stage === 'connect' ? 'connection (no HTTP answer)' : d.stage === 'oauth' ? 'Zoho sign-in answered' : d.stage);
-    line('host', d.host); line('kind', d.kind); line('HTTP status', d.http_status == null ? '— (no answer)' : d.http_status);
+
+  const line = (k, v) => v != null && v !== '' && !(Array.isArray(v) && !v.length) && console.log(`    ${(k + ':').padEnd(22)}${Array.isArray(v) ? v.join(', ') : v}`);
+  const showTiming = x => x && x.timing && line('timing', [x.outcome || '', `connection ${x.timing.connection}`, x.timing.connect_tls_ms != null ? `DNS + TCP + TLS ${x.timing.connect_tls_ms} ms${x.timing.connect_ok === false ? ' (failed)' : ''}` : null, x.timing.first_response_ms != null ? `first response ${x.timing.first_response_ms} ms` : null, `total ${x.timing.total_ms} ms`].filter(Boolean).join(' · '));
+  const target = x => x && line('request', `${x.method} ${x.host}${x.path} · organization_id ${x.organization_id} · Authorization ${x.authorization}`);
+  function stop(step, classification, d, attempts) {
+    signIn.result = { step, classification, ...d };
+    console.log(`\n  ${step} FAILED — ${classification} (no secret is shown)`);
+    for (const x of attempts) { target(x); showTiming(x); }
+    line('stage', d.stage === 'connect' ? 'connection (no HTTP answer)' : d.stage === 'oauth' ? 'Zoho sign-in answered' : d.stage === 'books' ? 'Zoho Books answered' : d.stage);
+    line('host', d.host); line('kind', d.kind); line('timeout type', d.timeout_type); line('attempts', d.attempts); line('HTTP status', d.http_status == null ? '— (no answer)' : d.http_status);
     line('cause code', d.cause_code); line('all cause codes', (d.cause_codes || []).length > 1 ? d.cause_codes : null); line('cause', d.cause); line('addresses tried', d.addresses);
-    line('OAuth error', d.oauth_error); line('error description', d.oauth_error_description); line('content type', d.stage === 'oauth' ? d.content_type : null); line('what it means', d.hint);
+    line('OAuth error', d.oauth_error); line('error description', d.oauth_error_description); line('content type', d.stage === 'oauth' ? d.content_type : null);
+    line('Zoho code', d.zoho_code); line('Zoho message', d.zoho_message); line('what it means', d.hint);
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'signin-diagnostics.json'), JSON.stringify({ generated: new Date().toISOString(), connection: { ...conn, credentials: undefined }, ...signIn, requests }, null, 2));
-    fs.writeFileSync(path.join(outDir, 'request-log.csv'), 'time,method,host,path,decision,outcome\n' + requests.map(x => [x.time, x.method, x.host, x.path, x.decision, x.outcome || ''].join(',')).join('\n') + '\n');
+    writeLog();
     const modifying = requests.filter(x => x.decision !== 'BLOCKED' && x.method !== 'GET' && x.decision !== 'access token').length;
     console.log(`\nProof: ${requests.filter(x => x.decision === 'read').length} Zoho Books read(s), ${requests.filter(x => x.decision === 'access token').length} access-token request(s), ${modifying} modifying call(s) sent, ${requests.filter(x => x.decision === 'BLOCKED').length} refused by the guard; Trigon copy unchanged: ${snap() === before ? 'yes' : 'NO'}`);
-    console.log(`Saved: ${path.join(outDir, 'signin-diagnostics.json')}\n\nVERDICT: BLOCKED — the sign-in did not succeed; nothing else was read.\n`);
+    console.log(`Saved: ${path.join(outDir, 'signin-diagnostics.json')}\n\nVERDICT: BLOCKED — ${classification}; nothing else was read.\n`);
     process.exit(2);
   }
-  signIn.result = { step: 'access-token request', kind: 'ok' };
+  const classify = (d, tokenStep) => d.stage === 'oauth' ? 'OAuth rejection' : d.kind === 'authorization_rejected' ? `authorization rejection (HTTP ${d.http_status})` : d.kind === 'zoho_error' ? 'Zoho error'
+    : tokenStep ? `sign-in server not reachable (${d.kind})` : d.timeout_type === 'connect' ? 'TCP / TLS connect timeout' : d.timeout_type ? 'API request timeout (connected, no answer in time)' : `connection failure (${d.kind})`;
+  const since = n => requests.slice(n);
+
+  // a. DNS, separately (Node resolves again inside fetch); b. the probe: any HTTP answer = DNS + TCP + TLS + HTTP work
+  const apiHost = conn.api_base_url ? new URL(conn.api_base_url).hostname : '';
+  try { const t0 = performance.now(), a = await require('dns').promises.lookup(apiHost, { all: true }); signIn.dns = { host: apiHost, addresses: a.map(x => x.address), ms: Math.round(performance.now() - t0) }; }
+  catch (e) { signIn.dns = { host: apiHost, error: e.code || e.message }; }
+  console.log(`\n  DNS ${apiHost}: ${signIn.dns.addresses ? `${signIn.dns.addresses.join(', ')} in ${signIn.dns.ms} ms` : 'FAILED ' + signIn.dns.error}`);
+  let n0 = requests.length;
+  try { const pr = await ctx.zohoProbe(); signIn.probe = pr;
+    console.log(`  Connectivity probe: HTTP ${pr.http_status} from ${pr.host} in ${pr.ms} ms (${pr.attempts} attempt${pr.attempts > 1 ? 's' : ''}) — the connection to Zoho Books works`);
+    for (const x of since(n0)) { target(x); showTiming(x); } }
+  catch (e) { const d = e.diag || { stage: 'other', kind: 'error', cause: String(e.message).slice(0, 300) }; stop('Connectivity probe to Zoho Books', classify(d, false), d, since(n0)); }
+
+  // c. the access token and the organisation
+  let org = null; n0 = requests.length;
+  try { org = await ctx.zohoOrganization(); }
+  catch (e) {
+    const d = e.diag || { stage: 'other', kind: 'error', cause: String(e.message).slice(0, 300) }, last = requests[requests.length - 1];
+    const tokenStep = d.stage === 'oauth' || (!!last && last.decision === 'access token' && requests.length > n0);
+    stop(tokenStep ? 'Access-token request' : 'GET /organizations', classify(d, tokenStep), d, since(n0));
+  }
+  console.log('  Access token: received (not shown)');
+  for (const x of since(n0)) { target(x); showTiming(x); }
+  signIn.result = { step: 'GET /organizations', classification: org ? 'ok' : 'organization rejection', kind: org ? 'ok' : 'organization_not_found' };
+  if (!org) console.log('  Classification: organization rejection — the organisation ID of the copy is not among the organisations this connection can read.');
   console.log(`\n  Organisation name: ${org ? org.name : '✖ NOT FOUND'}${org ? `  (ID ${org.id}, ${org.currency}${org.country ? ', ' + org.country : ''})` : ''}`);
-  if (!org) console.log('  The organisation ID of the copy is not among the organisations this connection can read.');
   if (!(await ask(`\nRun the read-only preflight for "${org ? org.name : conn.organization_id}"?`))) die('Stopped by the user — only the organisation was read.', 3);
 
   // ---------- 5. the preflight ----------
@@ -173,7 +231,7 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
   fs.mkdirSync(outDir, { recursive: true });
   const report = { generated: new Date().toISOString(), data_copy: dataDir, organization: org, sign_in: signIn, ...pf, verdict, blockers, proof, errors: r.errors, ops: r.ops };
   fs.writeFileSync(path.join(outDir, 'preflight-report.json'), JSON.stringify(report, null, 2));
-  fs.writeFileSync(path.join(outDir, 'request-log.csv'), 'time,method,host,path,decision,outcome\n' + requests.map(x => [x.time, x.method, x.host, x.path, x.decision, x.outcome || ''].join(',')).join('\n') + '\n');
+  writeLog();
   const zcell = z => z ? `${esc(z.name)}<br><small>${esc(z.id)} · ${esc(z.type)}${z.code ? ' · code ' + esc(z.code) : ''}${z.parent ? ' · under ' + esc(z.parent) : ''}</small>` : '—';
   const row = a => `<tr class="${a.status}"><td>${esc(a.code)}</td><td>${esc(a.label || a.proposed)}</td><td>${esc(a.needed || '')}</td><td>${esc(a.expected)}</td><td><b>${esc(a.status.replace('_', ' '))}</b></td><td>${zcell(a.zoho)}</td><td>${esc(a.note || '')}${a.candidates && a.candidates.length ? `<br><small>accounts of the right type: ${a.candidates.map(c => esc(`${c.name} (${c.id}${c.code ? ', ' + c.code : ''})`)).join('; ')}</small>` : ''}</td></tr>`;
   const tbl = (head, rows) => `<table><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr>${rows.join('')}</table>`;

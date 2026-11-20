@@ -192,8 +192,8 @@ server.listen(0, async () => {
     { const callsR = zoho.calls.length, bad = '1000.revokedrefresh00000000.00000000';
       const r2 = await spawnAsync(['--no-warnings', 'scripts/zoho-preflight.js', '--data', dataCopy, '--yes', '--out', path.join(copy, 'report-revoked')], { env: { ...env, ZOHO_REFRESH_TOKEN: bad } });
       assert.equal(r2.status, 2, r2.stdout + r2.stderr); assert.match(r2.stdout, /Access-token request FAILED/); assert.match(r2.stdout, /kind: +oauth_rejected/); assert.match(r2.stdout, /OAuth error: +invalid_code/);
-      assert.match(r2.stdout, /HTTP status: +200/); assert.match(r2.stdout, /refresh token is invalid, revoked/); assert.match(r2.stdout, /0 Zoho Books read\(s\), 1 access-token request\(s\), 0 modifying call\(s\) sent/);
-      assert.match(r2.stdout, /Trigon copy unchanged: yes/); assert.match(r2.stdout, /VERDICT: BLOCKED — the sign-in did not succeed/); assert.match(r2.stdout, /Zoho refresh credential: +set \(Windows environment/);
+      assert.match(r2.stdout, /HTTP status: +200/); assert.match(r2.stdout, /refresh token is invalid, revoked/); assert.match(r2.stdout, /1 Zoho Books read\(s\), 1 access-token request\(s\), 0 modifying call\(s\) sent/); assert.match(r2.stdout, /Connectivity probe: HTTP 401/); assert.match(r2.stdout, /FAILED — OAuth rejection/);
+      assert.match(r2.stdout, /Trigon copy unchanged: yes/); assert.match(r2.stdout, /VERDICT: BLOCKED — OAuth rejection; nothing else was read/); assert.match(r2.stdout, /Zoho refresh credential: +set \(Windows environment/);
       const d = fs.readFileSync(path.join(copy, 'report-revoked', 'signin-diagnostics.json'), 'utf8');
       for (const s of [bad, zoho.CLIENT_ID, zoho.CLIENT_SECRET]) assert.ok(!(r2.stdout + r2.stderr + d).includes(s), 'no secret printed or saved: ' + s);
       assert.equal(JSON.parse(d).result.oauth_error, 'invalid_code'); assert.deepEqual(zoho.calls.slice(callsR), [], 'no Books request at all'); }
@@ -211,6 +211,37 @@ server.listen(0, async () => {
       assert.equal(r4.status, 3, r4.stdout + r4.stderr); assert.match(r4.stdout, /\.env of this program folder: utf-8 with BOM, CRLF line endings; settings read: ZOHO_CLIENT_ID \(unreadable: BOM\)/); assert.match(r4.stdout, /✖ \.env starts with a byte-order mark.*ZOHO_CLIENT_ID/);
       assert.match(r4.stderr, /not read correctly .* nothing was sent/); assert.ok(!/access-token request/i.test(r4.stdout.split('Network:')[1] || ''), 'stopped before the token request'); assert.deepEqual(zoho.calls.slice(callsE), []); }
     out.push('Windows script: credentials shown as set / missing; revoked refresh token and unreachable sign-in server diagnosed; a BOM .env stops the run before anything is sent');
+    // the probe, timings and the sanitized request target on a normal run
+    assert.match(run.stdout, /Time limits: connect \(DNS \+ TCP \+ TLS\) 30000 ms, first response 30000 ms, whole request 60000 ms \(default\)/);
+    assert.match(run.stdout, /Connectivity probe: HTTP 401 from 127\.0\.0\.1:\d+ in \d+ ms \(1 attempt\)/);
+    assert.match(run.stdout, /request: +GET 127\.0\.0\.1\/books\/v3\/organizations · organization_id not sent · Authorization none/);
+    assert.match(run.stdout, /request: +GET 127\.0\.0\.1\/books\/v3\/organizations · organization_id not sent · Authorization token \(hidden\)/);
+    assert.match(run.stdout, /timing: +HTTP 401 · connection new · DNS \+ TCP \+ TLS \d+ ms · first response \d+ ms · total \d+ ms/);
+    assert.match(run.stdout, /Access token: received \(not shown\)/); assert.deepEqual(rep.sign_in.limits.connect_ms, 30000); assert.equal(rep.sign_in.probe.http_status, 401);
+    assert.ok(log.some(l => l[6] === 'set' && l[7] === 'token (hidden)'), 'request log: organization_id set / token hidden'); assert.ok(log.every(l => l[11] !== ''), 'request log: total time of every request');
+    // connect timeouts on the Books host, simulated under the script's own guard (the guard still decides and logs every attempt)
+    { const hook = path.join(copy, 'connect-timeout-hook.js');
+      fs.writeFileSync(hook, `const f = globalThis.fetch; let n = 0; const fail = +process.env.HOOK_FAIL_BOOKS;
+globalThis.fetch = async (url, o) => { if (new URL(String(url)).pathname.startsWith('/books/') && (!process.env.HOOK_ONLY_AUTH || (o && o.headers && o.headers.Authorization)) && ++n <= fail) throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('Connect Timeout Error (attempted address: www.zohoapis.com:443, timeout: 30000ms)'), { code: 'UND_ERR_CONNECT_TIMEOUT' }) }); return f(url, o); };`);
+      const books = r => fs.readFileSync(path.join(r, 'request-log.csv'), 'utf8').trim().split('\n').slice(1).map(l => l.split(','));
+      // first Books GET times out on connect, the retry succeeds, the run completes — read only
+      const callsA = zoho.calls.length, rA = await spawnAsync(['--no-warnings', '--require', hook, 'scripts/zoho-preflight.js', '--data', dataCopy, '--yes', '--from', '2026-11-01', '--to', '2026-12-31', '--out', path.join(copy, 'report-retry')], { env: { ...env, HOOK_FAIL_BOOKS: '1', ZOHO_PREFLIGHT_TIMEOUT_MS: '45000' } });
+      assert.equal(rA.status, 2, rA.stdout + rA.stderr); assert.match(rA.stdout, /Connectivity probe: HTTP 401 .* \(2 attempts\)/); assert.match(rA.stdout, /connect \(DNS \+ TCP \+ TLS\) 45000 ms.*\(ZOHO_PREFLIGHT_TIMEOUT_MS\)/);
+      assert.match(rA.stdout, /Organisation name: Trigon Civil Road Contracting/); assert.match(rA.stdout, /0 modifying call\(s\) sent, 0 refused by the guard; Trigon copy unchanged: yes/);
+      const la = books(path.join(copy, 'report-retry')); assert.equal(la[0][5], 'failed UND_ERR_CONNECT_TIMEOUT'); assert.equal(la[1][5], 'HTTP 401'); assert.ok(la.every(([, m, , p, d]) => (m === 'GET' && d === 'read') || (m === 'POST' && p === '/oauth/v2/token' && d === 'access token')));
+      assert.deepEqual(zoho.calls.slice(callsA).filter(c => !/^GET /.test(c)), [], 'Books: GET only');
+      const repA = JSON.parse(fs.readFileSync(path.join(copy, 'report-retry', 'preflight-report.json'), 'utf8')); assert.equal(repA.proof.modifying_calls_sent, 0); assert.deepEqual(repA.proof.books_methods, ['GET']);
+      // both attempts time out: classified, stopped before the token and the organisation, two attempts only
+      const callsB2 = zoho.calls.length, rB = await spawnAsync(['--no-warnings', '--require', hook, 'scripts/zoho-preflight.js', '--data', dataCopy, '--yes', '--out', path.join(copy, 'report-timeout')], { env: { ...env, HOOK_FAIL_BOOKS: '99' } });
+      assert.equal(rB.status, 2, rB.stdout + rB.stderr); assert.match(rB.stdout, /Connectivity probe to Zoho Books FAILED — TCP \/ TLS connect timeout/); assert.match(rB.stdout, /timeout type: +connect/); assert.match(rB.stdout, /attempts: +2/);
+      assert.match(rB.stdout, /cause code: +UND_ERR_CONNECT_TIMEOUT/); assert.match(rB.stdout, /2 Zoho Books read\(s\), 0 access-token request\(s\), 0 modifying call\(s\) sent, 0 refused by the guard; Trigon copy unchanged: yes/);
+      assert.match(rB.stdout, /VERDICT: BLOCKED — TCP \/ TLS connect timeout/); assert.deepEqual(zoho.calls.slice(callsB2), []);
+      const lb = books(path.join(copy, 'report-timeout')); assert.deepEqual(lb.map(l => [l[1], l[4], l[5]]), [['GET', 'read', 'failed UND_ERR_CONNECT_TIMEOUT'], ['GET', 'read', 'failed UND_ERR_CONNECT_TIMEOUT']]);
+      // the probe works, then GET /organizations times out on both attempts: the step and the class are named
+      const rC = await spawnAsync(['--no-warnings', '--require', hook, 'scripts/zoho-preflight.js', '--data', dataCopy, '--yes', '--out', path.join(copy, 'report-org-timeout')], { env: { ...env, HOOK_FAIL_BOOKS: '99', HOOK_ONLY_AUTH: '1' } });
+      assert.equal(rC.status, 2, rC.stdout + rC.stderr); assert.match(rC.stdout, /Connectivity probe: HTTP 401 .* \(1 attempt\)/); assert.match(rC.stdout, /GET \/organizations FAILED — TCP \/ TLS connect timeout/);
+      assert.match(rC.stdout, /3 Zoho Books read\(s\), 1 access-token request\(s\), 0 modifying call\(s\) sent/); assert.match(rC.stdout, /attempts: +2/);
+      out.push('Windows script: Books connect timeout → retried once and the run completes; both attempts time out → "TCP / TLS connect timeout", stopped, 0 modifying calls'); }
 
     console.log(out.map(x => '  ✔ ' + x).join('\n'));
     console.log('ZOHO PREFLIGHT TESTS PASSED');
