@@ -1,5 +1,7 @@
 Fonts bundled in this folder are licensed under the SIL Open Font License 1.1:
 Archivo (The Archivo Project Authors), IBM Plex Sans Arabic and IBM Plex Mono (IBM Corp.).
+trigon-symbols-400/600.woff2 ("Trigon Symbols"): arrows, check mark and not-equal sign subset from IBM Plex Sans 2.0.0
+(Copyright 2017 IBM Corp.), renamed because the original Reserved Font Name "Plex" may not be used for modified versions.
 
 Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo) Archivo-Italic[wdth,wght].ttf: Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)
 

@@ -1,5 +1,5 @@
 /* public quotation page: acceptance form */
-#qa,.qa-done{max-width:560px;margin:10mm auto;padding:16px;border:1px solid #D6D2C8;border-radius:4px;font-family:Arial,sans-serif;background:#fff}
+#qa,.qa-done{max-width:560px;margin:10mm auto;padding:16px;border:1px solid #D6D2C8;border-radius:4px;font-family:"Archivo","IBM Plex Sans Arabic",Arial,sans-serif;background:#fff}
 .qa-done{text-align:center;font-weight:600;color:#2E6B4E}
 #qa h2{margin:0 0 10px;font-size:15pt}
 #qa label{display:block;margin:8px 0 4px;font-size:10pt;color:#555}
@@ -11,3 +11,4 @@
 #qa-msg{color:#b3261e;min-height:1em}
 @media print{#qa{display:none}}
 @media (max-width:640px){table{display:block;overflow-x:auto;max-width:100%}body{overflow-x:hidden}}   /* phone: the A4 items table scrolls instead of being cut */
+#qa button,#qa input,#qa textarea{font:inherit}

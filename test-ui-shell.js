@@ -244,6 +244,19 @@ server.listen(0, async () => {
     assert.equal(await cs('.login', 'borderTopColor'), steel, 'sign-in card with the letterhead rule');
     await waitFor(`(() => { const m = document.querySelector('.login .lmark'); return !!m && !m.hidden && m.getBoundingClientRect().height > 0 && !document.querySelector('.login img.logo'); })()`);   // no logo installed: the Trigon mark instead
 
+    // 16. every glyph on screen is drawn by a Trigon brand font (Archivo, IBM Plex, Trigon Symbols): no system fallback font
+    const usedFonts = async () => {
+      await cdp('DOM.enable'); await cdp('CSS.enable'); const { root } = await cdp('DOM.getDocument', { depth: -1, pierce: true });
+      const ids = []; const walk = n => { if (n.nodeType === 1 && !['SCRIPT', 'STYLE', 'HEAD'].includes(n.nodeName)) ids.push(n.nodeId); (n.children || []).forEach(walk); (n.shadowRoots || []).forEach(walk); }; walk(root);
+      const fams = new Set(); for (const nodeId of ids) { try { (await cdp('CSS.getPlatformFontsForNode', { nodeId })).fonts.forEach(f => fams.add(f.familyName)); } catch {} } return [...fams];
+    };
+    for (const [lng, hash] of [['ar', 'dashboard'], ['en', 'invoices']]) {
+      await open('admin', 'secret12', lng, hash);
+      await ev(`document.querySelector('#main').insertAdjacentHTML('beforeend', '<p id="glyphs">→ ← ↳ ✓ ≠ <input type="file"></p>'); true`); await sleep(400);   // characters used in labels, an upload field
+      const odd = (await usedFonts()).filter(f => !/^(Archivo|IBM Plex|Trigon Symbols)/.test(f));
+      assert.deepEqual(odd, [], `${lng} ${hash}: text drawn with a non-brand font: ${odd.join(", ")}`);
+    }
+
     console.log('test-ui-shell: all passed');
   } catch (e) { console.error(e); process.exitCode = 1; }
   finally { try { ws && ws.close(); } catch {} if (proc) proc.kill('SIGKILL'); server.close(); setTimeout(() => process.exit(process.exitCode || 0), 200); }

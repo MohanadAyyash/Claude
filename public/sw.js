@@ -2,7 +2,7 @@
 // (the server stamps VERSION with a hash of the app files), and shows push notifications. API calls always go to the server.
 const VERSION = '__VERSION__', CACHE = 'trigon-' + VERSION, BRAND = 'trigon-brand';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'nav.js', 'ops.js', 'contract.js', 'statements.js', 'sales.js', 'hr.js', 'workforce.js', 'collab.js', 'claims.js', 'accounting.js', 'partners.js', 'staff.js', 'zoho.js', 'controls.js', 'treasury.js', 'spend.js', 'siteops.js', 'hired.js', 'mobile.js', 'boot.js', 'manifest.webmanifest', 'icon-192.png', 'fonts/fonts.css',
-  'fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2', 'fonts/ibm-plex-sans-arabic-arabic-600-normal.woff2', 'fonts/archivo-latin-400-normal.woff2', 'fonts/archivo-latin-600-normal.woff2'];
+  'fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2', 'fonts/ibm-plex-sans-arabic-arabic-600-normal.woff2', 'fonts/archivo-latin-400-normal.woff2', 'fonts/trigon-symbols-400.woff2', 'fonts/archivo-latin-600-normal.woff2'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).catch(() => {}));

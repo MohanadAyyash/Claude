@@ -21,7 +21,7 @@ PAGES.portal = async () => {
   const card = document.createElement('div'); card.className = 'card'; card.style.textAlign = 'center';
   card.innerHTML = `<h2>${tr('الحضور', 'Attendance')}${st.site ? ` — ${esc(st.site.name)}` : ''}</h2>
     <p class="muted">${last ? `${last.kind === 'in' ? tr('آخر دخول', 'Last in') : tr('آخر خروج', 'Last out')} ${esc(last.at.slice(11, 16))}${last.inside === 0 ? ` · <span class="neg">${tr('خارج الموقع', 'outside the site')}</span>` : ''}` : tr('لم تسجّل حضوراً اليوم', 'Not clocked in today')}</p>
-    <button class="btn" id="clk" style="font-size:20px;padding:16px 28px;width:100%;max-width:340px">${st.clocked_in ? '⏹ ' + tr('تسجيل الانصراف', 'Clock out') : '▶ ' + tr('تسجيل الحضور', 'Clock in')}</button>
+    <button class="btn" id="clk" style="font-size:20px;padding:16px 28px;width:100%;max-width:340px">${st.clocked_in ? ico('stop') + ' ' + tr('تسجيل الانصراف', 'Clock out') : ico('play') + ' ' + tr('تسجيل الحضور', 'Clock in')}</button>
     <p class="muted" style="font-size:12px">${tr('يُسجَّل الوقت من الخادم ويُرفق موقعك الحالي.', 'The time comes from the server and your current location is attached.')}${st.site && !st.site.located ? ' ' + tr('(موقع المشروع غير محدد بعد)', '(project location not set yet)') : ''}</p>`;
   $('#main .bar').after(card);
   $('#clk').onclick = guard(async () => {

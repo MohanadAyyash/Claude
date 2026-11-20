@@ -49,4 +49,20 @@ for (const f of fs.readdirSync(path.join(__dirname, 'public')).filter(f => f.end
   fs.readFileSync(path.join(__dirname, 'public', f), 'utf8').split('\n').forEach((l, i) => assert.doesNotMatch(l, EMOJI, `public/${f}:${i + 1} uses an emoji icon`));
 }
 
+// every character the screens use is drawn by a Trigon brand font (Archivo, IBM Plex): no browser fallback font
+{ const css = fs.readFileSync(path.join(__dirname, 'public', 'fonts', 'fonts.css'), 'utf8');
+  const sym = /@font-face\{font-family:"Archivo";font-weight:400;src:url\(trigon-symbols-400\.woff2\)[^}]*unicode-range:([^;}]+)/.exec(css);
+  assert.ok(sym, 'arrows and marks come from IBM Plex Sans (trigon-symbols) inside the Archivo family');
+  assert.ok(fs.existsSync(path.join(__dirname, 'public', 'fonts', 'trigon-symbols-400.woff2')) && fs.existsSync(path.join(__dirname, 'public', 'fonts', 'trigon-symbols-600.woff2')));
+  const inRange = cp => sym[1].split(',').some(r => { const [a, b] = r.trim().replace(/^U\+/i, '').split('-').map(h => parseInt(h, 16)); return cp >= a && cp <= (b || a); });
+  for (const ch of ['→', '←', '↳', '✓', '≠']) assert.ok(inRange(ch.codePointAt(0)), ch + ' covered');
+  for (const f of fs.readdirSync(path.join(__dirname, 'public')).filter(f => f.endsWith('.js')))
+    fs.readFileSync(path.join(__dirname, 'public', f), 'utf8').split('\n').forEach((l, i) => { if (!/^\s*\/\//.test(l)) assert.doesNotMatch(l, /[⋯⏳⏹▶]/, `public/${f}:${i + 1} uses a symbol no brand font has`); });
+}
+
+// the client's quotation-acceptance page (public/qa.css, modules/sales.js) uses the brand fonts and only characters they have
+{ const qa = fs.readFileSync(path.join(__dirname, 'public', 'qa.css'), 'utf8'), sales = fs.readFileSync(path.join(__dirname, 'modules', 'sales.js'), 'utf8');
+  assert.match(qa, /#qa,\.qa-done\{[^}]*font-family:"Archivo","IBM Plex Sans Arabic"/); assert.match(qa, /#qa button,#qa input,#qa textarea\{font:inherit\}/);
+  assert.doesNotMatch(sales, /✔/, 'no heavy check mark (not in the brand fonts) on the client page'); }
+
 console.log('test-nav: all passed');

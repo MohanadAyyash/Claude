@@ -31,7 +31,8 @@ const ICO = { search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>', 
   mail: '<rect x="3" y="5" width="18" height="14"/><path d="M3 6l9 7 9-7"/>', lock: '<rect x="5" y="11" width="14" height="10"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   clip: '<path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L14 7"/>', phone: '<rect x="7" y="2" width="10" height="20"/><path d="M11 18h2"/>',
   pin: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>', flag: '<path d="M5 21V4h11l-2 4 2 4H5"/>',
-  star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>' };
+  star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>', clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  play: '<path d="M7 4l13 8-13 8z"/>', stop: '<rect x="6" y="6" width="12" height="12"/>' };
 const ico = n => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICO[n]}</svg>`;
 const MK = { ok: '<i class="mk ok" aria-hidden="true"></i>', warn: '<i class="mk warn" aria-hidden="true"></i>', bad: '<i class="mk bad" aria-hidden="true"></i>' };   // status marks (replace the old emoji)
 const MARK = '<span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>';

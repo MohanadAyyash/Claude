@@ -152,3 +152,4 @@ input:focus,select:focus,textarea:focus{outline:2px solid rgba(31,58,95,.18);bor
 .side a .ico,.gotob .ico{color:var(--brand)}
 .mk{display:inline-block;width:10px;height:3px;vertical-align:middle;margin-inline-end:6px;background:var(--mute)}.mk.ok{background:#2E6B4E}.mk.warn{background:#8C6420}.mk.bad{background:#A33B32}
 a{color:var(--brand);text-decoration-color:rgba(31,58,95,.35);text-underline-offset:2px}
+input[type=file]::file-selector-button{font:inherit;color:var(--brand);background:var(--card);border:1px solid var(--line);border-radius:4px;padding:5px 10px;margin-inline-end:8px;cursor:pointer}
