@@ -18,7 +18,9 @@ PAGES.copilot = async () => {
       const url = new URL(raw), host = url.hostname.toLowerCase();
       const allowed = ['sharepoint.com', 'sharepoint.us', 'sharepoint.de', 'sharepoint.cn', 'sharepoint.africa', 'sharepoint-mil.us']
         .some(suffix => host === suffix || host.endsWith(`.${suffix}`));
-      return url.protocol === 'https:' && allowed && !url.username && !url.password && (!url.port || url.port === '443') ? url.href : '';
+      if (url.protocol !== 'https:' || !allowed || url.username || url.password || (url.port && url.port !== '443')) return '';
+      url.search = ''; url.hash = '';
+      return url.href;
     } catch { return ''; }
   };
   const labels = {
