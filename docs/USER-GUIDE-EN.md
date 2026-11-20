@@ -1604,6 +1604,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 4. **Send to Zoho now**, or tick **Enable the link** and **Send automatically every day**.
 5. **Send history** → **Retry failed**. The **Daily transactions report** lists what was invoiced, billed, received and paid each day.
 6. Standalone edition: use the **Zoho Books import files** instead.
+7. **Zoho Accounting Sync** (card at the top): **Run read-only preflight** → **Preview missing accounts** (exact changes, nothing sent) → **Provision approved accounts** (administrator, after confirming the preview; the preflight then runs again). Nothing is sent to Zoho until the **Gate** is **READY**. Then tick **Continuous sync**: every change is sent within a minute, retried if Zoho is down, and read back. **Run reconciliation** / **View differences** compare every record and the Trial Balance of Trigon and Zoho at the same date. Conflicts are never fixed automatically. Details: ZOHO.md.
 
 <!--img-->
 

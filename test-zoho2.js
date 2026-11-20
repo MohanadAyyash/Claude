@@ -5,7 +5,9 @@ process.env.ZOHO_NO_SCHEDULER = '1'; process.env.SALES_NO_SCHEDULER = '1';
 const mockZoho = require('./tools/zoho-mock.js');
 const zoho = mockZoho();
 process.env.ZOHO_CLIENT_ID = zoho.CLIENT_ID; process.env.ZOHO_CLIENT_SECRET = zoho.CLIENT_SECRET;      // as the office PC's .env would
-const { server } = require('./server.js');
+const { server, ctx } = require('./server.js');
+// this suite tests the send engine itself: the READY gate of the account-provisioning workflow is tested in test-zohoacct.js
+ctx.db.prepare("UPDATE zoho_config SET value='0' WHERE key='gate_required'").run();
 
 server.listen(0, async () => {
   const base = `http://localhost:${server.address().port}/api/`; let cookie = '';
