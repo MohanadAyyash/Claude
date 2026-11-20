@@ -319,7 +319,59 @@ module.exports = ctx => {
 
   // the preflight report of a dry run: which organisation, what is already linked and synced, what would be created / updated /
   // left alone, conflicts and possible duplicates, and how every Trigon account the sync uses resolves in Zoho
-  async function preflight(c, offline, items, accts, coa, from, to) {
+  // ---------- the accounts the proposed synchronisation needs (this one, the missing transactions and the ledger alignment) ----------
+  // Each Trigon code with the Zoho account types that fit it. Validation is by type and by our mapping, never by a similar name.
+  const REQUIRED = [
+    ['1000', 'Bank', ['bank'], 'now'], ['1010', 'Petty cash (office float)', ['cash'], 'new types'], ['1020', 'Cash on hand', ['cash'], 'now'],
+    ['1030', 'Employee cash custody', ['cash'], 'new types'], ['1050', 'Cheques in hand (post-dated received)', ['other_current_asset'], 'ledger alignment'],
+    ['1100', 'Accounts receivable', ['accounts_receivable'], 'now'], ['1150', 'Retention receivable', ['other_current_asset', 'accounts_receivable'], 'now'],
+    ['1200', 'VAT input', 'tax', 'now'], ['1300', 'Employee advances', ['other_current_asset'], 'now'],
+    ['1600', 'Fixed assets (cost)', ['fixed_asset'], 'new types'], ['1690', 'Accumulated depreciation', ['fixed_asset'], 'new types'],
+    ['2000', 'Accounts payable', ['accounts_payable'], 'now'], ['2050', 'Cheques issued (post-dated payable)', ['other_current_liability'], 'ledger alignment'],
+    ['2100', 'VAT output', 'tax', 'now'], ['2200', 'Salaries payable', ['other_current_liability'], 'now'], ['2250', 'Payroll deductions payable', ['other_current_liability'], 'now'],
+    ['2260', 'Employee expense claims payable', ['other_current_liability'], 'new types'], ['2300', 'End-of-service provision', ['long_term_liability', 'other_liability', 'other_current_liability'], 'now'],
+    ['2400', 'Advances from customers', ['other_current_liability'], 'ledger alignment'],
+    ['3100', 'Retained earnings', ['equity'], 'new types'], ['3900', 'Opening balance equity', ['equity'], 'new types'],
+    ['5200', 'Site labour (payroll cost)', ['cost_of_goods_sold', 'expense'], 'now'], ['6200', 'Head-office salaries', ['expense'], 'now'], ['5260', 'End-of-service expense', ['expense', 'cost_of_goods_sold'], 'now'],
+    ['6100', 'Depreciation', ['expense', 'other_expense'], 'new types'], ['6150', 'Gain / loss on disposal of assets', ['other_expense', 'other_income', 'expense'], 'new types'],
+  ];
+  const PARTNER_REQ = [['3000', 'Capital', 'Partner Capital', ['equity']], ['2500', 'Loan', 'Partner Loans', ['long_term_liability', 'other_liability', 'other_current_liability']], ['3110', 'Current', 'Partner Current Accounts', ['equity']]];
+  const AUTO = { 1000: 'bank', 1020: 'cash', 1100: 'accounts_receivable', 2000: 'accounts_payable' };   // Zoho's own account of that type, if there is exactly one
+  function requiredAccounts(coa, lk, partners) {
+    const byId = new Map((coa || []).map(a => [String(a.account_id), a])), mapped = key => mapOf('account', key);
+    const view = a => a ? { id: String(a.account_id), name: a.account_name || '', type: a.account_type || '', code: a.account_code || '', parent: a.parent_account_name || '' } : null;
+    const check = (key, types, auto) => {
+      const m = mapped(key);
+      if (m) { const a = byId.get(String(m)); if (!a) return { status: 'not_found', zoho: { id: String(m) }, note: 'mapped to a Zoho account that does not exist in this organisation (or is inactive)' };
+        return types.includes(a.account_type) ? { status: 'mapped', zoho: view(a) } : { status: 'type_mismatch', zoho: view(a), note: `Zoho type is ${a.account_type}; expected ${types.join(' or ')}` }; }
+      if (auto) { const same = (coa || []).filter(a => a.account_type === auto && a.is_active !== false);
+        if (same.length === 1) return { status: 'automatic', zoho: view(same[0]), note: `the only Zoho account of type ${auto}` };
+        if (same.length > 1) return { status: 'ambiguous', zoho: null, note: `${same.length} Zoho accounts of type ${auto} — map the right one`, candidates: same.slice(0, 8).map(view) }; }
+      return { status: 'missing', zoho: null, note: 'not mapped', candidates: (coa || []).filter(a => types.includes(a.account_type)).slice(0, 8).map(view) };
+    };
+    const rows = REQUIRED.map(([code, label, types, needed]) => {
+      if (types === 'tax') { const t = lk && lk.std; return { code, label, needed, expected: 'Zoho tax 5%', ...(t ? { status: 'mapped', zoho: { id: String(t.tax_id), name: t.tax_name, type: 'tax', code: `${t.tax_percentage}%` } } : { status: 'missing', zoho: null, note: 'no 5% tax in this Zoho organisation' }) }; }
+      return { code, label, needed, expected: types.join(' / '), ...check('acct:' + code, types, AUTO[code]) };
+    });
+    for (const cat of Object.keys(CAT)) { const code = ctx.expenseCode ? ctx.expenseCode(cat) : cat, types = cat === 'asset' ? ['fixed_asset'] : ['cost_of_goods_sold', 'expense'];
+      const r = check('cat:' + cat, types); rows.push({ code: `${code} (${cat})`, label: `Expense category — ${CAT[cat]}`, needed: 'now', expected: types.join(' / '), ...r, ...(r.status === 'missing' ? { note: 'not mapped — today the send would pick an account by a similar name or fall back to Cost of Goods Sold' } : {}) }); }
+    const partnerRows = (partners || []).map(p => ({ partner: p.name, id: p.id, accounts: PARTNER_REQ.map(([code, suffix, parent, types]) => ({ code, parent, proposed: `${p.name} ${suffix}`, expected: types.join(' / '), ...check(`acct:${code}:p${p.id}`, types) })) }));
+    return { rows, partners: partnerRows };
+  }
+  // the connection, before anything is read: data centre, the URLs it resolves to, and whether they belong together
+  function connection(c) {
+    const acc = accountsUrl(c), mock = !!process.env.ZOHO_ACCOUNTS_URL;
+    let api = ''; try { api = c.api_domain ? new URL(c.api_domain).origin : ''; } catch { /* not connected */ }
+    const expected = (Z.ACCOUNTS[c.dc] || '').replace('://accounts.zoho.', '://www.zohoapis.');
+    const dcOk = mock ? null : !!(api && expected && api === expected && acc === Z.ACCOUNTS[c.dc]);
+    return { connected: !!(c.client_id && c.client_secret && c.refresh_token), organization_id: c.org || '', data_centre: c.dc, uae: c.dc === 'ae', accounts_url: acc, api_base_url: api ? api + '/books/v3' : '', expected_api_base_url: expected ? expected + '/books/v3' : '',
+      data_centre_ok: dcOk, note: mock ? 'development mock (ZOHO_ACCOUNTS_URL set) — data centre not checked' : dcOk ? `API and sign-in on the ${c.dc} data centre` : `the API domain ${api || '(none)'} does not belong to the ${c.dc} data centre (expected ${expected})` };
+  }
+  ctx.zohoConnection = () => connection(cfg());
+  ctx.zohoOrganization = async () => { const c = cfg(); const o = ((await client(c, true).get('/organizations')).organizations || []).find(x => String(x.organization_id) === String(c.org)); return o ? { id: String(o.organization_id), name: o.name, currency: o.currency_code, country: o.country || '' } : null; };
+  ctx.zohoPreflight = (from, to) => sync({ trigger: 'preflight', user: 'preflight script', from, to, dryRun: true });
+
+  async function preflight(c, offline, items, accts, coa, from, to, lk, errors = []) {
     const names = Object.fromEntries((coa || []).map(a => [String(a.account_id), `${a.account_name}${a.account_code ? ' (' + a.account_code + ')' : ''}`]));
     let organization = { id: c.org || '', name: c.org_name || '' };
     if (!offline) {
@@ -332,7 +384,33 @@ module.exports = ctx => {
     return { read_only: true, offline, period: { from, to }, organization, data_centre: c.dc, api_host: host,
       mappings: db.prepare('SELECT kind, local_key, zoho_id, label FROM zoho_map ORDER BY kind, local_key').all(),
       synced: db.prepare('SELECT kind, status, COUNT(*) n FROM zoho_sync GROUP BY kind, status ORDER BY kind, status').all(),
-      plan, conflicts: items.filter(i => ['conflict', 'link'].includes(i.action)), missing_accounts: accounts.filter(a => a.how.startsWith('missing')), accounts, items: items.slice(0, 2000) };
+      plan, conflicts: items.filter(i => ['conflict', 'link'].includes(i.action)), missing_accounts: accounts.filter(a => a.how.startsWith('missing')), accounts, items: items.slice(0, 2000),
+      ...readiness(c, offline, organization, items, coa, lk, errors) };
+  }
+  // what is already in the send log, grouped as the accountant reads it; the required accounts; the verdict and what to configure
+  function readiness(c, offline, organization, items, coa, lk, errors) {
+    const GROUP = k => (k === 'invoice' ? 'invoices' : k === 'bill' ? 'bills' : k === 'payment' ? 'payments' : k === 'contact' ? 'contacts' : /^jv_(payroll|paypaid|eos|advance)/.test(k) ? 'payroll' : /^jv_/.test(k) ? 'journals' : k);
+    const already = {}; for (const r of db.prepare('SELECT kind, status, COUNT(*) n FROM zoho_sync GROUP BY kind, status').all()) { const g = already[GROUP(r.kind)] ||= {}; g[r.status] = (g[r.status] || 0) + r.n; }
+    const count = act => items.filter(i => act.includes(i.action)).length;
+    const summary = { would_create: count(['create']), would_update: count(['update']), would_delete: count(['remove', 'void']), unchanged_already_synced: count(['unchanged']), possible_duplicates: count(['link']), conflicts: count(['conflict']), skipped: count(['skip']), errors: count(['error']) };
+    const partners = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='partners'").get() ? db.prepare('SELECT id, name FROM partners ORDER BY id').all() : [];
+    const req = requiredAccounts(coa, lk, partners), conn = connection(c);
+    const all = [...req.rows, ...req.partners.flatMap(p => p.accounts.map(a => ({ ...a, label: `${a.proposed} (under ${a.parent})` })))];
+    const blockers = [], todo = [];
+    if (!conn.connected) blockers.push('Not connected to Zoho');
+    if (offline) blockers.push('Zoho could not be reached (offline) — nothing was checked against the organisation');
+    if (organization.error) blockers.push(`Organisation ${c.org || '(none)'}: ${organization.error}`);
+    if (conn.data_centre_ok === false) blockers.push(conn.note);
+    for (const a of all.filter(a => a.status === 'type_mismatch')) blockers.push(`${a.code} ${a.label}: mapped to "${a.zoho.name}" — ${a.note}`);
+    for (const a of all.filter(a => a.status === 'not_found')) blockers.push(`${a.code} ${a.label}: ${a.note} (id ${a.zoho.id})`);
+    if (summary.conflicts) blockers.push(`${summary.conflicts} conflict(s): documents edited in Trigon after they were paid in Zoho — correct them in Zoho or with a credit note`);
+    if (summary.possible_duplicates) blockers.push(`${summary.possible_duplicates} possible duplicate(s): documents already in Zoho with the same number but not in Trigon's send log — confirm each is the same document`);
+    const apiErr = (errors || []).filter(e => !/map our account|first\b|not mapped/i.test(e)); if (apiErr.length) blockers.push(`${apiErr.length} error(s) while reading Zoho — see the errors list`);
+    for (const a of all.filter(a => ['missing', 'ambiguous'].includes(a.status))) todo.push(a.code.includes('(') || !a.parent
+      ? `${a.code} ${a.label}: ${a.status === 'ambiguous' ? a.note : `create (or choose) a Zoho account of type ${a.expected}`} and map it on the Zoho page${a.needed && a.needed !== 'now' ? ` (needed by: ${a.needed})` : ''}`
+      : `Partner ${a.proposed}: create a Zoho account of type ${a.expected} under the parent account "${a.parent}" and map it (code ${a.code})`);
+    const verdict = blockers.length ? 'BLOCKED' : todo.length ? 'READY WITH MISSING MAPPINGS' : 'READY';
+    return { connection: conn, already_synced: already, summary, required_accounts: req.rows, partner_accounts: req.partners, verdict, blockers, to_configure: todo };
   }
 
   let running = null;
@@ -343,7 +421,7 @@ module.exports = ctx => {
     if (dryRun) dry = { recs: new Map(), ops: [], items: [], accts: new Map() };
     let offline = false;
     running = (async () => {
-      const cl = dryRun ? dryClient(c) : client(c), lk = await lookups(cl); offline = !!cl.offline; run.coa = lk.coa; run.cl = cl;
+      const cl = dryRun ? dryClient(c) : client(c), lk = await lookups(cl); offline = !!cl.offline; run.coa = lk.coa; run.cl = cl; run.lk = lk;
       const { e, invoices, bills, payments } = data(from || c.start || null, to || today()); run.e = e;
       const each = async (kind, id, label, fn) => { try { await fn(); } catch (err) { run.failed++; run.errors.push(`${label}: ${err.message}`); note(kind, id, label, 'error', err.message); mark(kind, id, null, null, 'error', err.message.slice(0, 500), null); } };
       if (dryRun) {                                                                    // accounts every invoice / bill uses in Zoho without a mapping of ours
@@ -410,7 +488,7 @@ module.exports = ctx => {
     if (dryRun) {
       const { ops, items, accts } = dry; dry = null;
       return { dry_run: true, offline, would_send: run.sent, would_update: run.updated, failed: run.failed, skipped: run.skipped, errors: message && !run.errors.length ? [message] : run.errors,
-        ops: ops.map(({ body, ...o }) => o), payloads: ops.slice(0, 200), preflight: await preflight(c, offline, items, accts, run.coa, from || c.start || null, to || today()) };
+        ops: ops.map(({ body, ...o }) => o), payloads: ops.slice(0, 200), preflight: await preflight(c, offline, items, accts, run.coa, from || c.start || null, to || today(), run.lk, run.errors) };
     }
     db.prepare('INSERT INTO zoho_runs(started,finished,trigger,user,sent,updated,failed,skipped,message) VALUES(?,?,?,?,?,?,?,?,?)').run(started, now(), trigger, user, run.sent, run.updated, run.failed, run.skipped, message);
     setCfg('last_run', today());

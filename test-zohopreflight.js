@@ -57,6 +57,11 @@ server.listen(0, async () => {
     zoho.T.invoices.find(i => i.invoice_number === inv1).status = 'paid';
     ok(await call('PUT', `invoices/${inv}`, { notes: 'edited after payment' }));
 
+    // a partner (his accounts are not in Zoho yet), 2400 mapped to an income account (wrong type), 1050 mapped to an account Zoho does not have
+    const PA = ok(await call('POST', 'partners', { name: 'Partner Alpha' })).id;
+    ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: 'acct:2400', zoho_id: '3004' }));
+    ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: 'acct:1050', zoho_id: '9999999' }));
+    zoho.T.bankaccounts.push({ account_id: '2003', account_name: 'Site Cash Box', account_type: 'cash', is_active: true });   // a second cash account: 1020 is no longer obvious
     // ---- the preflight: only GET requests reach the Books API, nothing changes in our send log either
     const logBefore = JSON.stringify(ctx.db.prepare('SELECT * FROM zoho_sync ORDER BY id').all()), mapBefore = JSON.stringify(ctx.db.prepare('SELECT * FROM zoho_map').all());
     const callsBefore = zoho.calls.length, rowsBefore = JSON.stringify(zoho.T);
@@ -97,6 +102,28 @@ server.listen(0, async () => {
     assert.match(acc('2100').how, /Standard Rate/); assert.ok(acc('4000'));
     out.push(`accounts: ${pf.accounts.length} Trigon accounts resolved, missing: ${pf.missing_accounts.map(a => a.code).join(', ')}`);
 
+    // ---- readiness: connection, what is already synced, the accounts the proposed sync needs (by type, never by name), the verdict
+    assert.equal(pf.connection.connected, true); assert.equal(pf.connection.organization_id, zoho.ORG); assert.equal(pf.connection.data_centre, 'ae'); assert.equal(pf.connection.uae, true);
+    assert.equal(pf.connection.data_centre_ok, null, 'the mock is not a Zoho data centre: not judged');
+    assert.ok(pf.already_synced.invoices.ok >= 1 && pf.already_synced.payments.ok >= 1 && pf.already_synced.payroll, 'grouped: invoices, payments, payroll');
+    assert.equal(pf.summary.would_create, pf.items.filter(i => i.action === 'create').length); assert.equal(pf.summary.would_delete, 2); assert.equal(pf.summary.possible_duplicates, 1); assert.equal(pf.summary.conflicts, 1);
+    const req = code => pf.required_accounts.find(a => a.code === code);
+    for (const c of ['1000', '1010', '1020', '1030', '1050', '1200', '1300', '2000', '2050', '2100', '2200', '2260', '2300', '2400', '3100', '3900', '5200', '6200', '1600', '1690']) assert.ok(req(c), 'required: ' + c);
+    assert.equal(req('5200').status, 'mapped'); assert.deepEqual([req('5200').zoho.id, req('5200').zoho.type], ['3101', 'expense']);
+    assert.equal(req('2400').status, 'type_mismatch'); assert.match(req('2400').note, /Zoho type is income; expected other_current_liability/);
+    assert.equal(req('1050').status, 'not_found');
+    assert.equal(req('2300').status, 'missing'); assert.ok(req('2300').candidates.some(c => c.id === '3106'), 'accounts of the right type are offered, not chosen');
+    assert.equal(req('1000').status, 'automatic', 'the only bank account'); assert.equal(req('1020').status, 'ambiguous'); assert.match(req('1020').note, /2 Zoho accounts of type cash — map the right one/); assert.equal(req('1100').status, 'automatic');
+    assert.equal(req('1010').status, 'missing', 'no name matching: "Petty Cash" in Zoho is not taken for 1010');
+    assert.equal(req('2100').status, 'mapped'); assert.equal(req('2100').zoho.type, 'tax');
+    const pa = pf.partner_accounts.find(p => p.id === PA); assert.deepEqual(pa.accounts.map(a => [a.code, a.proposed, a.parent, a.status]),
+      [['3000', 'Partner Alpha Capital', 'Partner Capital', 'missing'], ['2500', 'Partner Alpha Loan', 'Partner Loans', 'missing'], ['3110', 'Partner Alpha Current', 'Partner Current Accounts', 'missing']]);
+    assert.equal(pf.verdict, 'BLOCKED');
+    for (const re of [/2400 Advances from customers: mapped to "Sales" — Zoho type is income/, /1050 .*does not exist/, /1 conflict/, /1 possible duplicate/]) assert.ok(pf.blockers.some(b => re.test(b)), 'blocker: ' + re);
+    assert.ok(pf.to_configure.some(t => /^Partner Partner Alpha Current: create a Zoho account of type equity under the parent account "Partner Current Accounts"/.test(t)));
+    assert.ok(pf.to_configure.some(t => /^2300 End-of-service provision: create \(or choose\) a Zoho account of type long_term_liability/.test(t)));
+    out.push(`readiness: verdict ${pf.verdict}, ${pf.blockers.length} blocker(s), ${pf.to_configure.length} item(s) to configure`);
+
     // the read-only client refuses any write before it is sent
     const c = ctx.db.prepare("SELECT key, value FROM zoho_config").all().reduce((o, r) => (o[r.key] = r.value, o), {});
     const ro = Z.createClient({ accounts: zoho.accountsUrl, client_id: zoho.CLIENT_ID, client_secret: zoho.CLIENT_SECRET, refresh_token: c.refresh_token, api_domain: c.api_domain, org: zoho.ORG, readOnly: true });
@@ -109,6 +136,50 @@ server.listen(0, async () => {
     // a real send afterwards still works and is not affected by the dry run
     const r = ok(await call('POST', 'zoho/sync', RANGE)); assert.ok(r.sent >= 1);
     assert.equal(zoho.T.invoices.filter(i => i.invoice_number === n3).length, 1, 'the existing Zoho invoice was linked, not created twice');
+    // ---- the UAE data centre: the API domain must belong to it (checked without the mock override, nothing is sent)
+    { const saved = process.env.ZOHO_ACCOUNTS_URL, dom = ctx.db.prepare("SELECT value FROM zoho_config WHERE key='api_domain'").get().value, setDom = v => ctx.db.prepare("UPDATE zoho_config SET value=? WHERE key='api_domain'").run(v);
+      delete process.env.ZOHO_ACCOUNTS_URL;
+      try {
+        setDom('https://www.zohoapis.ae'); let k = ctx.zohoConnection();
+        assert.deepEqual([k.data_centre_ok, k.accounts_url, k.api_base_url], [true, 'https://accounts.zoho.ae', 'https://www.zohoapis.ae/books/v3']);
+        setDom('https://www.zohoapis.com'); k = ctx.zohoConnection();
+        assert.equal(k.data_centre_ok, false); assert.match(k.note, /does not belong to the ae data centre \(expected https:\/\/www\.zohoapis\.ae\)/);
+      } finally { process.env.ZOHO_ACCOUNTS_URL = saved; setDom(dom); }
+      out.push('UAE data centre: zohoapis.ae accepted, zohoapis.com refused');
+    }
+
+    // ---- the Windows script: its own guard decides every request before it is sent
+    const { decide } = require('./scripts/zoho-preflight.js');
+    const BOOKS = 'https://www.zohoapis.ae/books/v3/invoices?organization_id=1';
+    assert.equal(decide(BOOKS, { method: 'GET' }), 'read');
+    for (const m of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(decide(BOOKS, { method: m }), 'BLOCKED', m);
+    assert.equal(decide('https://accounts.zoho.ae/oauth/v2/token', { method: 'POST', body: 'grant_type=refresh_token&refresh_token=x' }), 'access token');
+    assert.equal(decide('https://accounts.zoho.ae/oauth/v2/token', { method: 'POST', body: 'grant_type=authorization_code&code=x' }), 'BLOCKED', 'no new connection');
+    assert.equal(decide('https://accounts.zoho.ae/oauth/v2/token/revoke?token=x', { method: 'POST' }), 'BLOCKED', 'no revoke');
+    assert.equal(decide('https://graph.microsoft.com/v1.0/me', { method: 'GET' }), 'BLOCKED', 'nothing but Zoho');
+    // the script itself, on a copy of this database, against the mock: confirms, runs, writes the report and the request log
+    const { spawn } = require('child_process');   // not spawnSync: the Zoho mock answers from this same process
+    const spawnAsync = (args, opts) => new Promise(res => { const c = spawn(process.execPath, args, opts); let stdout = '', stderr = ''; c.stdout.on('data', d => stdout += d); c.stderr.on('data', d => stderr += d); c.on('close', status => res({ status, stdout, stderr })); });
+    const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-zohopre-copy-')), dataCopy = path.join(copy, 'data'); fs.mkdirSync(dataCopy);
+    ctx.db.exec(`VACUUM INTO '${path.join(dataCopy, 'erp.db').replace(/'/g, "''")}'`);
+    const env = { ...process.env, ZOHO_ACCOUNTS_URL: zoho.accountsUrl, DATA_DIR: '' }, callsB = zoho.calls.length;
+    const run = await spawnAsync(['--no-warnings', 'scripts/zoho-preflight.js', '--data', dataCopy, '--yes', '--from', '2026-11-01', '--to', '2026-12-31', '--out', path.join(copy, 'report')], { env });
+    assert.equal(run.status, 2, 'BLOCKED → exit code 2\n' + run.stdout + run.stderr);
+    assert.match(run.stdout, new RegExp(`Organisation ID: +${zoho.ORG}`)); assert.match(run.stdout, /Data centre: +ae \(UAE\)/); assert.match(run.stdout, /Organisation name: Trigon Civil Road Contracting/);
+    assert.match(run.stdout, /0 modifying call\(s\) sent, 0 refused by the guard; Trigon copy unchanged: yes/); assert.match(run.stdout, /VERDICT: BLOCKED/);
+    assert.deepEqual(zoho.calls.slice(callsB).filter(c => !/^GET /.test(c)), [], 'the real run made zero modifying calls on the Books API');
+    const rep = JSON.parse(fs.readFileSync(path.join(copy, 'report', 'preflight-report.json'), 'utf8'));
+    assert.equal(rep.proof.modifying_calls_sent, 0); assert.deepEqual(rep.proof.books_methods, ['GET']); assert.ok(rep.proof.access_token_requests <= 1); assert.equal(rep.proof.local_copy_unchanged, true);
+    const log = fs.readFileSync(path.join(copy, 'report', 'request-log.csv'), 'utf8').trim().split('\n').slice(1).map(l => l.split(','));
+    assert.ok(log.length >= 5 && log.every(([, m, , p, d]) => (m === 'GET' && d === 'read') || (m === 'POST' && p === '/oauth/v2/token' && d === 'access token')), 'request log: reads and the access token only');
+    assert.ok(!/refresh_token|access_token|Zoho-oauthtoken/.test(fs.readFileSync(path.join(copy, 'report', 'request-log.csv'), 'utf8')), 'no token in the log');
+    const html = fs.readFileSync(path.join(copy, 'report', 'preflight-report.html'), 'utf8');
+    for (const t of ['Verdict: BLOCKED', 'Proof: zero modifying calls', 'Partner Alpha Capital', 'Partner Current Accounts', 'type mismatch', 'Already synced']) assert.ok(html.includes(t), 'report: ' + t);
+    // refuses a folder without a database (and so never creates one)
+    const bad = await spawnAsync(['--no-warnings', 'scripts/zoho-preflight.js', '--data', path.join(copy, 'nothing'), '--yes'], { env });
+    assert.equal(bad.status, 3); assert.match(bad.stderr, /No erp\.db/); assert.ok(!fs.existsSync(path.join(copy, 'nothing')));
+    out.push(`Windows script: ${log.length} request(s) logged — Books: GET only; verdict BLOCKED; report and request log written`);
+
     console.log(out.map(x => '  ✔ ' + x).join('\n'));
     console.log('ZOHO PREFLIGHT TESTS PASSED');
   } finally { server.close(); zoho.srv.close(); }
