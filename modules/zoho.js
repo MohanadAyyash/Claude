@@ -62,6 +62,11 @@ module.exports = ctx => {
   const pendingCreate = (kind, id, type, date) => { if (dry) return; mark(kind, id, null, type, (rec(kind, id) || {}).status === 'ok' ? 'ok' : 'sending', null, null, { date });
     db.prepare('UPDATE zoho_sync SET pending_create=1 WHERE kind=? AND local_id=?').run(kind, id); };
   const blocked = (code, msg) => Object.assign(new Error(`${code}: ${msg}`), { blocked: code });
+  // held: deliberately not sent yet, re-checked on every run (no Zoho call is made for it) — VAT pending, or an account whose
+  // accounting treatment is still to be decided (DEFERRED). Released by itself once the condition is gone.
+  const held = (code, msg) => Object.assign(new Error(`${code}: ${msg}`), { held: code });
+  const DEFERRED = { 6150: 'gain / loss on asset disposal: separate gain (Other Income) and loss (Other Expense) treatment, the same in Trigon and Zoho, is pending an accounting change' };
+  const vatPending = () => cfg().gate === 'READY_NON_VAT';                              // the gate opened for non-VAT records only (VAT registration pending)
   // closed accounting period (Settings → closing date): nothing dated on or before it is created, changed or removed in Zoho
   const lockDate = () => { try { const v = (db.prepare("SELECT value FROM settings WHERE key='lock_date'").get() || {}).value; return /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : ''; } catch { return ''; } };
   const guardPeriod = (date, what) => { const l = lockDate(); if (l && date && date <= l) throw blocked('CLOSED_PERIOD', `${what} dated ${date} is in the closed period (closed up to ${l}) — not changed in Zoho`); };
@@ -324,6 +329,8 @@ module.exports = ctx => {
     if (!d.inv && !d.bill) return skip('not linked to an invoice or bill — record it in Zoho directly');
     const docRec = rec(d.inv ? 'invoice' : 'bill', (d.inv || d.bill).id);
     if (docRec && docRec.zoho_type === 'creditnote') return skip('refund of a credit note — record it in Zoho as a credit note refund');
+    const docVat = d.inv ? Math.abs(d.inv.vat || 0) : d.bill ? Math.abs(d.bill.vat_amount || 0) : 0;
+    if (newMode() && !(docRec && docRec.zoho_id) && ((docRec && docRec.status === 'held') || (docVat > 0.004 && (vatPending() || !lk.std)))) throw held('VAT_PENDING', `its ${d.inv ? 'invoice' : 'bill'} carries VAT and is held while VAT is not configured in Zoho — the payment follows it`);
     if (!docRec || !docRec.zoho_id || !['ok', 'changed'].includes(docRec.status)) throw new Error(`its ${d.inv ? 'invoice' : 'bill'} is not in Zoho yet`);
     const t = DOC[docRec.zoho_type], doc = (await cl.get(`${t.path}/${docRec.zoho_id}`))[t.key];
     if (doc.status === 'void') throw new Error(`its ${t.key} is void in Zoho`);
@@ -484,6 +491,11 @@ module.exports = ctx => {
       if (r0.sent_eff) { let cur = null; try { cur = (await cl.get('/journals/' + r0.zoho_id)).journal; } catch (e) { if (!gone(e)) throw e; } if (modifiedInZoho(r0, 'journal', cur, lk)) throw blocked('ZOHO_MODIFIED', `${j.ref} was changed in Zoho after Trigon sent it — not deleted automatically`); }
       try { await cl.del('/journals/' + r0.zoho_id); } catch (e) { if (!gone(e)) throw e; }
       mark(j.kind, j.local_id, r0.zoho_id, 'journal', 'cancelled', null, null); run.updated++; return;
+    }
+    if (newMode()) {
+      const codes = j.lines.filter(l => l.amount > 0.004).map(l => String(l.acct));
+      const def = codes.find(c => DEFERRED[c]); if (def) throw held('ACCOUNTING_CHANGE_PENDING', `${j.ref} uses ${def} (${DEFERRED[def]}) — held`);
+      if ((vatPending() || !lk.std) && codes.some(c => c === '1200' || c === '2100')) throw held('VAT_PENDING', `${j.ref} moves VAT (1200 / 2100); VAT is not configured in Zoho yet — held`);
     }
     if (j.invoice) { const ir = rec('invoice', j.invoice); if (!ir || ir.status !== 'ok') { note(j.kind, j.local_id, j.ref, 'skip', 'waits until its invoice is in Zoho'); return; } }          // retention follows its invoice: not sent / not updated while the invoice is not in step
     const lines = [];
@@ -648,7 +660,7 @@ module.exports = ctx => {
   async function sync({ trigger = 'manual', user = '', from, to, dryRun = false, keepVals = false } = {}) {
     if (running) throw new Error('A sync is already running');
     const c = cfg(); if (!dryRun && c.enabled !== '1') throw new Error('The Zoho link is switched off');
-    if (!dryRun && c.gate_required === '1' && c.gate !== 'READY') throw new Error('GATE: nothing is sent to Zoho until the read-only preflight reaches READY (0 missing mappings, 0 wrong account types, 0 blocking conflicts) — run it on the Zoho page');
+    if (!dryRun && c.gate_required === '1' && !['READY', 'READY_NON_VAT'].includes(c.gate)) throw new Error('GATE: nothing is sent to Zoho until the read-only preflight reaches READY (or READY_NON_VAT while VAT is pending): 0 missing mappings, 0 wrong account types, 0 ambiguous matches, 0 blocking conflicts — run it on the Zoho page');
     const run = { sent: 0, updated: 0, failed: 0, skipped: 0, errors: [] }, started = now();
     if (dryRun) dry = { recs: new Map(), ops: [], items: [], accts: new Map(), vals: new Map() };
     let offline = false;
@@ -664,11 +676,12 @@ module.exports = ctx => {
         try { await fn(); }
         catch (err) {
           const transient = !err.blocked && (!!err.diag || (err.upstream && (!(err.status > 0) || err.status >= 500 || err.status === 429)));
-          const status = err.blocked ? 'blocked' : transient ? 'retrying' : 'error';
+          const status = err.held ? 'held' : err.blocked ? 'blocked' : transient ? 'retrying' : 'error';
           run.failed++; run.errors.push(`${label}: ${err.message}`); note(kind, id, label, 'error', err.message);
           mark(kind, id, null, null, status, err.message.slice(0, 500), null);
           if (!dryRun) { const n = ((rec(kind, id) || {}).attempts || 0) + 1, wait = Math.min(60, 2 ** (n - 1));      // 1, 2, 4, 8, 16, 32, 60, 60 … minutes
-            db.prepare('UPDATE zoho_sync SET attempts=?, next_at=? WHERE kind=? AND local_id=?').run(n, status === 'blocked' ? null : new Date(Date.now() + wait * 60000).toISOString(), kind, id); }
+            if (status === 'held') db.prepare('UPDATE zoho_sync SET attempts=0, next_at=NULL WHERE kind=? AND local_id=?').run(kind, id);
+            else db.prepare('UPDATE zoho_sync SET attempts=?, next_at=? WHERE kind=? AND local_id=?').run(n, status === 'blocked' ? null : new Date(Date.now() + wait * 60000).toISOString(), kind, id); }
         }
       };
       if (dryRun) {                                                                    // accounts every invoice / bill uses in Zoho without a mapping of ours
@@ -682,6 +695,7 @@ module.exports = ctx => {
           if ((rec('invoice', i.id) || {}).status !== 'skipped') { mark('invoice', i.id, null, null, 'skipped', 'invoice from a main-contractor PC (VAT after retention, contra charges or retention release) — enter it in Zoho by hand for now', null); run.skipped++; }
           return;
         }
+        if (newMode() && (vatPending() || !lk.std) && Math.abs(i.vat || 0) > 0.004) throw held('VAT_PENDING', `${i.number} carries VAT ${Math.abs(i.vat).toFixed(2)}; VAT is not configured in Zoho yet — held, sent once the gate is READY`);
         if (!i.client_id) throw new Error('invoice project has no client');
         if (!lk.std && i.vat > 0.004) throw new Error('this invoice has VAT but Zoho Books has no 5% VAT tax — set up UAE VAT in Zoho first');
         const d = invoiceDoc(i, e), cust = await contactId(cl, i.client_id, run), credit = d.type === 'creditnote';
@@ -696,6 +710,7 @@ module.exports = ctx => {
       });
       for (const b of bills) await each('bill', b.id, b.reference || b.description || `#${b.id}`, async () => {
         if (b.category === 'sub_advance') { note('bill', b.id, b.reference || `#${b.id}`, 'skip', 'advance to a subcontractor — recorded in Zoho as a vendor advance by hand'); if ((rec('bill', b.id) || {}).status !== 'skipped') { mark('bill', b.id, null, null, 'skipped', 'advance paid to a subcontractor — record it in Zoho as a vendor advance', null); run.skipped++; } return; }
+        if (newMode() && (vatPending() || !lk.std) && Math.abs(b.vat_amount || 0) > 0.004) throw held('VAT_PENDING', `${b.reference || b.description || '#' + b.id} carries VAT ${Math.abs(b.vat_amount).toFixed(2)}; VAT is not configured in Zoho yet — held, sent once the gate is READY`);
         const d = billDoc(b, e), acct = accountFor(lk, d.category), tax = d.vat > 0.004 ? lk.std : null;
         if (d.vat > 0.004 && !tax) { d.amount = round(d.amount + d.vat); d.notes = [d.notes, `VAT ${d.vat.toFixed(2)} not recoverable (not VAT-registered) — included in the cost`].filter(Boolean).join('\n'); }   // not registered: input VAT is part of the cost
         if (!acct) throw new Error('no expense account in Zoho');
@@ -771,7 +786,7 @@ module.exports = ctx => {
 
   // for the account provisioning, the continuous sync and the reconciliation (modules/zohoacct.js)
   ctx.zohoX = { cfg, setCfg, client, lookups, mapOf, sync, isRunning: () => !!running, effect, compareEff, hashOf, has, partnerName, REQUIRED, PARTNER_REQ, AUTO, LEDGER, LEDGER2, CAT, journals, data,
-    lockDate, rec, expectTypes, bankAccounts: () => (ctx.bankAccounts ? ctx.bankAccounts() : []) };
+    lockDate, rec, expectTypes, DEFERRED, bankAccounts: () => (ctx.bankAccounts ? ctx.bankAccounts() : []) };
 
   // nightly run on the server edition (the browser-only edition cannot call Zoho: CORS + no background process)
   if (typeof window === 'undefined' && !process.env.ZOHO_NO_SCHEDULER) {

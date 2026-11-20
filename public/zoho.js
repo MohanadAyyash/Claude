@@ -192,8 +192,8 @@ async function zohoSync(admin) {
     <div class="grid">${k(tr('الاتصال', 'Connection'), d.connection.connected ? tr('مرتبط', 'Connected') : tr('غير مرتبط', 'Not connected'), d.connection.connected ? 'ok' : 'warn')}
       ${k(tr('المؤسسة', 'Organization'), esc(d.connection.organization || '—'))}${k(tr('مركز البيانات', 'Data center'), esc(d.connection.data_centre || '—'))}
       ${k(tr('الحسابات', 'Account provisioning'), esc(d.account_provisioning), d.account_provisioning === 'Ready' ? 'ok' : 'warn')}
-      ${k(tr('بوابة الإرسال', 'Gate'), d.gate, d.gate === 'READY' ? 'ok' : 'warn')}
-      ${k(tr('طابور الإرسال', 'Transaction queue'), `${q.retrying + q.error} ${tr('بانتظار إعادة المحاولة', 'waiting to retry')} · ${q.blocked} ${tr('متوقف', 'blocked')}${q.unsent_changes ? ' · ' + tr('تغييرات لم تُرسل', 'unsent changes') : ''}`, q.blocked ? 'warn' : '')}
+      ${k(tr('بوابة الإرسال', 'Gate'), `${esc(d.gate)}${d.vat && d.vat !== 'unknown' ? ' · ' + esc(d.vat) : ''}`, d.gate === 'READY' ? 'ok' : 'warn')}
+      ${k(tr('طابور الإرسال', 'Transaction queue'), `${q.retrying + q.error} ${tr('بانتظار إعادة المحاولة', 'waiting to retry')} · ${q.blocked} ${tr('متوقف', 'blocked')} · ${q.held || 0} ${tr('محجوز (ضريبة / قرار محاسبي)', 'held (VAT / accounting decision)')}${q.unsent_changes ? ' · ' + tr('تغييرات لم تُرسل', 'unsent changes') : ''}`, q.blocked ? 'warn' : '')}
       ${k(tr('آخر مزامنة ناجحة', 'Last successful sync'), esc(d.last_successful_sync || '—'))}
       ${k(tr('آخر مطابقة', 'Last reconciliation'), recon ? `${esc(recon.finished || '')} · ${zsSt(recon.status === 'MATCH' ? 'MATCH' : 'DIFFERENCE')}` : '—')}
       ${k(tr('ميزان المراجعة', 'Trial balance'), d.trial_balance === 'Match' ? tr('مطابق', 'Match') : d.trial_balance === 'Difference' ? tr('فرق', 'Difference') : tr('لم تُجرَ مطابقة', 'Not reconciled yet'), d.trial_balance === 'Match' ? 'ok' : d.trial_balance === 'Difference' ? 'warn' : '')}</div>

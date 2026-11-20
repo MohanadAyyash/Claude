@@ -21,12 +21,12 @@ module.exports = ctx => {
   // [Trigon code, name in Zoho, the one Zoho type it is created with] — the type is one of those the preflight accepts for the code
   // [Trigon code, name in Zoho, the one Zoho type it is created with, parent code] — the type is one the preflight accepts for the code.
   // 1690 is the contra-asset: a fixed_asset account (credit balance) under 1600, so Zoho's balance sheet shows the net book value.
-  // 6150 holds gains (credits) and losses (debits) on disposal, as Trigon's ledger does (one account, net).
+  // 6150 is not on the list (accounting decision): gains and losses on disposal get separate treatment later (zoho.js DEFERRED).
   const ALLOW = [
     ['1010', 'Petty Cash', 'cash'], ['1030', 'Employee Cash Custody', 'cash'], ['1050', 'Cheques in Hand / PDC Received', 'other_current_asset'],
     ['1600', 'Fixed Assets', 'fixed_asset'], ['1690', 'Accumulated Depreciation', 'fixed_asset', '1600'], ['2050', 'Cheques Issued / PDC Payable', 'other_current_liability'],
     ['2260', 'Employee Expense Claims Payable', 'other_current_liability'], ['2400', 'Advances from Customers', 'other_current_liability'],
-    ['3900', 'Opening Balance Equity', 'equity'], ['6100', 'Depreciation', 'expense'], ['6150', 'Gain / Loss on Asset Disposal', 'other_expense'],
+    ['3900', 'Opening Balance Equity', 'equity'], ['6100', 'Depreciation', 'expense'],
   ];
   // partner control accounts (parents) and, per partner, one sub-account each — identified by the partner's id, never his name
   const PARENTS = [['3000', 'Partner Capital', 'equity', 'Capital'], ['2500', 'Partner Loans', 'long_term_liability', 'Loan'], ['3110', 'Partner Current Accounts', 'equity', 'Current']];
@@ -36,6 +36,7 @@ module.exports = ctx => {
     2000: { type: 'accounts_payable', test: a => a.is_system_account === true && a.account_type === 'accounts_payable', what: "Zoho's system Accounts Payable account" } };
   const VAT = { 1200: { label: 'VAT input', auto: 'input_tax', types: ['input_tax', 'other_current_asset'] }, 2100: { label: 'VAT output', auto: 'output_tax', types: ['output_tax', 'other_current_liability'] } };
   // what the preview calls each outcome
+  const VATCODES = ['1200', '2100'];
   const CLASS = { ok: 'ADOPT_EXISTING', adopt: 'ADOPT_EXISTING', sys: 'SYSTEM_ACCOUNT_ADOPT', confirm: 'ADOPT_EXISTING_AFTER_CONFIRMATION', create: 'CREATE_APPROVED', conflict: 'ACCOUNT_CONFLICT', ambiguous: 'AMBIGUOUS', blocked: 'BLOCKED', vat_required: 'VAT_CONFIGURATION_REQUIRED' };
   for (const [code, , type] of ALLOW) { const t = X.expectTypes('acct:' + code); if (!t || !t.includes(type)) throw new Error(`zohoacct: ${code} ${type} is not a type the preflight accepts`); }
   for (const [code, , type] of PARENTS) { const t = X.expectTypes(`acct:${code}:p1`); if (!t || !t.includes(type)) throw new Error(`zohoacct: partner ${code} ${type} is not a type the preflight accepts`); }
@@ -142,6 +143,9 @@ module.exports = ctx => {
     for (const b of X.bankAccounts()) if (!done.has(String(b.ledger_code))) { add(resolve({ key: 'acct:' + b.ledger_code, code: String(b.ledger_code), name: 'Bank — ' + b.name, types: ['bank'], allow: false, group: 'foundation' })); done.add(String(b.ledger_code)); }
     for (const cat of Object.keys(X.CAT)) { const code = ctx.expenseCode ? ctx.expenseCode(cat) : cat;
       add(resolve({ key: 'cat:' + cat, code: String(code), name: `Expense category — ${X.CAT[cat]}`, types: cat === 'asset' ? ['fixed_asset'] : ['cost_of_goods_sold', 'expense'], allow: false, group: 'category' })); }
+    // an account whose accounting treatment is still to be decided: never created, adopted or used; its records are held
+    for (const r of rows) if (!r.partner_id && X.DEFERRED[r.code]) Object.assign(r, { action: 'deferred', classification: CLASS.blocked, reason: 'DEFERRED_ACCOUNTING_CHANGE', deferred: true, candidates: undefined,
+      resolution: `Deferred by accounting decision: ${X.DEFERRED[r.code]}. Not created, not adopted; transactions that use it are held (ACCOUNTING_CHANGE_PENDING) and do not block the rest.`, note: r.zoho ? `(Zoho has "${r.zoho.name}", ${r.zoho.type} — not used)` : '' });
     // a category on a code this provisioning creates (e.g. "asset" → 1600) follows the new account
     for (const r of rows) if (r.group === 'category' && r.reason === 'NO_ACCOUNT_WITH_CODE' && rowOf['acct:' + r.code] && rowOf['acct:' + r.code].action === 'create')
       Object.assign(r, { action: 'follow', classification: CLASS.adopt, reason: undefined, candidates: undefined, follows: 'acct:' + r.code, resolution: '', note: `uses the account created for ${r.code}` });
@@ -171,7 +175,16 @@ module.exports = ctx => {
       let used = one && one.is_involved_in_transaction != null ? !!one.is_involved_in_transaction : null;
       if (used == null) try { used = ((await cl.get('/chartofaccounts/accounttransactions', { account_id: r.zoho.id, per_page: 1 })).transactions || []).length > 0; } catch { used = 'unknown'; }
       const a = one || byId.get(r.zoho.id) || {};
-      r.name_match = { ...(r.name_match || {}), account_id: String(a.account_id || r.zoho.id), account_name: a.account_name || r.zoho.name, account_code: a.account_code || '', account_type: a.account_type || r.zoho.type,
+      // which Trigon mapping already owns this Zoho account (read only): its key, how it was made, and the audit trail of the mapping screen
+      const owners = db.prepare("SELECT * FROM zoho_map WHERE zoho_id=? AND NOT (kind='account' AND local_key=?)").all(String(a.account_id || r.zoho.id), r.key).map(m => {
+        const audit = (() => { try { return db.prepare("SELECT ts, user, detail FROM audit_log WHERE tbl='zoho_map' AND detail LIKE ? ORDER BY id").all(`%${m.local_key} →%`); } catch { return []; } })();
+        const [k, code, pp] = m.local_key.split(':');
+        return { trigon_key: m.local_key, trigon_code: k === 'cat' ? `${ctx.expenseCode ? ctx.expenseCode(code) : code} (expense category ${code})` : code + (pp ? ` (partner #${pp.slice(1)})` : ''), kind: m.kind,
+          mapping_source: m.created_by_trigon ? 'created by Trigon provisioning' : m.mapped_at ? 'adopted by Trigon provisioning' : 'mapping screen (before provisioning) — legacy mapping',
+          mapped_at: m.mapped_at || (audit.length ? audit[audit.length - 1].ts : '') || '(not recorded)', label: m.label || '', legacy_audit: audit.map(x => `${x.ts} ${x.user || ''}: ${x.detail}`),
+          zoho_id: m.zoho_id, zoho_name: a.account_name || m.zoho_name || '', zoho_type: a.account_type || m.zoho_type || '', zoho_code: a.account_code || m.zoho_code || '' };
+      });
+      r.name_match = { ...(r.name_match || {}), owned_by: owners, account_id: String(a.account_id || r.zoho.id), account_name: a.account_name || r.zoho.name, account_code: a.account_code || '', account_type: a.account_type || r.zoho.type,
         parent_account: a.parent_account_id ? `${a.parent_account_name || ''} (${a.parent_account_id})` : '(none)', is_system_account: !!a.is_system_account, active: a.is_active !== false, involved_in_transaction: used };
       if (r.action === 'confirm') r.note += used === true ? ' It already has transactions in Zoho: after adoption they appear in the reconciliation as Zoho-only entries on this account (opening balances / manual entries), separately from Trigon\'s.' : '';
     }
@@ -186,8 +199,13 @@ module.exports = ctx => {
     const every = [...rows, ...vat], n = cl2 => every.filter(r => r.classification === cl2).length;
     const counts = { ADOPT_EXISTING: n('ADOPT_EXISTING'), ADOPT_EXISTING_AFTER_CONFIRMATION: n('ADOPT_EXISTING_AFTER_CONFIRMATION'), SYSTEM_ACCOUNT_ADOPT: n('SYSTEM_ACCOUNT_ADOPT'), CREATE_APPROVED: n('CREATE_APPROVED'), VAT_CONFIGURATION_REQUIRED: n('VAT_CONFIGURATION_REQUIRED'), ACCOUNT_CONFLICT: n('ACCOUNT_CONFLICT'), AMBIGUOUS: n('AMBIGUOUS'), BLOCKED: n('BLOCKED') };
     // the four numbers that must be 0 before synchronisation (after provisioning, every account is mapped)
-    const targets = { missing_mappings: every.filter(r => r.action !== 'ok').length, wrong_types: every.filter(r => ['WRONG_TYPE', 'NOT_SYSTEM_ACCOUNT'].includes(r.reason)).length, ambiguous_matches: counts.AMBIGUOUS, blocking_conflicts: counts.ACCOUNT_CONFLICT + counts.BLOCKED + counts.VAT_CONFIGURATION_REQUIRED };
-    const state = counts.ACCOUNT_CONFLICT || counts.BLOCKED ? 'Conflict' : counts.AMBIGUOUS ? 'Ambiguous' : counts.VAT_CONFIGURATION_REQUIRED ? 'VAT_CONFIGURATION_REQUIRED' : targets.missing_mappings ? 'Missing' : 'Ready';
+    const live = every.filter(r => !r.deferred), isVat = r => r.group === 'vat' || VATCODES.includes(r.code);
+    const tgt = list => ({ missing_mappings: list.filter(r => r.action !== 'ok').length, wrong_types: list.filter(r => ['WRONG_TYPE', 'NOT_SYSTEM_ACCOUNT'].includes(r.reason)).length,
+      ambiguous_matches: list.filter(r => r.classification === 'AMBIGUOUS').length, blocking_conflicts: list.filter(r => ['ACCOUNT_CONFLICT', 'BLOCKED', 'VAT_CONFIGURATION_REQUIRED'].includes(r.classification)).length });
+    const targets = tgt(live), targets_non_vat = tgt(live.filter(r => !isVat(r)));
+    const vat_state = every.filter(isVat).every(r => r.action === 'ok') ? 'VAT_READY' : every.filter(isVat).some(r => r.classification === 'VAT_CONFIGURATION_REQUIRED' || r.classification === 'AMBIGUOUS') ? 'VAT_PENDING' : 'VAT_TO_ADOPT';
+    const deferred = every.filter(r => r.deferred).map(r => ({ code: r.code, why: X.DEFERRED[r.code] }));
+    const state = counts.ACCOUNT_CONFLICT || counts.BLOCKED - deferred.length > 0 ? 'Conflict' : counts.AMBIGUOUS ? 'Ambiguous' : counts.VAT_CONFIGURATION_REQUIRED ? 'VAT_CONFIGURATION_REQUIRED' : targets.missing_mappings ? 'Missing' : 'Ready';
     const confirmable = rows.filter(r => r.action === 'confirm').map(r => ({ key: r.key, zoho_id: r.zoho.id }));
     const token = X.hashOf([mutations.map(m => m.body), adopts, confirmable]);
     // the three accounting decisions, stated in the preview
@@ -197,10 +215,11 @@ module.exports = ctx => {
         treatment: d3100.classification === 'SYSTEM_ACCOUNT_ADOPT' ? `Adopt Zoho's system account "${d3100.zoho.name}" (id ${d3100.zoho.id}, ${d3100.zoho.type}, system). Never created, never replaced.` : `Not adopted: ${d3100.reason || d3100.classification} — ${d3100.resolution || ''}` },
       { code: '1690', title: 'Accumulated Depreciation → contra-asset under 1600', classification: d1690.classification, zoho: d1690.zoho || null, payload: d1690.payload || null,
         treatment: `Zoho type fixed_asset with a credit balance, a sub-account of 1600 Fixed Assets (${rowOf['acct:1600'].zoho ? 'existing account ' + rowOf['acct:1600'].zoho.id : 'created first in the same run'}). Depreciation: Dr 6100 / Cr 1690. Balance sheet: Fixed Assets shown with its sub-accounts — cost (1600) less accumulated depreciation (1690) = net book value. Disposal: Dr 1690, Cr 1600 (cost and accumulated depreciation leave together).` },
-      { code: '6150', title: 'Gain / Loss on Asset Disposal → P&L presentation', classification: d6150.classification, zoho: d6150.zoho || null, payload: d6150.payload || null,
-        treatment: 'One account (other_expense), as in Trigon\'s ledger. A loss is a debit: e.g. a loss of 4,500 shows in "Other expenses" as +4,500. A gain is a credit: e.g. a gain of 1,500 shows in "Other expenses" as −1,500. Several disposals in a period are netted (here 3,000 net loss). A period with a net gain shows a negative other expense. Separate gain (other_income) / loss (other_expense) accounts would first need a change to Trigon\'s own ledger.' },
+      { code: '6150', title: 'Gain / Loss on Asset Disposal → deferred (separate gain / loss treatment)', classification: d6150.classification, zoho: d6150.zoho || null, payload: null,
+        treatment: d6150.deferred ? 'Removed from automatic provisioning (accounting decision): gains must not show as a negative Other Expense. Planned, in a separate accounting change for Trigon and Zoho alike: Gain on Asset Disposal → Other Income; Loss on Asset Disposal → Other Expense. Until then nothing is created or adopted for 6150, and every transaction that uses it (asset disposals) is held — ACCOUNTING_CHANGE_PENDING — without blocking the rest.'
+          : `Not deferred in this build: ${d6150.classification}.` },
     ];
-    return { at: stamp(), state, rows, vat, mutations, adopts, confirmable, token, counts, targets, vat_diagnostic, decisions,
+    return { at: stamp(), state, rows, vat, mutations, adopts, confirmable, token, counts, targets, targets_non_vat, vat_state, deferred, vat_diagnostic, decisions,
       // (older names, kept for the screen and the scheduler)
       legacy_counts: { create: counts.CREATE_APPROVED, adopt: adopts.length, conflict: counts.ACCOUNT_CONFLICT + counts.BLOCKED, missing: counts.BLOCKED, ambiguous: counts.AMBIGUOUS, vat_required: counts.VAT_CONFIGURATION_REQUIRED } };
   }
@@ -241,18 +260,38 @@ module.exports = ctx => {
   // ---------- the gate: the read-only preflight, then the account check; READY only with nothing missing, wrong or in conflict ----------
   async function preflightAndGate(user, why) {
     const r = await X.sync({ trigger: 'preflight', user, dryRun: true }), pf = r.preflight;
-    let p = null; try { p = await plan(X.client(X.cfg(), true)); } catch (e) { p = { state: 'Error', error: e.message, rows: [], vat: [], counts: {} }; }
-    const accts = [...pf.required_accounts, ...pf.partner_accounts.flatMap(x => x.accounts)];
-    const reasons = [...pf.blockers, ...pf.to_configure];
-    const wrong = accts.filter(a => ['type_mismatch', 'not_found'].includes(a.status)).length, missing = accts.filter(a => ['missing', 'ambiguous'].includes(a.status)).length;
-    if (p.state !== 'Ready') reasons.push(p.error ? `account check failed: ${p.error}` : `accounts: ${p.state} — ${Object.entries(p.counts).filter(([k, v]) => v && !['ADOPT_EXISTING'].includes(k)).map(([k, v]) => `${k} ${v}`).join(', ')}`);
-    for (const r of [...(p.rows || []), ...(p.vat || [])].filter(r => ['ACCOUNT_CONFLICT', 'AMBIGUOUS', 'BLOCKED', 'VAT_CONFIGURATION_REQUIRED'].includes(r.classification))) reasons.push(`${r.code} ${r.name}: ${r.classification}${r.reason ? ' (' + r.reason + ')' : ''}`);
-    if (X.cfg().post !== '1') reasons.push('"Post documents in Zoho" is off: Zoho keeps drafts out of its ledger, so its accounting effect could not equal Trigon\'s — switch it on in the Zoho settings');
-    const t = p.targets || { missing_mappings: 1, wrong_types: 0, ambiguous_matches: 0, blocking_conflicts: 0 };
-    const missingAll = missing + t.missing_mappings, wrongAll = wrong + t.wrong_types, ambiguous = t.ambiguous_matches + accts.filter(a => a.status === 'ambiguous').length, blockingAll = pf.blockers.length + t.blocking_conflicts;
-    const ready = pf.verdict === 'READY' && !missingAll && !wrongAll && !ambiguous && !blockingAll && p.state === 'Ready' && X.cfg().post === '1';
-    const gate = { verdict: pf.verdict, ready, missing_mappings: missingAll, wrong_types: wrongAll, ambiguous_matches: ambiguous, blocking_conflicts: blockingAll, account_state: p.state, reasons: [...new Set(reasons)].slice(0, 60), at: stamp(), why };
-    X.setCfg('gate', ready ? 'READY' : ''); X.setCfg('gate_info', JSON.stringify(gate)); X.setCfg('pf_verdict', pf.verdict); X.setCfg('pf_at', new Date().toISOString());
+    let p = null; try { p = await plan(X.client(X.cfg(), true)); } catch (e) { p = { state: 'Error', error: e.message, rows: [], vat: [], counts: {}, targets: null, targets_non_vat: null, vat_state: 'unknown', deferred: [] }; }
+    const deferredCodes = (p.deferred || []).map(d => d.code), HELD = /\b(VAT_PENDING|ACCOUNTING_CHANGE_PENDING)\b/, VATCFG = /\bVAT\b|5% VAT tax/, MAPERR = /map our account|first\b|not mapped/i;
+    const accts = [...pf.required_accounts, ...pf.partner_accounts.flatMap(x => x.accounts)].filter(a => !deferredCodes.includes(String(a.code)));
+    const pfVat = a => VATCODES.includes(String(a.code));
+    const count = (list, sts) => list.filter(a => sts.includes(a.status)).length;
+    // the preflight's own blockers: VAT-only errors (and held records) do not block the non-VAT gate
+    // records deliberately held (VAT pending, a deferred account) are not errors; missing mappings are counted separately
+    const realErrors = (r.errors || []).filter(e => !HELD.test(e) && !MAPERR.test(e)), nonVatErrors = realErrors.filter(e => !VATCFG.test(e));
+    const otherBlockers = pf.blockers.filter(b => !/error\(s\) while reading Zoho/.test(b)).length;
+    const pfBlock = otherBlockers + (nonVatErrors.length ? 1 : 0), pfBlockAll = otherBlockers + (realErrors.length ? 1 : 0);
+    const T = p.targets || { missing_mappings: 1, wrong_types: 0, ambiguous_matches: 0, blocking_conflicts: 1 }, N = p.targets_non_vat || T;
+    const all = { missing_mappings: count(accts, ['missing']) + T.missing_mappings, wrong_types: count(accts, ['type_mismatch', 'not_found']) + T.wrong_types, ambiguous_matches: count(accts, ['ambiguous']) + T.ambiguous_matches, blocking_conflicts: pfBlockAll + T.blocking_conflicts };
+    const nv = accts.filter(a => !pfVat(a));
+    const nonVat = { missing_mappings: count(nv, ['missing']) + N.missing_mappings, wrong_types: count(nv, ['type_mismatch', 'not_found']) + N.wrong_types, ambiguous_matches: count(nv, ['ambiguous']) + N.ambiguous_matches, blocking_conflicts: pfBlock + N.blocking_conflicts };
+    const zero = o => Object.values(o).every(v => v === 0), post = X.cfg().post === '1';
+    const vat = p.vat_state === 'VAT_READY' && !accts.filter(pfVat).some(a => a.status !== 'mapped') ? 'VAT_READY' : 'VAT_PENDING';
+    const readyAll = zero(all) && vat === 'VAT_READY' && post && p.state === 'Ready';
+    const readyNonVat = !readyAll && zero(nonVat) && post && !p.error;
+    const state = readyAll ? 'READY' : readyNonVat ? 'READY_NON_VAT' : 'NOT_READY';
+    const reasons = [];
+    if (p.error) reasons.push(`account check failed: ${p.error}`);
+    for (const x of [...(p.rows || []), ...(p.vat || [])].filter(x => ['ACCOUNT_CONFLICT', 'AMBIGUOUS', 'BLOCKED', 'VAT_CONFIGURATION_REQUIRED', 'ADOPT_EXISTING_AFTER_CONFIRMATION', 'CREATE_APPROVED'].includes(x.classification) || (x.action && !['ok', 'deferred'].includes(x.action))))
+      reasons.push(`${x.code} ${x.name || x.label}: ${x.deferred ? 'deferred by accounting decision — its transactions are held, not blocking' : x.action === 'adopt' || x.action === 'follow' ? 'to adopt' : x.classification}${x.reason ? ' (' + x.reason + ')' : ''}`);
+    for (const b of pf.blockers.filter(b => !/error\(s\) while reading Zoho/.test(b))) reasons.push(b);
+    for (const e of realErrors.slice(0, 20)) reasons.push(`error: ${e}`);
+    for (const t of pf.to_configure.filter(t => !/^(1200|2100)\b/.test(t) && !deferredCodes.some(c => t.startsWith(c + ' ')))) reasons.push(t);
+    if (!post) reasons.push('"Post documents in Zoho" is off: Zoho keeps drafts out of its ledger, so its accounting effect could not equal Trigon\'s — switch it on in the Zoho settings');
+    if (state === 'READY_NON_VAT') reasons.unshift('VAT_PENDING: transactions containing VAT are held until VAT is configured in Zoho and the gate is READY');
+    const gate = { state, verdict: pf.verdict, ready: readyAll, ready_non_vat: readyNonVat, vat, targets: all, targets_non_vat: nonVat, deferred: p.deferred || [],
+      missing_mappings: all.missing_mappings, wrong_types: all.wrong_types, ambiguous_matches: all.ambiguous_matches, blocking_conflicts: all.blocking_conflicts, account_state: p.state, reasons: [...new Set(reasons)].slice(0, 80), at: stamp(), why };
+    X.setCfg('gate', readyAll ? 'READY' : readyNonVat ? 'READY_NON_VAT' : ''); X.setCfg('gate_info', JSON.stringify(gate)); X.setCfg('pf_verdict', pf.verdict); X.setCfg('pf_at', new Date().toISOString());
+    X.setCfg('pf_nonvat_blockers', String(pfBlock));                                    // the preflight's blockers apart from VAT (pending registration)
     return { gate, preflight: pf, plan: p };
   }
 
@@ -261,7 +300,7 @@ module.exports = ctx => {
   function fingerprint() {
     const c = X.cfg(), from = c.start || null, to = today(), { invoices, bills, payments } = X.data(from, to);
     return X.hashOf([invoices.map(i => [i.id, i.number, i.date, i.total, i.voided, i.items]), bills.map(b => [b.id, b.date, b.total, b.party_id, b.category]), payments.map(p => [p.id, p.date, p.amount, p.method, p.cheque_status, p.bill_id, p.invoice_id]),
-      X.journals(from, to).map(j => [j.kind, j.local_id, j.date, j.lines]), db.prepare("SELECT local_key, zoho_id FROM zoho_map ORDER BY kind, local_key").all(), partners(), c.start_v2 || '', c.post || '']);
+      X.journals(from, to).map(j => [j.kind, j.local_id, j.date, j.lines]), db.prepare("SELECT local_key, zoho_id FROM zoho_map ORDER BY kind, local_key").all(), partners(), c.start_v2 || '', c.post || '', c.gate || '']);
   }
   const due = () => db.prepare("SELECT COUNT(*) n FROM zoho_sync WHERE status IN ('error','retrying') AND (next_at IS NULL OR next_at <= ?)").get(new Date().toISOString()).n;
   let ticking = false;
@@ -269,7 +308,7 @@ module.exports = ctx => {
   async function tick({ force = false } = {}) {
     const c = X.cfg();
     if (c.enabled !== '1' || c.continuous !== '1') return { skipped: 'off' };
-    if (c.gate !== 'READY') return { skipped: 'gate' };
+    if (!['READY', 'READY_NON_VAT'].includes(c.gate)) return { skipped: 'gate' };
     if (ticking || X.isRunning()) return { skipped: 'busy' };
     if (!force && c.q_next_at && c.q_next_at > new Date().toISOString()) return { skipped: 'backoff' };
     ticking = true;
@@ -345,9 +384,9 @@ module.exports = ctx => {
         const i = act.get(key), r = byKey.get(key), [kind, lid] = key.split(':'), base = { kind, local_id: +lid, ref: i ? i.ref : '', zoho_id: r && r.zoho_id || null, zoho_type: r && r.zoho_type || null };
         let st, note = '';
         if ((r && ['cancelled', 'included'].includes(r.status) && !(i && ['create', 'update'].includes(i.action))) || (i && i.action === 'skip' && /part of the Zoho expense/.test(i.why))) continue;   // removed, or inside a Zoho expense
-        if (r && r.status === 'blocked') { st = 'BLOCKED'; note = r.error || ''; }
+        if (r && ['blocked', 'held'].includes(r.status)) { st = 'BLOCKED'; note = r.error || ''; }
         else if (r && r.status === 'retrying') { st = 'RETRYING'; note = r.error || ''; }
-        else if (i && i.action === 'error') { st = /map our account|not mapped|map it|first\b/i.test(i.why) ? 'MISSING_MAPPING' : /ACCOUNT_CONFLICT|CLOSED_PERIOD|ZOHO_MODIFIED|POSSIBLE_DUPLICATE|VERIFY_MISMATCH/.test(i.why) ? 'BLOCKED' : 'PENDING_SYNC'; note = i.why; }
+        else if (i && i.action === 'error') { st = /map our account|not mapped|map it|first\b/i.test(i.why) ? 'MISSING_MAPPING' : /ACCOUNT_CONFLICT|CLOSED_PERIOD|ZOHO_MODIFIED|POSSIBLE_DUPLICATE|VERIFY_MISMATCH|VAT_PENDING|ACCOUNTING_CHANGE_PENDING/.test(i.why) ? 'BLOCKED' : 'PENDING_SYNC'; note = i.why; }
         else if (i && i.action === 'conflict') { st = 'BLOCKED'; note = i.why; }
         else if (i && ['create', 'update', 'remove', 'void', 'link'].includes(i.action)) { st = 'PENDING_SYNC'; note = `${i.action}${i.why ? ': ' + i.why : ''}`; }
         else if (i && i.action === 'skip') { st = 'TRIGON_ONLY'; note = `not sent by design: ${i.why}`; }
@@ -450,8 +489,8 @@ module.exports = ctx => {
     const gate = J(c.gate_info) || {}, prov = db.prepare('SELECT at, user, trigger, created, adopted, conflicts, failed FROM zoho_provision_runs ORDER BY id DESC LIMIT 1').get();
     let changes = null; try { changes = c.q_fp ? fingerprint() !== c.q_fp : null; } catch { changes = null; }
     return { connection: { connected: !!(c.client_id && c.client_secret && c.refresh_token), organization: c.org_name || '', organization_id: c.org || '', data_centre: c.dc },
-      enabled: c.enabled === '1', continuous: c.continuous === '1', post: c.post === '1', gate: c.gate === 'READY' ? 'READY' : 'NOT READY', gate_info: gate, account_provisioning: gate.account_state || 'not checked yet',
-      queue: { retrying: q.retrying || 0, error: q.error || 0, blocked: q.blocked || 0, sending: q.sending || 0, synced: q.ok || 0, due_now: due(), unsent_changes: changes, backoff_until: c.q_next_at || '', last_error: c.q_error || '' },
+      enabled: c.enabled === '1', continuous: c.continuous === '1', post: c.post === '1', gate: c.gate === 'READY' ? 'READY' : c.gate === 'READY_NON_VAT' ? 'READY_NON_VAT' : 'NOT READY', vat: (J(c.gate_info) || {}).vat || 'unknown', gate_info: gate, account_provisioning: gate.account_state || 'not checked yet',
+      queue: { retrying: q.retrying || 0, error: q.error || 0, blocked: q.blocked || 0, held: q.held || 0, sending: q.sending || 0, synced: q.ok || 0, due_now: due(), unsent_changes: changes, backoff_until: c.q_next_at || '', last_error: c.q_error || '' },
       last_successful_sync: c.last_ok || '', last_reconciliation: last ? { ...last, summary: J(last.summary) } : null,
       trial_balance: !last ? 'not reconciled yet' : (() => { const t2 = (J(last.summary) || {}).tb || {}; return t2.difference || t2.missing_mapping || t2.zoho_only ? 'Difference' : 'Match'; })(),
       last_provisioning: prov || null, recon_hour: c.recon_hour || '2' };
@@ -461,7 +500,7 @@ module.exports = ctx => {
   if (typeof window === 'undefined' && !process.env.ZOHO_NO_SCHEDULER) {
     setInterval(() => { tick().catch(() => {}); }, 60 * 1000).unref();
     setInterval(() => { const c = X.cfg(), h = new Date().getHours();
-      if (c.enabled === '1' && c.continuous === '1' && c.gate === 'READY' && h === +(c.recon_hour || 2) && (c.last_recon || '').slice(0, 10) !== today()) reconcile({ trigger: 'daily', user: 'scheduler' }).catch(() => {}); }, 10 * 60 * 1000).unref();
+      if (c.enabled === '1' && c.continuous === '1' && ['READY', 'READY_NON_VAT'].includes(c.gate) && h === +(c.recon_hour || 2) && (c.last_recon || '').slice(0, 10) !== today()) reconcile({ trigger: 'daily', user: 'scheduler' }).catch(() => {}); }, 10 * 60 * 1000).unref();
   }
   ctx.zohoAcct = { plan: () => plan(X.client(X.cfg(), true)), apply, _createOnly: createOnly, preflightAndGate, tick, reconcile, status, fingerprint, ALLOW, PARENTS };
 
@@ -479,7 +518,7 @@ module.exports = ctx => {
         if (!admin) return no(), true;
         return run(async () => {
           const x = await readBody(req), c = X.cfg();
-          if (!['READY', 'READY WITH MISSING MAPPINGS'].includes(c.pf_verdict) || !c.pf_at || Date.now() - Date.parse(c.pf_at) > 24 * 3600 * 1000) throw new Error('Run the read-only preflight first (it must be READY or READY WITH MISSING MAPPINGS, within the last 24 hours)');
+          if (!(['READY', 'READY WITH MISSING MAPPINGS'].includes(c.pf_verdict) || (c.pf_verdict === 'BLOCKED' && c.pf_nonvat_blockers === '0')) || !c.pf_at || Date.now() - Date.parse(c.pf_at) > 24 * 3600 * 1000) throw new Error('Run the read-only preflight first (it must be READY or READY WITH MISSING MAPPINGS — or blocked by VAT only — within the last 24 hours)');
           const p = await plan(X.client(c, true));
           if (!x.confirm || x.token !== p.token) throw new Error('The proposed changes differ from the preview you confirmed (or nothing was confirmed) — preview again');
           const confirmed = (Array.isArray(x.confirm_adopt) ? x.confirm_adopt : []).map(String);

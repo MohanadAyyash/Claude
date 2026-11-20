@@ -9,6 +9,9 @@ const zoho = mockZoho();
 process.env.ZOHO_CLIENT_ID = zoho.CLIENT_ID; process.env.ZOHO_CLIENT_SECRET = zoho.CLIENT_SECRET;
 const { server, ctx } = require('./server.js');
 ctx.zohoReconPace = 0;                                                                   // no pacing against the mock
+// this suite runs the whole flow including asset disposals, as after the planned gain / loss accounting change (6150 adopted by code);
+// 6150 deferred (today's decision), VAT pending and READY_NON_VAT are tested in test-zohogate.js
+delete ctx.zohoX.DEFERRED['6150'];
 
 server.listen(0, async () => {
   const base = `http://localhost:${server.address().port}/api/`; let cookie = '';
@@ -98,7 +101,7 @@ server.listen(0, async () => {
     // same name as an existing, active, compatible, uncoded Zoho cash account: proposed for explicit confirmation — never adopted by name alone
     const pc = byKey('acct:1010'); assert.equal(pc.classification, 'ADOPT_EXISTING_AFTER_CONFIRMATION'); assert.equal(pc.reason, 'NAME_IN_USE');
     assert.deepEqual(pc.name_match, { checks: { unique_name: true, active: true, compatible_type: true, no_other_code: true, not_used_by_another_trigon_account: true },
-      account_id: '2002', account_name: 'Petty Cash', account_code: '', account_type: 'cash', parent_account: '(none)', is_system_account: false, active: true, involved_in_transaction: false });
+      account_id: '2002', account_name: 'Petty Cash', account_code: '', account_type: 'cash', parent_account: '(none)', is_system_account: false, active: true, involved_in_transaction: false, owned_by: [] });
     assert.ok(!pv.adopts.some(a => a.key === 'acct:1010') && !pv.mutations.some(m => m.body.account_code === '1010'), 'neither adopted nor created without confirmation');
     assert.deepEqual(pv.confirmable, [{ key: 'acct:1010', zoho_id: '2002' }]);
     // an exact name that is NOT safe (incompatible type) stays a conflict
@@ -108,7 +111,7 @@ server.listen(0, async () => {
     const vd = pv.vat_diagnostic; assert.match(vd.uae_vat_enabled, /^yes/); assert.equal(vd.standard_5_active.tax_id, '1001'); assert.equal(vd.organization.tax_reg_no, '•••0003'); assert.equal(vd.organization.is_tax_registered, true);
     assert.deepEqual(vd.input_vat_control.map(a => [a.id, a.type, a.system]), [['3401', 'input_tax', true]]); assert.deepEqual(vd.output_vat_control.map(a => a.id), ['3402']);
     assert.deepEqual(pv.decisions.map(d => [d.code, d.classification]), [['3100', 'SYSTEM_ACCOUNT_ADOPT'], ['1690', 'CREATE_APPROVED'], ['6150', 'ACCOUNT_CONFLICT']]);
-    assert.match(pv.decisions[0].treatment, /id 3501/); assert.match(pv.decisions[1].treatment, /net book value/); assert.match(pv.decisions[2].treatment, /−1,500/);
+    assert.match(pv.decisions[0].treatment, /id 3501/); assert.match(pv.decisions[1].treatment, /net book value/);
     assert.equal(byKey('acct:1030').action, 'create', 'a similar name is not adopted');
     assert.equal(byKey('acct:6150').action, 'conflict'); assert.equal(byKey('acct:6150').reason, 'WRONG_TYPE'); assert.equal(byKey('acct:6150').zoho.type, 'income');   // type mismatch: BLOCKED
     const SEVEN = ['ADOPT_EXISTING', 'ADOPT_EXISTING_AFTER_CONFIRMATION', 'CREATE_APPROVED', 'SYSTEM_ACCOUNT_ADOPT', 'VAT_CONFIGURATION_REQUIRED', 'ACCOUNT_CONFLICT', 'AMBIGUOUS', 'BLOCKED'];
@@ -173,7 +176,8 @@ server.listen(0, async () => {
 
     // ---- 4. resolve the conflicts the way the preview recommends — in Zoho, by code — then the second preflight is READY
     acct('3701').account_code = '4900'; acct('3103').account_code = '1300';   // as the preview recommends
-    pv = ok(await call('GET', 'zoho-sync/preview')); assert.equal(byKey('acct:1300').classification, 'ADOPT_EXISTING'); assert.equal(byKey('acct:6150').action, 'create');
+    T.chartofaccounts.push({ account_id: '3994', account_name: 'Gain / Loss on Disposal', account_code: '6150', account_type: 'other_expense', is_active: true });   // (6150 is never created by Trigon)
+    pv = ok(await call('GET', 'zoho-sync/preview')); assert.equal(byKey('acct:1300').classification, 'ADOPT_EXISTING'); assert.equal(byKey('acct:6150').classification, 'ADOPT_EXISTING');
     r = await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token, confirm_adopt: ['acct:1030'] }); assert.equal(r.s, 400); assert.match(r.j.error, /not an account the preview proposed/);
     prov = ok(await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token, confirm_adopt: ['acct:1010'] }));   // the administrator confirms Petty Cash
     assert.equal(map('acct:1010').zoho_id, '2002'); assert.equal(map('acct:1010').created_by_trigon, 0); assert.equal(acct('2002').account_code, undefined, 'nothing changed in Zoho');

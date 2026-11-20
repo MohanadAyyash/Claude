@@ -189,8 +189,10 @@ server.listen(0, async () => {
     for (const m of muts) assert.ok(run.stdout.includes(m.body.account_code.padEnd(10) + ' ' + m.body.account_name), 'console: ' + m.body.account_code);
     assert.match(run.stdout, /1690 +Accumulated Depreciation +type fixed_asset +parent Fixed Assets \(created first, in the same run\)/);
     assert.match(run.stdout, /VAT diagnostic \(read only\): UAE VAT enabled: /); assert.match(run.stdout, /active Standard 5%: Standard Rate \(id 1001\)/); assert.match(run.stdout, /input VAT control: /);
-    for (const c of ['3100 Retained Earnings → the exact Zoho system account', '1690 Accumulated Depreciation → contra-asset under 1600', '6150 Gain / Loss on Asset Disposal → P&L presentation']) assert.ok(run.stdout.includes(c), c);
+    for (const c of ['3100 Retained Earnings → the exact Zoho system account', '1690 Accumulated Depreciation → contra-asset under 1600', '6150 Gain / Loss on Asset Disposal → deferred (separate gain / loss treatment)']) assert.ok(run.stdout.includes(c), c);
     for (const t of ['CREATE_APPROVED — exact account-creation payloads', 'Accounting decisions', 'VAT diagnostic (read only']) assert.ok(html.includes(t), 'html: ' + t);
+    assert.match(run.stdout, /Non-VAT targets \(READY_NON_VAT\): missing mappings \d+ · wrong types \d+ · ambiguous matches \d+ · blocking conflicts \d+ \(each must be 0\) · VAT: VAT_\w+/);
+    assert.match(run.stdout, /Deferred by accounting decision \(not counted; its transactions are held\): 6150/); assert.ok(!muts.some(m => m.body.account_code === '6150'), '6150 never in the creation list');
     assert.ok(rep.account_provisioning_preview && Array.isArray(rep.account_provisioning_preview.mutations) && rep.account_provisioning_preview.mutations.length > 0, 'the preview lists what would be created');
     assert.ok(!zoho.calls.slice(callsB).some(c => /^POST \/chartofaccounts/.test(c)), 'and nothing was created');
     // refuses a folder without a database (and so never creates one)
