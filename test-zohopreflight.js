@@ -181,7 +181,9 @@ server.listen(0, async () => {
     assert.ok(!/refresh_token|access_token|Zoho-oauthtoken/.test(fs.readFileSync(path.join(copy, 'report', 'request-log.csv'), 'utf8')), 'no token in the log');
     const html = fs.readFileSync(path.join(copy, 'report', 'preflight-report.html'), 'utf8');
     for (const t of ['Verdict: BLOCKED', 'Proof: zero modifying calls', 'Partner Alpha Capital', 'Partner Current Accounts', 'type mismatch', 'Already synced', 'Account provisioning preview (read only — nothing was created)', 'POST /chartofaccounts']) assert.ok(html.includes(t), 'report: ' + t);
-    assert.match(run.stdout, /Account provisioning preview: \w+ — would create \d+, adopt \d+, conflicts \d+, to map by hand \d+, VAT configuration required \d+ \(nothing created\)/);
+    assert.match(run.stdout, /Account provisioning preview \(nothing created\): \w+ — ADOPT_EXISTING \d+ · SYSTEM_ACCOUNT_ADOPT \d+ · CREATE_APPROVED \d+ · VAT_CONFIGURATION_REQUIRED \d+ · ACCOUNT_CONFLICT \d+ · AMBIGUOUS \d+ · BLOCKED \d+/);
+    assert.match(run.stdout, /Targets before synchronisation: missing mappings \d+ · wrong types \d+ · ambiguous matches \d+ · blocking conflicts \d+ \(each must be 0\)/);
+    assert.ok(html.includes('Proposed creation payload (not sent)') && html.includes('Targets before synchronisation'));
     assert.ok(rep.account_provisioning_preview && Array.isArray(rep.account_provisioning_preview.mutations) && rep.account_provisioning_preview.mutations.length > 0, 'the preview lists what would be created');
     assert.ok(!zoho.calls.slice(callsB).some(c => /^POST \/chartofaccounts/.test(c)), 'and nothing was created');
     // refuses a folder without a database (and so never creates one)

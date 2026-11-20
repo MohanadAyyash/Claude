@@ -174,6 +174,8 @@ function zohoPreflight(pf) {
 
 
 // ---------- Zoho accounting sync: account provisioning, the READY gate, continuous sending, reconciliation ----------
+const ZS_CL = { ADOPT_EXISTING: ['يُعتمد حساب موجود (بالرمز والنوع)', 'Adopt existing (code + type)'], SYSTEM_ACCOUNT_ADOPT: ['يُعتمد حساب Zoho النظامي', 'Adopt Zoho system account'], CREATE_APPROVED: ['يُنشأ (معتمد)', 'Create (approved)'],
+  VAT_CONFIGURATION_REQUIRED: ['يلزم إعداد الضريبة في Zoho', 'VAT configuration required'], ACCOUNT_CONFLICT: ['تعارض', 'Account conflict'], AMBIGUOUS: ['غير محدد — أكثر من مرشح', 'Ambiguous'], BLOCKED: ['متوقف', 'Blocked'] };
 const ZS_ACT = { ok: ['جاهز', 'Ready'], adopt: ['يُعتمد حساب Zoho الموجود', 'Adopt the existing Zoho account'], create: ['يُنشأ في Zoho', 'Create in Zoho'], conflict: ['تعارض — يحتاج قراراً', 'Conflict — needs a decision'],
   blocked: ['متوقف (الحساب الأب فيه تعارض)', 'Blocked (its parent has a conflict)'], missing: ['يُربط مرة واحدة يدوياً', 'Map it once by hand'], vat_required: ['يلزم إعداد الضريبة في Zoho', 'VAT configuration required in Zoho'] };
 const ZS_ST = { MATCH: ['مطابق', 'Match'], DIFFERENCE: ['فرق', 'Difference'], PENDING_SYNC: ['بانتظار الإرسال', 'Pending sync'], RETRYING: ['إعادة محاولة', 'Retrying'], MISSING_MAPPING: ['ربط ناقص', 'Missing mapping'],
@@ -209,15 +211,17 @@ async function zohoSync(admin) {
   const planHtml = p => `<h3>${tr('الحسابات — المعاينة (لم يُرسل شيء)', 'Accounts — preview (nothing was sent)')}: ${esc(p.state)}</h3>
     <p class="muted">${tr('يُطابق بالرمز والنوع فقط، لا بالاسم. لا يُعاد تسمية أي حساب في Zoho ولا يُغيَّر نوعه ولا يُحذف ولا يُدمج.', 'Matched by code and type only, never by name. No Zoho account is renamed, re-typed, deleted or merged.')}</p>
     <div class="tw"><table><thead><tr><th>${tr('الرمز', 'Code')}</th><th>${tr('الاسم في Zoho', 'Name in Zoho')}</th><th>${tr('النوع', 'Type')}</th><th>${tr('الإجراء', 'Action')}</th><th>${tr('حساب Zoho', 'Zoho account')}</th><th>${tr('ملاحظة / الحل المقترح', 'Note / recommended resolution')}</th></tr></thead><tbody>
-    ${p.rows.map(r => `<tr${['conflict', 'blocked'].includes(r.action) ? ' class="err"' : ''}><td>${esc(r.code)}</td><td>${esc(r.name)}${r.partner ? ` <small class="muted">${esc(r.partner)}</small>` : ''}</td><td>${esc(r.type || (r.types || []).join(' / '))}</td>
-      <td><b>${zsAct(r.action)}</b>${r.reason ? `<br><small>${esc(r.reason)}</small>` : ''}</td><td>${r.zoho ? `${esc(r.zoho.name)} <small class="muted">${esc(r.zoho.id)} · ${esc(r.zoho.type)}${r.zoho.code ? ' · ' + esc(r.zoho.code) : ''}</small>` : '—'}</td><td>${esc(r.resolution || r.note || '')}</td></tr>`).join('')}</tbody></table></div>
-    <h3>${tr('ضريبة القيمة المضافة (من إعداد الضرائب في Zoho — لا تُنشأ أبداً)', 'VAT (from Zoho\'s tax configuration — never created)')}</h3>
-    <ul>${p.vat.map(v => `<li><b>${esc(v.code)}</b> ${esc(v.label)}: ${zsAct(v.action)}${v.zoho ? ` → ${esc(v.zoho.name)} (${esc(v.zoho.type)})` : ''}${v.reason ? ` — <span class="err">${esc(v.reason)}</span>` : ''}</li>`).join('')}</ul>
+    ${[...p.rows, ...p.vat].map(r => `<tr${['ACCOUNT_CONFLICT', 'BLOCKED', 'AMBIGUOUS', 'VAT_CONFIGURATION_REQUIRED'].includes(r.classification) ? ' class="err"' : ''}><td>${esc(r.code)}</td><td>${esc(r.name)}${r.partner ? ` <small class="muted">${esc(r.partner)}</small>` : ''}</td><td>${esc(r.type || (r.types || []).join(' / '))}</td>
+      <td><b>${tr(...(ZS_CL[r.classification] || [r.classification, r.classification]))}</b><br><small dir="ltr">${esc(r.classification)}${r.reason ? ' · ' + esc(r.reason) : ''}</small></td><td>${r.zoho ? `${esc(r.zoho.name)} <small class="muted">${esc(r.zoho.id)} · ${esc(r.zoho.type)}${r.zoho.code ? ' · ' + esc(r.zoho.code) : ''}</small>` : '—'}${r.payload ? `<br><code dir="ltr" style="font-size:11px">${esc(JSON.stringify(r.payload))}</code>` : ''}</td>
+      <td>${esc(r.resolution || r.note || '')}${r.review ? `<br><b>${tr('للمراجعة', 'Review')}:</b> ${esc(r.review)}` : ''}</td></tr>`).join('')}</tbody></table></div>
+    <p>${Object.entries(p.counts).map(([k2, v]) => `${tr(...(ZS_CL[k2] || [k2, k2]))}: <b>${v}</b>`).join(' · ')}</p>
+    <p>${tr('قبل تفعيل المزامنة يجب أن تكون كلها صفراً', 'Before synchronisation each must be 0')}: ${tr('ربط ناقص', 'missing mappings')} <b>${p.targets.missing_mappings}</b> · ${tr('نوع خاطئ', 'wrong types')} <b>${p.targets.wrong_types}</b> · ${tr('مطابقات غير محددة', 'ambiguous matches')} <b>${p.targets.ambiguous_matches}</b> · ${tr('تعارضات مانعة', 'blocking conflicts')} <b>${p.targets.blocking_conflicts}</b></p>
     <h3>${tr('التغييرات المقترحة بالضبط', 'Exact proposed changes')} (${p.mutations.length})</h3>
     ${p.mutations.length ? `<pre dir="ltr" style="white-space:pre-wrap;font-size:12px">${p.mutations.map(m => `${m.method} ${m.path} ${esc(JSON.stringify(m.body))}`).join('\n')}</pre>` : `<p>${tr('لا شيء يُنشأ.', 'Nothing to create.')}</p>`}
     ${p.adopts.length ? `<p>${tr('يُعتمد ويُحفظ رقمه فقط (بدون تغيير في Zoho)', 'Adopted, only its id is saved (no change in Zoho)')}: ${p.adopts.map(a => `<b>${esc(a.key.slice(5))}</b> → ${esc(a.zoho_id)} (${esc(a.how)})`).join(' · ')}</p>` : ''}`;
   const gateHtml = gt => `<div class="card" style="border:2px solid ${gt.ready ? '#2a7' : '#d90'}"><b>${tr('البوابة', 'Gate')}: ${gt.ready ? 'READY' : 'NOT READY'}</b> · ${tr('الفحص', 'Preflight')}: ${esc(gt.verdict)}
     · ${tr('ربط ناقص', 'missing mappings')} ${gt.missing_mappings} · ${tr('نوع خاطئ', 'wrong types')} ${gt.wrong_types} · ${tr('تعارضات', 'blocking conflicts')} ${gt.blocking_conflicts}
+    · ${tr('مطابقات غير محددة', 'ambiguous')} ${gt.ambiguous_matches || 0}
     ${gt.reasons.length ? `<ul>${gt.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>`;
   const reconHtml = r => `<h3>${tr('المطابقة', 'Reconciliation')} — ${esc(r.basis === 'movement' ? tr('حركة الفترة', 'period movement') : tr('الأرصدة', 'balances'))} ${tr('حتى', 'to')} ${esc(r.cutoff)}: ${zsSt(r.status === 'MATCH' ? 'MATCH' : 'DIFFERENCE')}</h3>
     <p>${Object.entries((r.summary || {}).items || {}).map(([st, n]) => `${zsSt(st)} ${n}`).join(' · ')}</p>

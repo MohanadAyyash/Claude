@@ -19,17 +19,24 @@ module.exports = ctx => {
 
   // ---------- what may be created automatically: these accounts and the partner structure, nothing else ----------
   // [Trigon code, name in Zoho, the one Zoho type it is created with] — the type is one of those the preflight accepts for the code
+  // [Trigon code, name in Zoho, the one Zoho type it is created with, parent code] — the type is one the preflight accepts for the code.
+  // 1690 is the contra-asset: a fixed_asset account (credit balance) under 1600, so Zoho's balance sheet shows the net book value.
+  // 6150 holds gains (credits) and losses (debits) on disposal, as Trigon's ledger does (one account, net).
   const ALLOW = [
     ['1010', 'Petty Cash', 'cash'], ['1030', 'Employee Cash Custody', 'cash'], ['1050', 'Cheques in Hand / PDC Received', 'other_current_asset'],
-    ['1600', 'Fixed Assets', 'fixed_asset'], ['1690', 'Accumulated Depreciation', 'fixed_asset'], ['2050', 'Cheques Issued / PDC Payable', 'other_current_liability'],
+    ['1600', 'Fixed Assets', 'fixed_asset'], ['1690', 'Accumulated Depreciation', 'fixed_asset', '1600'], ['2050', 'Cheques Issued / PDC Payable', 'other_current_liability'],
     ['2260', 'Employee Expense Claims Payable', 'other_current_liability'], ['2400', 'Advances from Customers', 'other_current_liability'],
-    ['3100', 'Retained Earnings', 'equity'], ['3900', 'Opening Balance Equity', 'equity'], ['6100', 'Depreciation', 'expense'], ['6150', 'Gain / Loss on Asset Disposal', 'other_expense'],
+    ['3900', 'Opening Balance Equity', 'equity'], ['6100', 'Depreciation', 'expense'], ['6150', 'Gain / Loss on Asset Disposal', 'other_expense'],
   ];
   // partner control accounts (parents) and, per partner, one sub-account each — identified by the partner's id, never his name
   const PARENTS = [['3000', 'Partner Capital', 'equity', 'Capital'], ['2500', 'Partner Loans', 'long_term_liability', 'Loan'], ['3110', 'Partner Current Accounts', 'equity', 'Current']];
-  // known rules (shown in the preview, confirmed by the administrator): Trigon 3100 is Zoho's own system Retained Earnings account
-  const RULES = { 3100: a => a.is_system_account === true && a.account_type === 'equity' && /^retained earnings$/i.test(String(a.account_name || '').trim()) };
+  // Zoho's own system accounts: adopted, never created or duplicated (3100 = Retained Earnings, 1100 = Accounts Receivable, 2000 = Accounts Payable)
+  const SYS = { 3100: { type: 'equity', test: a => a.is_system_account === true && a.account_type === 'equity' && /^retained earnings$/i.test(String(a.account_name || '').trim()), what: "Zoho's system Retained Earnings account" },
+    1100: { type: 'accounts_receivable', test: a => a.is_system_account === true && a.account_type === 'accounts_receivable', what: "Zoho's system Accounts Receivable account" },
+    2000: { type: 'accounts_payable', test: a => a.is_system_account === true && a.account_type === 'accounts_payable', what: "Zoho's system Accounts Payable account" } };
   const VAT = { 1200: { label: 'VAT input', auto: 'input_tax', types: ['input_tax', 'other_current_asset'] }, 2100: { label: 'VAT output', auto: 'output_tax', types: ['output_tax', 'other_current_liability'] } };
+  // what the preview calls each outcome
+  const CLASS = { ok: 'ADOPT_EXISTING', adopt: 'ADOPT_EXISTING', sys: 'SYSTEM_ACCOUNT_ADOPT', create: 'CREATE_APPROVED', conflict: 'ACCOUNT_CONFLICT', ambiguous: 'AMBIGUOUS', blocked: 'BLOCKED', vat_required: 'VAT_CONFIGURATION_REQUIRED' };
   for (const [code, , type] of ALLOW) { const t = X.expectTypes('acct:' + code); if (!t || !t.includes(type)) throw new Error(`zohoacct: ${code} ${type} is not a type the preflight accepts`); }
   for (const [code, , type] of PARENTS) { const t = X.expectTypes(`acct:${code}:p1`); if (!t || !t.includes(type)) throw new Error(`zohoacct: partner ${code} ${type} is not a type the preflight accepts`); }
 
@@ -55,74 +62,97 @@ module.exports = ctx => {
 
   async function plan(cl) {
     const { all, taxes } = await readZoho(cl);
-    const byId = new Map(all.map(a => [String(a.account_id), a])), low = s => String(s || '').trim().toLowerCase();
+    const byId = new Map(all.map(a => [String(a.account_id), a])), low = s2 => String(s2 || '').trim().toLowerCase(), active = a => a.is_active !== false;
     const byCode = c => all.filter(a => String(a.account_code || '').trim() === c), byName = n => all.filter(a => low(a.account_name) === low(n));
-    const conflict = (t, reason, a, resolution) => ({ ...t, action: 'conflict', state: 'ACCOUNT_CONFLICT', reason, zoho: view(a), resolution });
+    const cand = types => all.filter(a => active(a) && types.includes(a.account_type)).slice(0, 8).map(view);
+    const out = (t, action, extra) => ({ ...t, action, classification: action === 'adopt' && extra && extra.sys ? CLASS.sys : CLASS[action], ...extra });
+    const conflict = (t, reason, a, resolution) => out(t, 'conflict', { reason, zoho: view(a), resolution });
+    // one account, in this order: its mapping (validated) → Zoho's system account (when it is one) → exact code + compatible type → create (allowlist) → stop
     function resolve(t) {
-      const types = t.types, m = mapRow(t.key);
-      if (m && m.zoho_id) {                                                              // mapped: still there, active, the right type and code?
+      const types = t.types, m = mapRow(t.key), sys = SYS[t.code] && !t.partner_id ? SYS[t.code] : null;
+      if (m && m.zoho_id) {
         const a = byId.get(String(m.zoho_id));
-        if (!a) return conflict(t, 'MAPPED_ACCOUNT_MISSING', { account_id: m.zoho_id, account_name: m.zoho_name, account_type: m.zoho_type, account_code: m.zoho_code }, 'The mapped Zoho account no longer exists. Trigon does not create a replacement on its own (earlier transactions refer to that account): map the replacement account explicitly on the Zoho page.');
-        if (a.is_active === false) return conflict(t, 'INACTIVE', a, 'The mapped Zoho account is inactive. Reactivate it in Zoho, or map another account explicitly.');
-        if (!types.includes(a.account_type)) return conflict(t, 'WRONG_TYPE', a, `Zoho type is ${a.account_type}; Trigon ${t.code} needs ${types.join(' or ')}. Map an account of the right type; Trigon never changes the type of a Zoho account.`);
-        if (t.allow && a.account_code && String(a.account_code).trim() !== t.code && !(RULES[t.code] && RULES[t.code](a))) return conflict(t, 'WRONG_CODE', a, `The mapped Zoho account has code ${a.account_code}; expected ${t.code}. Correct the code in Zoho, or map the right account.`);
-        const note = t.partner_id && low(a.account_name) !== low(t.name) ? `name in Zoho "${a.account_name}" differs from Trigon's "${t.name}" (renamed in Trigon?) — kept as it is` : '';
-        return { ...t, action: 'ok', state: 'MAPPED', zoho: view(a), note };
+        if (!a) return conflict(t, 'MAPPED_ACCOUNT_MISSING', { account_id: m.zoho_id, account_name: m.zoho_name, account_type: m.zoho_type, account_code: m.zoho_code }, 'The mapped Zoho account no longer exists. Trigon does not create a replacement (earlier transactions refer to it): map the replacement explicitly.');
+        if (!active(a)) return conflict(t, 'INACTIVE', a, 'The mapped Zoho account is inactive. Reactivate it in Zoho, or map another account explicitly.');
+        if (!types.includes(a.account_type)) return conflict(t, 'WRONG_TYPE', a, `Zoho type is ${a.account_type}; Trigon ${t.code} needs ${types.join(' or ')}. Trigon never changes the type of a Zoho account.`);
+        if (sys && t.code === '3100' && !sys.test(a)) return conflict(t, 'NOT_SYSTEM_ACCOUNT', a, `3100 must be ${sys.what}; it is mapped to another account. Map it to the system account (never a replacement).`);
+        if (t.allow && a.account_code && String(a.account_code).trim() !== t.code) return conflict(t, 'WRONG_CODE', a, `The mapped Zoho account has code ${a.account_code}; expected ${t.code}. Correct the code in Zoho, or map the right account.`);
+        const note = t.partner_id && low(a.account_name) !== low(t.name) ? `name in Zoho "${a.account_name}" differs from Trigon's "${t.name}" (renamed in Trigon?) — kept as it is` : 'already mapped and valid';
+        return out(t, 'ok', { state: 'MAPPED', zoho: view(a), note });
       }
-      const hits = byCode(t.code);
-      if (hits.length > 1) return conflict(t, 'DUPLICATE_CODE', hits[0], `${hits.length} Zoho accounts have the code ${t.code}. Keep the code on one account only.`);
-      if (hits.length === 1) {
-        const a = hits[0];
-        if (a.is_active === false) return conflict(t, 'INACTIVE', a, `The Zoho account with code ${t.code} is inactive. Reactivate it, or remove the code from it.`);
-        if (!types.includes(a.account_type)) return conflict(t, 'WRONG_TYPE', a, `Zoho already has code ${t.code} as "${a.account_name}" of type ${a.account_type}; Trigon needs ${types.join(' or ')}. Give that Zoho account another code (if it is a different account), or ask the accountant — Trigon will not rename, re-type or duplicate it.`);
-        return { ...t, action: 'adopt', state: 'ADOPT_BY_CODE', zoho: view(a), note: `Zoho account with code ${t.code} and a compatible type` };
+      const hits = byCode(t.code), sysHits = sys ? all.filter(a => active(a) && sys.test(a)) : [];
+      for (const a of hits) if (!types.includes(a.account_type)) return conflict(t, 'WRONG_TYPE', a, `Zoho already has code ${t.code} as "${a.account_name}" of type ${a.account_type}; Trigon needs ${types.join(' or ')}. Give that Zoho account another code (if it is a different account), or ask the accountant — Trigon will not rename, re-type or duplicate it.`);
+      for (const a of hits) if (!active(a)) return conflict(t, 'INACTIVE', a, `The Zoho account with code ${t.code} is inactive. Reactivate it, or remove the code from it.`);
+      if (sys) {
+        if (sysHits.length > 1) return out(t, 'ambiguous', { reason: 'SEVERAL_SYSTEM_ACCOUNTS', candidates: sysHits.map(view), resolution: `${sysHits.length} accounts look like ${sys.what} — map the right one explicitly.` });
+        if (sysHits.length === 1 && hits.length && hits.some(a => a.account_id !== sysHits[0].account_id))
+          return t.code === '3100' ? conflict(t, 'REPLACEMENT_EXISTS', hits.find(a => a.account_id !== sysHits[0].account_id), `Another account carries code 3100 besides ${sys.what}. 3100 is always the system account: remove the code from the other account in Zoho.`)
+            : out(t, 'ambiguous', { reason: 'TWO_CANDIDATES', candidates: [sysHits[0], ...hits].map(view), resolution: `Both ${sys.what} and another account with code ${t.code} exist — map the right one explicitly.` });
+        if (sysHits.length === 1) return out(t, 'adopt', { sys: true, state: 'SYSTEM_ACCOUNT', zoho: view(sysHits[0]), note: sys.what });
+        if (t.code === '3100') return out(t, 'blocked', { reason: 'SYSTEM_ACCOUNT_NOT_FOUND', zoho: hits[0] ? view(hits[0]) : null, resolution: `${sys.what} was not found (Zoho creates it with every organisation). Trigon never creates a replacement: check the Zoho chart of accounts and map it explicitly.` });
       }
-      if (RULES[t.code]) { const sys = all.filter(RULES[t.code]); if (sys.length === 1) return { ...t, action: 'adopt', state: 'ADOPT_BY_RULE', zoho: view(sys[0]), note: "Zoho's own system Retained Earnings account (known rule)" }; }
-      const same = t.allow ? byName(t.name) : [];                                         // never adopted by name — a name collision stops an account Trigon would create
-      if (same.length) return conflict(t, 'NAME_IN_USE', same[0], `Zoho already has an account named "${same[0].account_name}" (${same[0].account_type}${same[0].account_code ? ', code ' + same[0].account_code : ', no code'}). Trigon does not adopt accounts by name. If it is the right account, give it the code ${t.code} in Zoho and run the preview again (it will then be adopted by code); otherwise rename one of them.`);
-      if (t.allow) return { ...t, action: 'create', state: 'CREATE' };
-      return { ...t, action: 'missing', state: 'MISSING_MAPPING', note: 'not on the automatic list — map it once on the Zoho page' };
+      if (hits.length > 1) return out(t, 'ambiguous', { reason: 'DUPLICATE_CODE', candidates: hits.map(view), resolution: `${hits.length} Zoho accounts have the code ${t.code}. Keep the code on one account only.` });
+      if (hits.length === 1) return out(t, 'adopt', { state: 'BY_CODE', zoho: view(hits[0]), note: `Zoho account with code ${t.code} and a compatible type (${hits[0].account_type})` });
+      const same = t.allow ? byName(t.name) : [];                                          // never adopted by name — a name collision stops an account Trigon would create
+      if (same.length) return conflict(t, 'NAME_IN_USE', same[0], `Zoho already has an account named "${same[0].account_name}" (${same[0].account_type}${same[0].account_code ? ', code ' + same[0].account_code : ', no code'}). Trigon does not adopt accounts by name. If it is the right account, give it the code ${t.code} in Zoho (it is then adopted by code); otherwise rename one of them.`);
+      if (t.allow) return out(t, 'create', { state: 'CREATE' });
+      const c = cand(types);
+      return out(t, 'blocked', { reason: 'NO_ACCOUNT_WITH_CODE', candidates: c, resolution: c.length ? `No Zoho account carries code ${t.code}. Give the right one of these the code ${t.code} in Zoho (it is then adopted automatically): ${c.map(x => `"${x.name}" (${x.type})`).join(', ')} — or map it explicitly.` : `No Zoho account of type ${types.join(' or ')} — create it in Zoho with code ${t.code} (not on Trigon's automatic list).` });
     }
-    const rows = [];
-    for (const [code, name, type] of ALLOW) rows.push(resolve({ key: 'acct:' + code, code, name, type, types: X.expectTypes('acct:' + code), allow: true }));
-    const parent = {};
-    for (const [code, name, type] of PARENTS) rows.push(parent[code] = resolve({ key: 'acct:' + code, code, name, type, types: [type], allow: true, group: 'partner parent' }));
+    const rows = [], rowOf = {};
+    const add = r => { rows.push(r); rowOf[r.key] = r; return r; };
+    for (const [code, name, type, parent] of ALLOW) add(resolve({ key: 'acct:' + code, code, name, type, types: X.expectTypes('acct:' + code), allow: true, ...(parent ? { parent_key: 'acct:' + parent } : {}) }));
+    for (const [code, name, type] of PARENTS) add(resolve({ key: 'acct:' + code, code, name, type, types: [type], allow: true, group: 'partner parent' }));
     const ps = partners(), twins = new Set(ps.filter(p => ps.some(q => q.id !== p.id && low(q.name) === low(p.name))).map(p => p.id));
-    for (const p of ps) for (const [code, , type, suffix] of PARENTS) {
+    for (const p of ps) for (const [code, , type, suffix] of PARENTS)
       // Zoho needs unique names: partners with the same name in Trigon carry their id in the name (the identity is the id)
-      const t = { key: `acct:${code}:p${p.id}`, code: `${code}-P${p.id}`, name: `${p.name}${twins.has(p.id) ? ` (#${p.id})` : ''} - ${suffix}`, type, types: [type], allow: true, partner_id: p.id, partner: p.name, parent_key: 'acct:' + code, group: 'partner' };
-      const r = resolve(t), par = parent[code];
-      rows.push(r.action === 'create' && par.action === 'conflict' ? { ...r, action: 'blocked', state: 'PARENT_CONFLICT', reason: 'PARENT_CONFLICT', resolution: `Its parent account ${par.name} has a conflict — resolve that first.` } : r);
-    }
-    // the other accounts the sync needs: never created automatically, reported so they can be mapped once
-    // ("automatic" = the only Zoho account of that type: it stops being automatic when this provisioning creates another one)
-    const willCreate = t => rows.filter(r => r.action === 'create' && r.type === t).length;
-    const autoOf = code => { const type = X.AUTO[code]; if (!type) return null; const same = all.filter(a => a.account_type === type && a.is_active !== false); return same.length === 1 ? same[0] : null; };
-    for (const [code, label, types] of X.REQUIRED) {
-      if (types === 'tax' || ALLOW.some(a => a[0] === code)) continue;
-      const r = resolve({ key: 'acct:' + code, code, name: label, types, allow: false, group: 'map once' });
-      if (r.action === 'missing' && autoOf(code) && willCreate(X.AUTO[code])) rows.push({ ...r, zoho: view(autoOf(code)), note: `today the only Zoho ${X.AUTO[code]} account is "${autoOf(code).account_name}", but this provisioning creates ${willCreate(X.AUTO[code])} more ${X.AUTO[code]} account(s) — map ${code} explicitly (once)` });
-      else if (r.action === 'missing' && autoOf(code)) rows.push({ ...r, action: 'ok', state: 'AUTOMATIC', zoho: view(autoOf(code)), note: `the only Zoho account of type ${X.AUTO[code]}` });
-      else rows.push(r);
-    }
-    // VAT: from Zoho's tax configuration (a 5% tax) and its tax accounts — never created here
+      add(resolve({ key: `acct:${code}:p${p.id}`, code: `${code}-P${p.id}`, name: `${p.name}${twins.has(p.id) ? ` (#${p.id})` : ''} - ${suffix}`, type, types: [type], allow: true, partner_id: p.id, partner: p.name, parent_key: 'acct:' + code, group: 'partner' }));
+    // the foundation (never created): Zoho's system accounts, then the rest by exact code + compatible type
+    const done = new Set(rows.map(r => r.code));
+    for (const [code, label, types] of X.REQUIRED) if (types !== 'tax' && !done.has(code)) { add(resolve({ key: 'acct:' + code, code, name: label, types, allow: false, group: SYS[code] ? 'system' : 'foundation' })); done.add(code); }
+    if (!done.has('3100')) add(resolve({ key: 'acct:3100', code: '3100', name: 'Retained Earnings', types: ['equity'], allow: false, group: 'system' }));
+    for (const b of X.bankAccounts()) if (!done.has(String(b.ledger_code))) { add(resolve({ key: 'acct:' + b.ledger_code, code: String(b.ledger_code), name: 'Bank — ' + b.name, types: ['bank'], allow: false, group: 'foundation' })); done.add(String(b.ledger_code)); }
+    for (const cat of Object.keys(X.CAT)) { const code = ctx.expenseCode ? ctx.expenseCode(cat) : cat;
+      add(resolve({ key: 'cat:' + cat, code: String(code), name: `Expense category — ${X.CAT[cat]}`, types: cat === 'asset' ? ['fixed_asset'] : ['cost_of_goods_sold', 'expense'], allow: false, group: 'category' })); }
+    // a category on a code this provisioning creates (e.g. "asset" → 1600) follows the new account
+    for (const r of rows) if (r.group === 'category' && r.reason === 'NO_ACCOUNT_WITH_CODE' && rowOf['acct:' + r.code] && rowOf['acct:' + r.code].action === 'create')
+      Object.assign(r, { action: 'follow', classification: CLASS.adopt, reason: undefined, candidates: undefined, follows: 'acct:' + r.code, resolution: '', note: `uses the account created for ${r.code}` });
+    // a sub-account waits for its parent: a parent in conflict / blocked / ambiguous blocks it
+    for (const r of rows) if (r.parent_key && r.action === 'create') { const par = rowOf[r.parent_key];
+      if (!['ok', 'adopt', 'create'].includes(par.action)) Object.assign(r, { action: 'blocked', classification: CLASS.blocked, reason: 'PARENT_NOT_RESOLVED', resolution: `Its parent account ${par.code} ${par.name} is ${par.classification} — resolve that first.` }); }
+    // 1690 / 1600 / 6150: what the accountant reviews before provisioning
+    const review = { 1690: 'Contra-asset: Zoho has no contra type, so it is a fixed_asset account carrying a credit balance, created as a sub-account of 1600 Fixed Assets so that Zoho\'s balance sheet shows Fixed Assets at net book value (cost less accumulated depreciation).',
+      6150: 'One account for gains and losses, as in Trigon\'s ledger: a loss is a debit, a gain a credit. In Zoho\'s profit & loss it is an "other expense"; a net gain shows there as a negative other expense. Separate gain / loss accounts would need a change to Trigon\'s own ledger first (a separate PR).',
+      3100: 'Always Zoho\'s system Retained Earnings account (Zoho closes the year into it). Never created, never replaced.' };
+    for (const r of rows) if (review[r.code] && !r.partner_id) r.review = review[r.code];
+    // VAT: from Zoho's tax configuration (a 5% tax) and its tax accounts — never created
     const tax5 = taxes.find(t => +t.tax_percentage === 5 && t.tax_type !== 'tax_group');
     const vat = Object.entries(VAT).map(([code, v]) => {
-      const m = mapRow('acct:' + code);
-      if (m && m.zoho_id) { const a = byId.get(String(m.zoho_id)); return a && a.is_active !== false && v.types.includes(a.account_type) ? { code, label: v.label, action: 'ok', state: 'MAPPED', zoho: view(a) } : { code, label: v.label, action: 'vat_required', state: 'VAT_CONFIGURATION_REQUIRED', zoho: view(a), reason: a ? `mapped account is ${a.is_active === false ? 'inactive' : 'of type ' + a.account_type}` : 'mapped account no longer exists' }; }
-      const same = all.filter(a => a.account_type === v.auto && a.is_active !== false);
-      if (same.length === 1) return { code, label: v.label, action: 'adopt', state: 'ADOPT_TAX_ACCOUNT', key: 'acct:' + code, zoho: view(same[0]), note: `Zoho's only ${v.auto} account (from its tax configuration)` };
-      return { code, label: v.label, action: 'vat_required', state: 'VAT_CONFIGURATION_REQUIRED', reason: same.length ? `${same.length} Zoho accounts of type ${v.auto} — map Trigon ${code} to the right one` : `no Zoho ${v.auto} account — set up UAE VAT in Zoho (Settings → Taxes)` };
+      const base = { key: 'acct:' + code, code, label: v.label, name: v.label, group: 'vat' }, m = mapRow('acct:' + code);
+      if (m && m.zoho_id) { const a = byId.get(String(m.zoho_id));
+        return a && active(a) && v.types.includes(a.account_type) ? out(base, 'ok', { state: 'MAPPED', zoho: view(a) }) : out(base, 'vat_required', { zoho: view(a), reason: a ? `mapped account is ${active(a) ? 'of type ' + a.account_type : 'inactive'}` : 'mapped account no longer exists' }); }
+      const same = all.filter(a => a.account_type === v.auto && active(a));
+      if (same.length === 1) return out(base, 'adopt', { sys: !!same[0].is_system_account, state: 'TAX_ACCOUNT', zoho: view(same[0]), note: `Zoho's only ${v.auto} account (from its tax configuration)` });
+      if (same.length > 1) return out(base, 'ambiguous', { reason: 'SEVERAL_TAX_ACCOUNTS', candidates: same.map(view), resolution: `${same.length} Zoho accounts of type ${v.auto} — map Trigon ${code} to the right one` });
+      return out(base, 'vat_required', { reason: `no Zoho ${v.auto} account — set up UAE VAT in Zoho (Settings → Taxes)` });
     });
-    if (!tax5) vat.push({ code: 'tax', label: 'Standard rate 5%', action: 'vat_required', state: 'VAT_CONFIGURATION_REQUIRED', reason: 'no 5% tax in Zoho — set up UAE VAT in Zoho (Settings → Taxes)' });
-    // the exact mutations: POST /chartofaccounts only, parents before their sub-accounts
-    const creates = rows.filter(r => r.action === 'create').sort((a, b) => (a.partner_id ? 1 : 0) - (b.partner_id ? 1 : 0));
-    const mutations = creates.map(r => ({ method: 'POST', path: '/chartofaccounts', key: r.key, body: { account_name: r.name, account_code: r.code, account_type: r.type, ...(r.parent_key ? { parent_account_id: parent[r.parent_key.slice(5)].zoho ? parent[r.parent_key.slice(5)].zoho.id : `(the new "${parent[r.parent_key.slice(5)].name}")` } : {}) } }));
-    const adopts = [...rows, ...vat].filter(r => r.action === 'adopt').map(r => ({ key: r.key || 'acct:' + r.code, zoho_id: r.zoho.id, how: r.state }));
-    const count = a => rows.filter(r => r.action === a).length;
-    const state = rows.some(r => ['conflict', 'blocked'].includes(r.action)) ? 'Conflict' : vat.some(v => v.action === 'vat_required') ? 'VAT_CONFIGURATION_REQUIRED' : count('create') || count('adopt') || adopts.length || count('missing') ? 'Missing' : 'Ready';
+    if (!tax5) vat.push(out({ key: 'tax:5', code: 'tax', label: 'Standard rate 5%', name: 'Standard rate 5%', group: 'vat' }, 'vat_required', { reason: 'no 5% tax in Zoho — set up UAE VAT in Zoho (Settings → Taxes)' }));
+    // the exact payload of every CREATE_APPROVED account (not sent by the preview); parents before their sub-accounts
+    const order = r => (r.partner_id ? 2 : r.parent_key ? 1 : 0);
+    const creates = rows.filter(r => r.action === 'create').sort((a, b) => order(a) - order(b));
+    const parentRef = k => { const par = rowOf[k]; return par.zoho ? par.zoho.id : `(the new "${par.name}")`; };
+    const mutations = creates.map(r => ({ method: 'POST', path: '/chartofaccounts', key: r.key, body: { account_name: r.name, account_code: r.code, account_type: r.type, ...(r.parent_key ? { parent_account_id: parentRef(r.parent_key) } : {}) } }));
+    for (const m of mutations) rowOf[m.key].payload = m.body;
+    const adopts = [...rows, ...vat].filter(r => r.action === 'adopt').map(r => ({ key: r.key, zoho_id: r.zoho.id, how: r.classification }));
+    const every = [...rows, ...vat], n = cl2 => every.filter(r => r.classification === cl2).length;
+    const counts = { ADOPT_EXISTING: n('ADOPT_EXISTING'), SYSTEM_ACCOUNT_ADOPT: n('SYSTEM_ACCOUNT_ADOPT'), CREATE_APPROVED: n('CREATE_APPROVED'), VAT_CONFIGURATION_REQUIRED: n('VAT_CONFIGURATION_REQUIRED'), ACCOUNT_CONFLICT: n('ACCOUNT_CONFLICT'), AMBIGUOUS: n('AMBIGUOUS'), BLOCKED: n('BLOCKED') };
+    // the four numbers that must be 0 before synchronisation (after provisioning, every account is mapped)
+    const targets = { missing_mappings: every.filter(r => r.action !== 'ok').length, wrong_types: every.filter(r => ['WRONG_TYPE', 'NOT_SYSTEM_ACCOUNT'].includes(r.reason)).length, ambiguous_matches: counts.AMBIGUOUS, blocking_conflicts: counts.ACCOUNT_CONFLICT + counts.BLOCKED + counts.VAT_CONFIGURATION_REQUIRED };
+    const state = counts.ACCOUNT_CONFLICT || counts.BLOCKED ? 'Conflict' : counts.AMBIGUOUS ? 'Ambiguous' : counts.VAT_CONFIGURATION_REQUIRED ? 'VAT_CONFIGURATION_REQUIRED' : targets.missing_mappings ? 'Missing' : 'Ready';
     const token = X.hashOf([mutations.map(m => m.body), adopts]);
-    return { at: stamp(), state, rows, vat, mutations, adopts, token, counts: { ok: count('ok'), adopt: adopts.length, create: count('create'), conflict: count('conflict') + count('blocked'), missing: count('missing'), vat_required: vat.filter(v => v.action === 'vat_required').length } };
+    return { at: stamp(), state, rows, vat, mutations, adopts, token, counts, targets,
+      // (older names, kept for the screen and the scheduler)
+      legacy_counts: { create: counts.CREATE_APPROVED, adopt: adopts.length, conflict: counts.ACCOUNT_CONFLICT + counts.BLOCKED, missing: counts.BLOCKED, ambiguous: counts.AMBIGUOUS, vat_required: counts.VAT_CONFIGURATION_REQUIRED } };
   }
 
   // ---------- apply: POST /chartofaccounts only, each read back and checked, then remembered by its Zoho id ----------
@@ -150,6 +180,7 @@ module.exports = ctx => {
         res.created.push({ key: m.key, zoho_id: id, name: body.account_name, code: body.account_code, type: body.account_type, parent_id: body.parent_account_id || '' });
       } catch (e) { res.failed.push({ key: m.key, name: body.account_name, error: String(e.message).slice(0, 300) }); }
     }
+    for (const r of p.rows.filter(x => x.action === 'follow' && (!only || only(x.key)))) { const m = mapRow(r.follows); if (m && m.zoho_id) { saveMap(r.key, { account_id: m.zoho_id, account_name: m.zoho_name, account_type: m.zoho_type, account_code: m.zoho_code, parent_account_id: m.parent_id }, { label: r.name }); res.adopted.push({ key: r.key, zoho_id: m.zoho_id, how: 'FOLLOWS ' + r.follows }); } }
     db.prepare('INSERT INTO zoho_provision_runs(at,user,trigger,token,created,adopted,conflicts,failed,result) VALUES(?,?,?,?,?,?,?,?,?)').run(stamp(), user, trigger, p.token || '', res.created.length, res.adopted.length, res.conflicts.length, res.failed.length, JSON.stringify(res));
     return res;
   }
@@ -161,10 +192,13 @@ module.exports = ctx => {
     const accts = [...pf.required_accounts, ...pf.partner_accounts.flatMap(x => x.accounts)];
     const reasons = [...pf.blockers, ...pf.to_configure];
     const wrong = accts.filter(a => ['type_mismatch', 'not_found'].includes(a.status)).length, missing = accts.filter(a => ['missing', 'ambiguous'].includes(a.status)).length;
-    if (p.state !== 'Ready') reasons.push(p.error ? `account check failed: ${p.error}` : `accounts: ${p.state}${p.counts.conflict ? ` — ${p.counts.conflict} conflict(s)` : ''}${p.counts.vat_required ? ' — VAT configuration required in Zoho' : ''}${p.counts.create ? ` — ${p.counts.create} to create` : ''}${p.counts.missing ? ` — ${p.counts.missing} to map` : ''}`);
+    if (p.state !== 'Ready') reasons.push(p.error ? `account check failed: ${p.error}` : `accounts: ${p.state} — ${Object.entries(p.counts).filter(([k, v]) => v && !['ADOPT_EXISTING'].includes(k)).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+    for (const r of [...(p.rows || []), ...(p.vat || [])].filter(r => ['ACCOUNT_CONFLICT', 'AMBIGUOUS', 'BLOCKED', 'VAT_CONFIGURATION_REQUIRED'].includes(r.classification))) reasons.push(`${r.code} ${r.name}: ${r.classification}${r.reason ? ' (' + r.reason + ')' : ''}`);
     if (X.cfg().post !== '1') reasons.push('"Post documents in Zoho" is off: Zoho keeps drafts out of its ledger, so its accounting effect could not equal Trigon\'s — switch it on in the Zoho settings');
-    const ready = pf.verdict === 'READY' && !missing && !wrong && !pf.blockers.length && p.state === 'Ready' && X.cfg().post === '1';
-    const gate = { verdict: pf.verdict, ready, missing_mappings: missing, wrong_types: wrong, blocking_conflicts: pf.blockers.length, account_state: p.state, reasons: [...new Set(reasons)].slice(0, 60), at: stamp(), why };
+    const t = p.targets || { missing_mappings: 1, wrong_types: 0, ambiguous_matches: 0, blocking_conflicts: 0 };
+    const missingAll = missing + t.missing_mappings, wrongAll = wrong + t.wrong_types, ambiguous = t.ambiguous_matches + accts.filter(a => a.status === 'ambiguous').length, blockingAll = pf.blockers.length + t.blocking_conflicts;
+    const ready = pf.verdict === 'READY' && !missingAll && !wrongAll && !ambiguous && !blockingAll && p.state === 'Ready' && X.cfg().post === '1';
+    const gate = { verdict: pf.verdict, ready, missing_mappings: missingAll, wrong_types: wrongAll, ambiguous_matches: ambiguous, blocking_conflicts: blockingAll, account_state: p.state, reasons: [...new Set(reasons)].slice(0, 60), at: stamp(), why };
     X.setCfg('gate', ready ? 'READY' : ''); X.setCfg('gate_info', JSON.stringify(gate)); X.setCfg('pf_verdict', pf.verdict); X.setCfg('pf_at', new Date().toISOString());
     return { gate, preflight: pf, plan: p };
   }
@@ -336,6 +370,8 @@ module.exports = ctx => {
         line('Accounts receivable (1100, 1150)', tsum(c2 => ['1100', '1150'].includes(c2)), zsum(inCodes(['1100', '1150']))),
         line('Accounts payable (2000)', tsum(c2 => c2 === '2000'), zsum(inCodes(['2000']))),
         line('Bank and cash', tsum(c2 => bankCodes.includes(c2)), zsum(inCodes(bankCodes))),
+        line('Fixed assets — net book value (1600 cost + 1690 accumulated depreciation)', tsum(c2 => ['1600', '1690'].includes(c2)), zsum(inCodes(['1600', '1690']))),
+        line('Gain / loss on disposal (6150: debit = loss, credit = gain)', tsum(c2 => c2 === '6150'), zsum(inCodes(['6150']))),
         line('Partner accounts (3000, 2500, 3110)', tsum(c2 => ['3000', '2500', '3110'].includes(c2)), zsum(inCodes(['3000', '2500', '3110']))),
         line('Employee control accounts (1300, 1030, 2200, 2250, 2260, 2300)', tsum(c2 => ['1300', '1030', '2200', '2250', '2260', '2300'].includes(c2)), zsum(inCodes(['1300', '1030', '2200', '2250', '2260', '2300']))),
       ];

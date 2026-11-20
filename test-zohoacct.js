@@ -46,24 +46,31 @@ server.listen(0, async () => {
     const c1 = ok(await call('POST', 'expense_claims', { employee_id: E, date: '2026-11-10', description: 'Taxi', amount: 150, vat_amount: 7.5, project_id: P })).id;
     ok(await call('POST', `expense_claims/${c1}/decide`, { status: 'approved' }));
     ok(await call('POST', 'expense_claims/reimburse', { employee_id: E, date: '2026-11-14', amount: 157.5, method: 'bank' }));
+    ok(await call('POST', 'fixed_assets', { name: 'Compressor', purchase_date: '2026-10-01', cost: 6000, salvage: 0, life_years: 1, opening: 1, status: 'disposed', disposal_date: '2026-10-20', disposal_proceeds: 7000 }));   // sold at a gain
+    ok(await call('POST', 'fixed_assets', { name: 'Generator', purchase_date: '2026-10-01', cost: 6000, salvage: 0, life_years: 1, opening: 1, status: 'disposed', disposal_date: '2026-10-20', disposal_proceeds: 1000 }));  // sold at a loss
     ok(await call('POST', 'fixed_assets', { name: 'Pickup', purchase_date: '2026-10-01', cost: 12000, salvage: 0, life_years: 1, opening: 1 }));   // depreciated at the end of October
 
     // ---- Zoho (mock): a UAE organisation with VAT set up, its system Retained Earnings, and some traps
+    // the foundation as an organisation would have it: Zoho's system accounts, and the rest carrying Trigon's codes (adopted by exact code + type)
+    for (const a of T.chartofaccounts) if (a.account_id === '3201') a.is_system_account = true;   // Accounts Receivable
+    const coded = { 3102: '2200', 3104: '2250', 3106: '2300', 3101: '5200', 3105: '5260', 3202: '1150' };
+    for (const a of T.chartofaccounts) if (coded[a.account_id]) a.account_code = coded[a.account_id];
+    T.bankaccounts.find(a => a.account_id === '2001').account_code = '1000';
     T.chartofaccounts.push(
-      { account_id: '3301', account_name: 'Accounts Payable', account_type: 'accounts_payable', is_active: true },
+      { account_id: '3301', account_name: 'Accounts Payable', account_type: 'accounts_payable', is_active: true, is_system_account: true },
       { account_id: '3401', account_name: 'Input VAT', account_type: 'input_tax', is_active: true, is_system_account: true }, { account_id: '3402', account_name: 'Output VAT', account_type: 'output_tax', is_active: true, is_system_account: true },
       { account_id: '3501', account_name: 'Retained Earnings', account_type: 'equity', is_active: true, is_system_account: true },
       { account_id: '3601', account_name: 'Employee Cash Custody Account', account_type: 'expense', is_active: true },          // a SIMILAR name: never adopted
       { account_id: '3701', account_name: 'Misc Income', account_code: '6150', account_type: 'income', is_active: true },        // Trigon's code with the WRONG type
-      { account_id: '3801', account_name: 'Office Salaries', account_type: 'expense', is_active: true });
-    T.bankaccounts.push({ account_id: '2003', account_name: 'Cash on Hand', account_type: 'cash', is_active: true });               // 2002 "Petty Cash": the SAME name as 1010
+      { account_id: '3801', account_name: 'Office Salaries', account_code: '6200', account_type: 'expense', is_active: true });
+    T.bankaccounts.push({ account_id: '2003', account_name: 'Cash on Hand', account_code: '1020', account_type: 'cash', is_active: true });               // 2002 "Petty Cash": the SAME name as 1010
     ok(await call('POST', 'zoho/connect', { code: '1000.code.one' }));
     ok(await call('PUT', 'zoho/config', { enabled: '1', start: '2026-10-01', start_v2: '2026-10-01', post: '1' }));
     // the accounts outside the automatic list are mapped once, as on the office PC
-    const once = { 1020: '2003', 1150: '3202', 1300: '3103', 2200: '3102', 2250: '3104', 2300: '3106', 5200: '3101', 6200: '3801', 5260: '3105', 4000: '3004' };
-    for (const [code, id] of Object.entries(once)) ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: 'acct:' + code, zoho_id: id }));
-    for (const cat of Object.keys(ctx.zohoX.CAT)) { const id = 'C-' + cat; T.chartofaccounts.push({ account_id: id, account_name: 'Cost — ' + cat, account_type: cat === 'asset' ? 'fixed_asset' : 'expense', is_active: true });
-      ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: 'cat:' + cat, zoho_id: id })); }
+    ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: 'acct:4000', zoho_id: '3004' }));   // revenue (two income accounts in this Zoho): for the reconciliation
+    // one Zoho expense account per Trigon category code ("asset" is 1600, created by the provisioning) — 1300 (3103) deliberately has no code yet
+    const catCodes = [...new Set(Object.keys(ctx.zohoX.CAT).map(c => ctx.expenseCode(c)))].filter(c => c !== '1600' && !Object.values(coded).includes(c) && c !== '6200');
+    for (const code of catCodes) T.chartofaccounts.push({ account_id: 'C-' + code, account_name: 'Cost ' + code, account_code: code, account_type: 'expense', is_active: true });
     // history: the 5 November invoice (and its retention journal) was sent by the earlier version, before this workflow existed
     ctx.db.prepare("UPDATE zoho_config SET value='0' WHERE key='gate_required'").run();
     const hist = ok(await call('POST', 'zoho/sync', { from: '2026-11-05', to: '2026-11-05' })); assert.equal(hist.failed, 0, hist.message);
@@ -92,14 +99,45 @@ server.listen(0, async () => {
     assert.match(byKey('acct:1010').resolution, /give it the code 1010/);
     assert.equal(byKey('acct:1030').action, 'create', 'a similar name is not adopted');
     assert.equal(byKey('acct:6150').action, 'conflict'); assert.equal(byKey('acct:6150').reason, 'WRONG_TYPE'); assert.equal(byKey('acct:6150').zoho.type, 'income');   // type mismatch: BLOCKED
-    assert.equal(byKey('acct:3100').action, 'adopt'); assert.equal(byKey('acct:3100').state, 'ADOPT_BY_RULE'); assert.equal(byKey('acct:3100').zoho.id, '3501');
+    const SEVEN = ['ADOPT_EXISTING', 'CREATE_APPROVED', 'SYSTEM_ACCOUNT_ADOPT', 'VAT_CONFIGURATION_REQUIRED', 'ACCOUNT_CONFLICT', 'AMBIGUOUS', 'BLOCKED'];
+    assert.ok([...pv.rows, ...pv.vat].every(r => SEVEN.includes(r.classification)), 'every required account has one of the seven classifications');
+    for (const [k, id] of [['acct:3100', '3501'], ['acct:1100', '3201'], ['acct:2000', '3301']]) { assert.equal(byKey(k).classification, 'SYSTEM_ACCOUNT_ADOPT', k); assert.equal(byKey(k).zoho.id, id); }
+    assert.ok(!pv.mutations.some(m => ['3100', '1100', '2000'].includes(m.body.account_code)), 'system accounts never created');
+    for (const [k, id] of [['acct:2200', '3102'], ['acct:1000', '2001'], ['acct:1020', '2003'], ['acct:6200', '3801'], ['cat:materials', 'C-5100']]) { assert.equal(byKey(k).classification, 'ADOPT_EXISTING', k); assert.equal(byKey(k).zoho.id, id, k); }
+    assert.equal(byKey('acct:1300').classification, 'BLOCKED'); assert.equal(byKey('acct:1300').reason, 'NO_ACCOUNT_WITH_CODE'); assert.ok(byKey('acct:1300').candidates.some(c => c.id === '3103'), 'candidate shown, not adopted');
+    assert.equal(byKey('cat:asset').classification, 'ADOPT_EXISTING'); assert.equal(byKey('cat:asset').follows, 'acct:1600');
+    assert.deepEqual(byKey('acct:1690').payload, { account_name: 'Accumulated Depreciation', account_code: '1690', account_type: 'fixed_asset', parent_account_id: '(the new "Fixed Assets")' });
+    assert.ok(byKey('acct:1690').review && byKey('acct:6150').review && byKey('acct:3100').review);
+    assert.ok(pv.rows.filter(r => r.classification === 'CREATE_APPROVED').every(r => r.payload && pv.mutations.some(m => m.key === r.key)), 'every CREATE_APPROVED shows its exact payload');
     for (const k of ['acct:1050', 'acct:1600', 'acct:1690', 'acct:2050', 'acct:2260', 'acct:2400', 'acct:3900', 'acct:6100', 'acct:3000', 'acct:2500', 'acct:3110', `acct:3000:p${PA}`, `acct:3110:p${PB}`]) assert.equal(byKey(k).action, 'create', k);
     assert.equal(pv.state, 'Conflict');
     // VAT: Zoho's tax accounts adopted, never created
     assert.deepEqual(pv.vat.map(v => [v.code, v.action, v.zoho && v.zoho.id]), [['1200', 'adopt', '3401'], ['2100', 'adopt', '3402']]);
     assert.ok(pv.mutations.every(m => m.method === 'POST' && m.path === '/chartofaccounts' && !/tax/.test(m.body.account_type) && !/vat/i.test(m.body.account_name)), 'no VAT account is ever created');
-    assert.deepEqual(pv.mutations.map(m => m.body.account_code).slice(0, 4), ['1030', '1050', '1600', '1690']);
+    assert.deepEqual(pv.mutations.map(m => m.body.account_code).slice(0, 4), ['1030', '1050', '1600', '2050']);
+    assert.ok(pv.mutations.findIndex(m => m.body.account_code === '1690') > pv.mutations.findIndex(m => m.body.account_code === '1600'), '1690 after its parent 1600');
     const childMut = pv.mutations.find(m => m.body.account_code === `3000-P${PA}`); assert.equal(childMut.body.account_name, 'Partner Alpha - Capital'); assert.match(childMut.body.parent_account_id, /the new "Partner Capital"/);
+    // 3100 is only ever Zoho's system Retained Earnings: a replacement coded 3100 is a conflict, a missing system account blocks, nothing is created
+    const re = acct('3501');
+    T.chartofaccounts.push({ account_id: '3999', account_name: 'Retained Earnings 2', account_code: '3100', account_type: 'equity', is_active: true });
+    let pe = await A.plan(), r3 = pe.rows.find(x => x.key === 'acct:3100'); assert.equal(r3.classification, 'ACCOUNT_CONFLICT'); assert.equal(r3.reason, 'REPLACEMENT_EXISTS');
+    T.chartofaccounts.pop(); re.is_system_account = false;
+    pe = await A.plan(); r3 = pe.rows.find(x => x.key === 'acct:3100'); assert.equal(r3.classification, 'BLOCKED'); assert.equal(r3.reason, 'SYSTEM_ACCOUNT_NOT_FOUND'); assert.ok(!pe.mutations.some(m => m.body.account_code === '3100'));
+    re.is_system_account = true;
+    T.chartofaccounts.push({ account_id: '3996', account_name: 'Owner Equity', account_type: 'equity', is_active: true });
+    ctx.db.prepare("INSERT INTO zoho_map(kind,local_key,zoho_id) VALUES('account','acct:3100','3996')").run();   // mapped to an equity account that is not the system one
+    pe = await A.plan(); assert.equal(pe.rows.find(x => x.key === 'acct:3100').reason, 'NOT_SYSTEM_ACCOUNT');
+    ctx.db.prepare("DELETE FROM zoho_map WHERE local_key='acct:3100'").run(); T.chartofaccounts.pop();
+    // one account of the right type but without the code: shown as a candidate, never adopted by type alone
+    acct('3202').is_active = false; pe = await A.plan(); const r13 = pe.rows.find(x => x.key === 'acct:1300');
+    assert.equal(r13.classification, 'BLOCKED'); assert.deepEqual(r13.candidates.map(c => c.id), ['3103']); assert.ok(!pe.adopts.some(a => a.key === 'acct:1300')); acct('3202').is_active = true;
+    // AMBIGUOUS: two accounts with the same code; two system receivables — nothing is guessed
+    T.chartofaccounts.push({ account_id: '3998', account_name: 'Deductions 2', account_code: '2250', account_type: 'other_current_liability', is_active: true }, { account_id: '3997', account_name: 'Receivables 2', account_type: 'accounts_receivable', is_active: true, is_system_account: true });
+    pe = await A.plan(); assert.equal(pe.rows.find(x => x.key === 'acct:2250').classification, 'AMBIGUOUS'); assert.equal(pe.rows.find(x => x.key === 'acct:1100').classification, 'AMBIGUOUS');
+    assert.equal(pe.targets.ambiguous_matches, 2); assert.ok(!pe.adopts.some(a => ['acct:2250', 'acct:1100'].includes(a.key)));
+    const ga = await A.preflightAndGate('test', 'ambiguous'); assert.equal(ga.gate.ready, false); assert.ok(ga.gate.ambiguous_matches >= 2); assert.ok(ga.gate.reasons.some(x => /2250 .*AMBIGUOUS/.test(x)));
+    T.chartofaccounts.splice(-2, 2);
+    out.push('3100: only the system Retained Earnings (a replacement → ACCOUNT_CONFLICT, none → BLOCKED, never created); duplicates → AMBIGUOUS, never guessed');
     out.push(`preview (GET only): ${pv.mutations.length} accounts to create, adoptions by code / rule / tax account, NAME_IN_USE and WRONG_TYPE stopped, no VAT account created`);
 
     // ---- 3. provisioning: confirmed token only; POST /chartofaccounts only; read back; ids persisted; conflicts untouched
@@ -114,17 +152,20 @@ server.listen(0, async () => {
     assert.equal(acct(pAlpha.zoho_id).parent_account_id, parentCap.zoho_id, 'partner sub-account under "Partner Capital"'); assert.equal(pAlpha.partner_id, PA);
     assert.equal(acct('3701').account_type, 'income'); assert.equal(acct('3701').account_code, '6150'); assert.equal(acct('2002').account_name, 'Petty Cash', 'conflicting accounts are not renamed, re-typed or re-coded');
     assert.equal(map('acct:1200').zoho_id, '3401'); assert.equal(map('acct:3100').zoho_id, '3501'); assert.equal(map('acct:3100').created_by_trigon, 0);
+    assert.equal(acct(map('acct:1690').zoho_id).parent_account_id, map('acct:1600').zoho_id, '1690 under 1600 (net book value)'); assert.equal(map('cat:asset').zoho_id, map('acct:1600').zoho_id);
+    assert.equal(coa().filter(a => /retained earnings/i.test(a.account_name)).length, 1, 'no second Retained Earnings');
     assert.equal(prov.gate.ready, false, 'conflicts left: not READY'); assert.equal(JSON.stringify(ctx.financials('2026-01-01', TODAY)), gl0, "provisioning does not touch Trigon's ledger");
     const histMap = ctx.db.prepare("SELECT kind, local_key, zoho_id, label FROM zoho_map WHERE local_key IN (" + mapBefore.map(() => '?').join(',') + ") ORDER BY kind, local_key").all(...mapBefore.map(m => m.local_key));
     assert.deepEqual(histMap, mapBefore, 'existing mappings untouched');
     out.push(`provisioning: ${prov.result.created.length} accounts created (read back, ids persisted, partners under their parents), conflicts left as they are, Trigon's ledger unchanged`);
 
     // ---- 4. resolve the conflicts the way the preview recommends — in Zoho, by code — then the second preflight is READY
-    acct('2002').account_code = '1010'; acct('3701').account_code = '4900';
-    pv = ok(await call('GET', 'zoho-sync/preview')); assert.equal(byKey('acct:1010').state, 'ADOPT_BY_CODE'); assert.equal(byKey('acct:6150').action, 'create');
+    acct('2002').account_code = '1010'; acct('3701').account_code = '4900'; acct('3103').account_code = '1300';   // as the preview recommends
+    pv = ok(await call('GET', 'zoho-sync/preview')); assert.equal(byKey('acct:1010').state, 'BY_CODE'); assert.equal(byKey('acct:1010').classification, 'ADOPT_EXISTING'); assert.equal(byKey('acct:1300').classification, 'ADOPT_EXISTING'); assert.equal(byKey('acct:6150').action, 'create');
     prov = ok(await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token }));
     assert.equal(prov.gate.ready, true, JSON.stringify(prov.gate.reasons)); assert.equal(ctx.zohoX.cfg().gate, 'READY');
-    assert.deepEqual([prov.gate.missing_mappings, prov.gate.wrong_types, prov.gate.blocking_conflicts], [0, 0, 0]);
+    assert.deepEqual([prov.gate.missing_mappings, prov.gate.wrong_types, prov.gate.ambiguous_matches, prov.gate.blocking_conflicts], [0, 0, 0, 0]);
+    assert.deepEqual(prov.plan.targets, { missing_mappings: 0, wrong_types: 0, ambiguous_matches: 0, blocking_conflicts: 0 });
     out.push('after the recommended fix in Zoho: adopted by code, created, second preflight READY (0 missing, 0 wrong types, 0 conflicts)');
 
     // ---- 5. idempotent: 1, 2 … 20 runs give the same Zoho structure; a lost answer during creation is adopted by code, not duplicated
@@ -133,7 +174,7 @@ server.listen(0, async () => {
     assert.equal(shape(), s0); assert.equal(coa().length, c0);
     assert.equal(new Set(coa().map(a => a.account_name.toLowerCase())).size, coa().length, 'no duplicate names (no "Employee Cash Custody 1")');
     ctx.db.prepare("DELETE FROM zoho_map WHERE local_key='acct:2400'").run();                // as if Trigon stopped right after Zoho created it
-    const p3 = await A.plan(); assert.equal(p3.rows.find(x => x.key === 'acct:2400').state, 'ADOPT_BY_CODE'); await A.apply(p3, { trigger: 'test' });
+    const p3 = await A.plan(); assert.equal(p3.rows.find(x => x.key === 'acct:2400').state, 'BY_CODE'); await A.apply(p3, { trigger: 'test' });
     assert.equal(coa().length, c0); assert.ok(map('acct:2400'));
     out.push('20 more runs: identical structure; a create whose answer was lost is adopted by code, never duplicated');
 
@@ -165,6 +206,13 @@ server.listen(0, async () => {
     assert.deepEqual(badTb.map(x => `${x.codes.join('+')}: Trigon ${x.trigon} Zoho ${x.zoho} (${x.status})`), [], 'Trial Balance: every account matches');
     assert.deepEqual(badItems, [], 'every record matches'); assert.equal(rc.status, 'MATCH'); assert.ok(rc.statements.every(x => x.status === 'MATCH'), JSON.stringify(rc.statements));
     assert.ok(rc.tb.length >= 15); assert.equal(rc.summary.totals.trigon_debit, rc.summary.totals.zoho_debit);
+    // 6150 carries the loss (debit) and the gain (credit); 1690 is credited and shown under 1600: net book value equal in both books
+    const p6150 = zoho.postings().filter(x => x.account_id === map('acct:6150').zoho_id);
+    assert.ok(p6150.some(x => x.debit_amount > 0) && p6150.some(x => x.credit_amount > 0), '6150: a loss (debit) and a gain (credit)');
+    const nbv = rc.statements.find(x => /net book value/.test(x.name)), gl = rc.statements.find(x => /^Gain \/ loss/.test(x.name));
+    assert.equal(nbv.status, 'MATCH'); assert.equal(gl.status, 'MATCH'); assert.equal(nbv.trigon, ctx.financials('2026-01-01', TODAY).trial_balance.filter(a => ['1600', '1690'].includes(a.code)).reduce((t, a) => Math.round((t + a.debit - a.credit) * 100) / 100, 0));
+    const t1690 = rc.tb.find(x => x.codes.includes('1690')); assert.ok(t1690.zoho < 0 && t1690.status === 'MATCH', '1690: credit balance (contra-asset)');
+    out.push(`6150: a gain (credit) and a loss (debit) on one account, net ${gl.zoho} in both books; 1690 credit ${t1690.zoho} under 1600: net book value ${nbv.zoho} in both`);
     const z0 = await A.reconcile({ cutoff: '2026-09-30' }); assert.equal(z0.status, 'MATCH'); assert.ok(z0.tb.every(x => x.trigon === 0 && x.zoho === 0 && x.status === 'MATCH'));
     out.push(`reconciliation: ${rc.items.length} records MATCH, ${rc.tb.length} Trial Balance rows MATCH, statements (BS, P&L, VAT, AR, AP, bank/cash, partners, employees) MATCH; all zero before the first transaction`);
 
@@ -264,7 +312,7 @@ server.listen(0, async () => {
     acct('3401').is_active = false;
     pv = await A.plan(); assert.equal(pv.state, 'VAT_CONFIGURATION_REQUIRED'); assert.equal(pv.vat.find(v => v.code === '1200').action, 'vat_required');
     assert.ok(!pv.mutations.some(m => /vat|tax/i.test(m.body.account_name + m.body.account_type))); assert.equal(pv.mutations.length, 0);
-    const t0 = T.taxes.splice(0, 1); pv = await A.plan(); assert.ok(pv.vat.some(v => v.code === 'tax' && v.state === 'VAT_CONFIGURATION_REQUIRED')); T.taxes.unshift(...t0);
+    const t0 = T.taxes.splice(0, 1); pv = await A.plan(); assert.ok(pv.vat.some(v => v.code === 'tax' && v.classification === 'VAT_CONFIGURATION_REQUIRED')); T.taxes.unshift(...t0);
     acct('3401').is_active = true; await A.apply(await A.plan(), { trigger: 'test' }); assert.equal(map('acct:1200').zoho_id, '3401');
     out.push('VAT not set up in Zoho: VAT_CONFIGURATION_REQUIRED; no VAT or generic account is created');
 
