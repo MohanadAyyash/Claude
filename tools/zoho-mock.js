@@ -42,6 +42,7 @@ function mockZoho() {
   function books(method, path, q, body) {
     const p = path.split('/').filter(Boolean);                                       // e.g. ['invoices', '46…', 'status', 'sent']
     calls.push(`${method} /${p.map(x => (/^\d{6,}$/.test(x) ? ':id' : x)).join('/')}`);
+    if (p[0] === 'organizations' && p[1]) { if (p[1] !== ORG) throw err(404, 1002, 'Organization does not exist'); return { organization: { organization_id: ORG, name: 'Trigon Civil Road Contracting', currency_code: 'AED', country: 'U.A.E', is_tax_registered: true, tax_reg_no: '100000000000003', tax_basis: 'accrual' } }; }
     if (p[0] === 'organizations') return { organizations: [{ organization_id: ORG, name: 'Trigon Civil Road Contracting', currency_code: 'AED' }] };
     if (q.get('organization_id') !== ORG) throw err(400, 6041, 'Invalid value passed for organization_id');
     if (p[0] === 'settings' && p[1] === 'taxes') return { taxes: T.taxes };

@@ -95,11 +95,23 @@ server.listen(0, async () => {
     let pv = ok(await call('GET', 'zoho-sync/preview'));
     assert.deepEqual(writesSince(n0), [], 'preflight and preview: GET only');
     const byKey = k => pv.rows.find(x => x.key === k);
-    assert.equal(byKey('acct:1010').action, 'conflict'); assert.equal(byKey('acct:1010').reason, 'NAME_IN_USE');            // same name: stopped, not adopted
-    assert.match(byKey('acct:1010').resolution, /give it the code 1010/);
+    // same name as an existing, active, compatible, uncoded Zoho cash account: proposed for explicit confirmation — never adopted by name alone
+    const pc = byKey('acct:1010'); assert.equal(pc.classification, 'ADOPT_EXISTING_AFTER_CONFIRMATION'); assert.equal(pc.reason, 'NAME_IN_USE');
+    assert.deepEqual(pc.name_match, { checks: { unique_name: true, active: true, compatible_type: true, no_other_code: true, not_used_by_another_trigon_account: true },
+      account_id: '2002', account_name: 'Petty Cash', account_code: '', account_type: 'cash', parent_account: '(none)', is_system_account: false, active: true, involved_in_transaction: false });
+    assert.ok(!pv.adopts.some(a => a.key === 'acct:1010') && !pv.mutations.some(m => m.body.account_code === '1010'), 'neither adopted nor created without confirmation');
+    assert.deepEqual(pv.confirmable, [{ key: 'acct:1010', zoho_id: '2002' }]);
+    // an exact name that is NOT safe (incompatible type) stays a conflict
+    T.chartofaccounts.push({ account_id: '3995', account_name: 'Depreciation', account_type: 'income', is_active: true });
+    const pu = (await A.plan()).rows.find(x => x.key === 'acct:6100'); assert.equal(pu.classification, 'ACCOUNT_CONFLICT'); assert.equal(pu.name_match.checks.compatible_type, false); T.chartofaccounts.pop();
+    // VAT diagnostic and the three decisions
+    const vd = pv.vat_diagnostic; assert.match(vd.uae_vat_enabled, /^yes/); assert.equal(vd.standard_5_active.tax_id, '1001'); assert.equal(vd.organization.tax_reg_no, '•••0003'); assert.equal(vd.organization.is_tax_registered, true);
+    assert.deepEqual(vd.input_vat_control.map(a => [a.id, a.type, a.system]), [['3401', 'input_tax', true]]); assert.deepEqual(vd.output_vat_control.map(a => a.id), ['3402']);
+    assert.deepEqual(pv.decisions.map(d => [d.code, d.classification]), [['3100', 'SYSTEM_ACCOUNT_ADOPT'], ['1690', 'CREATE_APPROVED'], ['6150', 'ACCOUNT_CONFLICT']]);
+    assert.match(pv.decisions[0].treatment, /id 3501/); assert.match(pv.decisions[1].treatment, /net book value/); assert.match(pv.decisions[2].treatment, /−1,500/);
     assert.equal(byKey('acct:1030').action, 'create', 'a similar name is not adopted');
     assert.equal(byKey('acct:6150').action, 'conflict'); assert.equal(byKey('acct:6150').reason, 'WRONG_TYPE'); assert.equal(byKey('acct:6150').zoho.type, 'income');   // type mismatch: BLOCKED
-    const SEVEN = ['ADOPT_EXISTING', 'CREATE_APPROVED', 'SYSTEM_ACCOUNT_ADOPT', 'VAT_CONFIGURATION_REQUIRED', 'ACCOUNT_CONFLICT', 'AMBIGUOUS', 'BLOCKED'];
+    const SEVEN = ['ADOPT_EXISTING', 'ADOPT_EXISTING_AFTER_CONFIRMATION', 'CREATE_APPROVED', 'SYSTEM_ACCOUNT_ADOPT', 'VAT_CONFIGURATION_REQUIRED', 'ACCOUNT_CONFLICT', 'AMBIGUOUS', 'BLOCKED'];
     assert.ok([...pv.rows, ...pv.vat].every(r => SEVEN.includes(r.classification)), 'every required account has one of the seven classifications');
     for (const [k, id] of [['acct:3100', '3501'], ['acct:1100', '3201'], ['acct:2000', '3301']]) { assert.equal(byKey(k).classification, 'SYSTEM_ACCOUNT_ADOPT', k); assert.equal(byKey(k).zoho.id, id); }
     assert.ok(!pv.mutations.some(m => ['3100', '1100', '2000'].includes(m.body.account_code)), 'system accounts never created');
@@ -154,19 +166,21 @@ server.listen(0, async () => {
     assert.equal(map('acct:1200').zoho_id, '3401'); assert.equal(map('acct:3100').zoho_id, '3501'); assert.equal(map('acct:3100').created_by_trigon, 0);
     assert.equal(acct(map('acct:1690').zoho_id).parent_account_id, map('acct:1600').zoho_id, '1690 under 1600 (net book value)'); assert.equal(map('cat:asset').zoho_id, map('acct:1600').zoho_id);
     assert.equal(coa().filter(a => /retained earnings/i.test(a.account_name)).length, 1, 'no second Retained Earnings');
-    assert.equal(prov.gate.ready, false, 'conflicts left: not READY'); assert.equal(JSON.stringify(ctx.financials('2026-01-01', TODAY)), gl0, "provisioning does not touch Trigon's ledger");
+    assert.equal(prov.gate.ready, false, 'conflicts left: not READY'); assert.equal(map('acct:1010'), undefined, 'not adopted without the confirmation'); assert.equal(JSON.stringify(ctx.financials('2026-01-01', TODAY)), gl0, "provisioning does not touch Trigon's ledger");
     const histMap = ctx.db.prepare("SELECT kind, local_key, zoho_id, label FROM zoho_map WHERE local_key IN (" + mapBefore.map(() => '?').join(',') + ") ORDER BY kind, local_key").all(...mapBefore.map(m => m.local_key));
     assert.deepEqual(histMap, mapBefore, 'existing mappings untouched');
     out.push(`provisioning: ${prov.result.created.length} accounts created (read back, ids persisted, partners under their parents), conflicts left as they are, Trigon's ledger unchanged`);
 
     // ---- 4. resolve the conflicts the way the preview recommends — in Zoho, by code — then the second preflight is READY
-    acct('2002').account_code = '1010'; acct('3701').account_code = '4900'; acct('3103').account_code = '1300';   // as the preview recommends
-    pv = ok(await call('GET', 'zoho-sync/preview')); assert.equal(byKey('acct:1010').state, 'BY_CODE'); assert.equal(byKey('acct:1010').classification, 'ADOPT_EXISTING'); assert.equal(byKey('acct:1300').classification, 'ADOPT_EXISTING'); assert.equal(byKey('acct:6150').action, 'create');
-    prov = ok(await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token }));
+    acct('3701').account_code = '4900'; acct('3103').account_code = '1300';   // as the preview recommends
+    pv = ok(await call('GET', 'zoho-sync/preview')); assert.equal(byKey('acct:1300').classification, 'ADOPT_EXISTING'); assert.equal(byKey('acct:6150').action, 'create');
+    r = await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token, confirm_adopt: ['acct:1030'] }); assert.equal(r.s, 400); assert.match(r.j.error, /not an account the preview proposed/);
+    prov = ok(await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token, confirm_adopt: ['acct:1010'] }));   // the administrator confirms Petty Cash
+    assert.equal(map('acct:1010').zoho_id, '2002'); assert.equal(map('acct:1010').created_by_trigon, 0); assert.equal(acct('2002').account_code, undefined, 'nothing changed in Zoho');
     assert.equal(prov.gate.ready, true, JSON.stringify(prov.gate.reasons)); assert.equal(ctx.zohoX.cfg().gate, 'READY');
     assert.deepEqual([prov.gate.missing_mappings, prov.gate.wrong_types, prov.gate.ambiguous_matches, prov.gate.blocking_conflicts], [0, 0, 0, 0]);
     assert.deepEqual(prov.plan.targets, { missing_mappings: 0, wrong_types: 0, ambiguous_matches: 0, blocking_conflicts: 0 });
-    out.push('after the recommended fix in Zoho: adopted by code, created, second preflight READY (0 missing, 0 wrong types, 0 conflicts)');
+    out.push('Petty Cash: an exact-name match is adopted only on explicit confirmation (nothing changed in Zoho); after the fixes the second preflight is READY (0 / 0 / 0 / 0)');
 
     // ---- 5. idempotent: 1, 2 … 20 runs give the same Zoho structure; a lost answer during creation is adopted by code, not duplicated
     const shape = () => coa().map(a => `${a.account_code || ''}|${a.account_name}|${a.account_type}|${a.parent_account_id || ''}`).sort().join('\n'), s0 = shape(), c0 = coa().length;
