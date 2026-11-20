@@ -19,6 +19,13 @@ jobs:
         env:
           SKIP_PDF: '1'          # no headless-browser PDF rendering in CI
           TZ: Asia/Dubai
+      - name: Set up Chrome for PDF integration test
+        uses: browser-actions/setup-chrome@v1
+        id: setup-chrome
+        with:
+          chrome-version: stable
       - name: Test PDF rendering with the runner's headless browser
         run: node --no-warnings test-reportpdf.js
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
       - run: npm run build:standalone
