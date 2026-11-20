@@ -93,6 +93,8 @@
 ### 1.3 The screen
 - **Side menu** (on the right in Arabic, on the left in English) grouped as: Projects & sales, Procurement & stock, Accounting, Human resources, Tax & compliance.
 - You only see the pages your role allows (see section 3).
+- Each group of the menu is collapsed: click its title to open it, and the group that was open closes. The group of the page you are on opens by itself, and the menu stays where it is when you move between pages.
+- **🔍 Go to…** at the top of the menu (or **Ctrl+K**, **⌘K** on a Mac): type part of a page name in English or Arabic (e.g. payroll, cheque, VAT) and press **Enter** to open it. The arrow keys move between results and **Esc** closes it. It only searches the pages your role allows.
 - On a phone the menu opens from the **☰** button at the top.
 - Most lists work the same way: **+ Add** (or **+ New**) opens a form; click any row to open and edit it; **Save** stores it; **Delete** removes it (when allowed).
 - Every page has a **🖨 Print on letterhead** button, and most lists have an **Excel** button.
@@ -104,7 +106,7 @@
 
 ![The dashboard after signing in](../public/guide/img/en/03-dashboard.jpg)
 
-1. The side menu: every section of the system grouped by area; you only see what your role allows. Language and Logout buttons are at its bottom.
+1. The side menu: every section of the system in collapsible groups (click a title to open it), with **Go to…** above them; you only see what your role allows. Language and Logout buttons are at its bottom.
 2. Company KPIs: active projects, contract value, invoiced, expenses, profit, cash, receivables and retention. Below: cash flow, compliance alerts, overdue invoices and profit per project.
 3. Prints the current page on the company letterhead with stamp and signature. It is on every page.
 
