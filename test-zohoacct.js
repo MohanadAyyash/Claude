@@ -304,7 +304,8 @@ server.listen(0, async () => {
 
     // ---- 12. closed period: nothing dated on or before the closing date is changed in Zoho
     ok(await call('PUT', 'period', { lock_date: '2026-11-15' }));
-    ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: 'acct:1010', zoho_id: '2003' }));   // would rewrite the petty cash top-up and the office water expense
+    T.bankaccounts.push({ account_id: '2005', account_name: 'Spare Cash', account_type: 'cash', is_active: true });
+    ok(await call('PUT', 'zoho/mapping', { kind: 'account', local_key: 'acct:1010', zoho_id: '2005' }));   // would rewrite the petty cash top-up and the office water expense
     const w2 = zoho.calls.filter(c => /^(PUT|DELETE|POST) \/(bills|journals|invoices|expenses)/.test(c)).length; await A.tick({ force: true });
     assert.equal(zoho.calls.filter(c => /^(PUT|DELETE|POST) \/(bills|journals|invoices|expenses)/.test(c)).length, w2, 'closed period not rewritten');
     const closed = ctx.db.prepare("SELECT kind, status, error FROM zoho_sync WHERE status='blocked'").all();

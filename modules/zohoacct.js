@@ -37,6 +37,13 @@ module.exports = ctx => {
   const VAT = { 1200: { label: 'VAT input', auto: 'input_tax', types: ['input_tax', 'other_current_asset'] }, 2100: { label: 'VAT output', auto: 'output_tax', types: ['output_tax', 'other_current_liability'] } };
   // what the preview calls each outcome
   const VATCODES = ['1200', '2100'];
+  // a wrong legacy mapping the preview can propose to repair (Trigon side only, after explicit confirmation): Zoho's account named
+  // like Trigon's `to` is owned by an old mapping-screen mapping of `from` — e.g. Zoho "Petty Cash" mapped to 1020 instead of 1010
+  const REPAIRS = [{ from: '1020', to: '1010', type: 'cash', fromName: 'Cash on Hand' }];
+  // shown with their exact payload, but created only once approved (not on ALLOW): 1020 when Zoho has no account coded 1020
+  const CREATE_IF_APPROVED = { 1020: ['Cash on Hand', 'cash'] };
+  // these Trigon codes can never share one Zoho account
+  const DISTINCT = ['1010', '1020', '1030'];
   const CLASS = { ok: 'ADOPT_EXISTING', adopt: 'ADOPT_EXISTING', sys: 'SYSTEM_ACCOUNT_ADOPT', confirm: 'ADOPT_EXISTING_AFTER_CONFIRMATION', create: 'CREATE_APPROVED', conflict: 'ACCOUNT_CONFLICT', ambiguous: 'AMBIGUOUS', blocked: 'BLOCKED', vat_required: 'VAT_CONFIGURATION_REQUIRED' };
   for (const [code, , type] of ALLOW) { const t = X.expectTypes('acct:' + code); if (!t || !t.includes(type)) throw new Error(`zohoacct: ${code} ${type} is not a type the preflight accepts`); }
   for (const [code, , type] of PARENTS) { const t = X.expectTypes(`acct:${code}:p1`); if (!t || !t.includes(type)) throw new Error(`zohoacct: partner ${code} ${type} is not a type the preflight accepts`); }
@@ -44,7 +51,9 @@ module.exports = ctx => {
   const partners = () => (X.has('partners') ? db.prepare('SELECT id, name FROM partners ORDER BY id').all() : []);
   const mapRow = key => db.prepare("SELECT * FROM zoho_map WHERE kind='account' AND local_key=?").get(key);
   function saveMap(key, a, { created = 0, partnerId = null, label = '' } = {}) {
-    const old = mapRow(key);
+    const old = mapRow(key), [kk, code, pp] = key.split(':');
+    if (kk === 'acct' && !pp && DISTINCT.includes(code)) { const clash = db.prepare("SELECT local_key FROM zoho_map WHERE kind='account' AND zoho_id=? AND local_key<>? AND local_key IN (" + DISTINCT.map(() => '?').join(',') + ')').get(String(a.account_id), key, ...DISTINCT.map(c => 'acct:' + c));
+      if (clash) throw new Error(`SAME_ZOHO_ACCOUNT: ${key} cannot use Zoho account ${a.account_id}, already used by ${clash.local_key} (1010, 1020 and 1030 are different accounts)`); }
     db.prepare(`INSERT INTO zoho_map(kind,local_key,zoho_id,label,zoho_code,zoho_name,zoho_type,parent_id,created_by_trigon,mapped_at,verified_at,partner_id) VALUES('account',?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(kind,local_key) DO UPDATE SET zoho_id=excluded.zoho_id, label=COALESCE(NULLIF(excluded.label,''),label), zoho_code=excluded.zoho_code, zoho_name=excluded.zoho_name, zoho_type=excluded.zoho_type,
         parent_id=excluded.parent_id, created_by_trigon=MAX(created_by_trigon, excluded.created_by_trigon), mapped_at=COALESCE(mapped_at, excluded.mapped_at), verified_at=excluded.verified_at, partner_id=COALESCE(excluded.partner_id, partner_id)`)
@@ -91,7 +100,7 @@ module.exports = ctx => {
     const conflict = (t, reason, a, resolution) => out(t, 'conflict', { reason, zoho: view(a), resolution });
     // one account, in this order: its mapping (validated) → Zoho's system account (when it is one) → exact code + compatible type → create (allowlist) → stop
     function resolve(t) {
-      const types = t.types, m = mapRow(t.key), sys = SYS[t.code] && !t.partner_id ? SYS[t.code] : null;
+      const types = t.types, m = t.ignoreMapping ? null : mapRow(t.key), sys = SYS[t.code] && !t.partner_id ? SYS[t.code] : null;
       if (m && m.zoho_id) {
         const a = byId.get(String(m.zoho_id));
         if (!a) return conflict(t, 'MAPPED_ACCOUNT_MISSING', { account_id: m.zoho_id, account_name: m.zoho_name, account_type: m.zoho_type, account_code: m.zoho_code }, 'The mapped Zoho account no longer exists. Trigon does not create a replacement (earlier transactions refer to it): map the replacement explicitly.');
@@ -102,7 +111,7 @@ module.exports = ctx => {
         const note = t.partner_id && low(a.account_name) !== low(t.name) ? `name in Zoho "${a.account_name}" differs from Trigon's "${t.name}" (renamed in Trigon?) — kept as it is` : 'already mapped and valid';
         return out(t, 'ok', { state: 'MAPPED', zoho: view(a), note });
       }
-      const hits = byCode(t.code), sysHits = sys ? all.filter(a => active(a) && sys.test(a)) : [];
+      const hits = byCode(t.code).filter(a => String(a.account_id) !== String(t.exclude || '')), sysHits = sys ? all.filter(a => active(a) && sys.test(a)) : [];
       for (const a of hits) if (!types.includes(a.account_type)) return conflict(t, 'WRONG_TYPE', a, `Zoho already has code ${t.code} as "${a.account_name}" of type ${a.account_type}; Trigon needs ${types.join(' or ')}. Give that Zoho account another code (if it is a different account), or ask the accountant — Trigon will not rename, re-type or duplicate it.`);
       for (const a of hits) if (!active(a)) return conflict(t, 'INACTIVE', a, `The Zoho account with code ${t.code} is inactive. Reactivate it, or remove the code from it.`);
       if (sys) {
@@ -188,6 +197,35 @@ module.exports = ctx => {
         parent_account: a.parent_account_id ? `${a.parent_account_name || ''} (${a.parent_account_id})` : '(none)', is_system_account: !!a.is_system_account, active: a.is_active !== false, involved_in_transaction: used };
       if (r.action === 'confirm') r.note += used === true ? ' It already has transactions in Zoho: after adoption they appear in the reconciliation as Zoho-only entries on this account (opening balances / manual entries), separately from Trigon\'s.' : '';
     }
+    // legacy mapping repair (read only here): REMOVE_MAPPING_ONLY old → ADOPT_EXISTING new on the same Zoho id, and the old code resolved on its own
+    for (const rp of REPAIRS) {
+      const to = rowOf['acct:' + rp.to], fromKey = 'acct:' + rp.from, nm = to && to.name_match;
+      if (!nm || !nm.account_id || !(nm.owned_by || []).some(o => o.trigon_key === fromKey)) continue;
+      const A = byId.get(String(nm.account_id)), owners = nm.owned_by, old = rowOf[fromKey];
+      const deps = db.prepare("SELECT kind, local_id, status FROM zoho_sync WHERE sent_eff LIKE ?").all(`%"${nm.account_id}"%`);
+      const next = resolve({ key: fromKey, code: rp.from, name: rp.fromName, types: X.expectTypes(fromKey) || [rp.type], allow: false, group: 'foundation', ignoreMapping: true, exclude: nm.account_id });
+      if (next.reason === 'NO_ACCOUNT_WITH_CODE' && CREATE_IF_APPROVED[rp.from]) Object.assign(next, { reason: 'CREATE_NEEDS_APPROVAL', proposed_payload: { account_name: CREATE_IF_APPROVED[rp.from][0], account_code: rp.from, account_type: CREATE_IF_APPROVED[rp.from][1] },
+        resolution: `No Zoho account carries code ${rp.from}. Proposed (only if approved for automatic provisioning): CREATE ${CREATE_IF_APPROVED[rp.from][0]}, code ${rp.from}, type ${CREATE_IF_APPROVED[rp.from][1]} — or give code ${rp.from} to the right cash account in Zoho.` });
+      const checks = { zoho_account_exists: !!A, active: !!A && A.is_active !== false, type_cash: !!A && A.account_type === rp.type, involved_in_transaction_false: nm.involved_in_transaction === false,
+        unique_account: !!A && byName(A.account_name).length === 1, current_owner_is_exactly_legacy_acct_1020: owners.length === 1 && owners[0].trigon_key === fromKey && /^mapping screen/.test(owners[0].mapping_source),
+        [`no_other_mapping_for_${rp.to}`]: !mapRow('acct:' + rp.to), no_synchronized_object_depends_on_it: !deps.length,
+        [`new_${rp.from}_target_resolved_for_an_atomic_repair`]: next.action === 'adopt' && String(next.zoho.id) !== String(nm.account_id) };
+      const okAll = Object.values(checks).every(Boolean);
+      const repair = { key: `repair:${rp.from}>${rp.to}`, state: okAll ? 'PROPOSED' : 'LEGACY_MAPPING_REPAIR_BLOCKED', checks, dependents: deps, zoho_changes: 'none — no Zoho account is renamed, deleted, deactivated or recreated; only Trigon mapping records change',
+        previous: { trigon_key: fromKey, source: owners[0].mapping_source, mapped_at: owners[0].mapped_at, audit: owners[0].legacy_audit },
+        operations: [{ op: 'REMOVE_MAPPING_ONLY', trigon_key: fromKey, zoho_id: String(nm.account_id), zoho_name: nm.account_name },
+          { op: 'ADOPT_EXISTING', trigon_key: 'acct:' + rp.to, zoho_id: String(nm.account_id), zoho_name: nm.account_name },
+          { op: next.action === 'adopt' ? 'ADOPT_EXISTING' : next.reason === 'CREATE_NEEDS_APPROVAL' ? 'CREATE_NEEDS_APPROVAL' : next.classification, trigon_key: fromKey, zoho_id: next.zoho ? next.zoho.id : null, zoho_name: next.zoho ? next.zoho.name : null, payload: next.proposed_payload || null }] };
+      Object.assign(to, okAll ? { action: 'repair', classification: CLASS.confirm, reason: 'LEGACY_MAPPING_REPAIR', resolution: '', note: `Legacy mapping repair: ${fromKey} → "${nm.account_name}" is wrong; proposed after explicit confirmation: remove that mapping only, adopt the same Zoho account for ${rp.to}, and map ${rp.from} to ${next.zoho ? '"' + next.zoho.name + '"' : '(no target)'}.` }
+        : { action: 'blocked', classification: CLASS.blocked, reason: 'LEGACY_MAPPING_REPAIR_BLOCKED', resolution: `Not repaired automatically — failed: ${Object.entries(checks).filter(([, v]) => !v).map(([k]) => k.replace(/_/g, ' ')).join(', ')}.` }, { repair });
+      // the old code, resolved on its own as it will be after the repair (never the same Zoho account)
+      if (okAll) { const i = rows.indexOf(old); rows[i] = rowOf[fromKey] = Object.assign(next, { pending_repair: repair.key, current: old ? { zoho: old.zoho, classification: old.classification } : null, note: `after the repair (today: mapped to "${nm.account_name}")${next.note ? ' — ' + next.note : ''}` }); }
+      else to.repair.next_for_old_code = { classification: next.classification, reason: next.reason || null, zoho: next.zoho || null, payload: next.proposed_payload || null };
+    }
+    // 1010, 1020, 1030 never on one Zoho account
+    const seen = {}; for (const r of rows.filter(x => DISTINCT.includes(x.code) && !x.partner_id && x.zoho && ['ok', 'adopt', 'repair'].includes(x.action))) {
+      const id = String(r.zoho.id); if (seen[id] && !(r.repair || seen[id].pending_repair || r.pending_repair)) Object.assign(r, { action: 'conflict', classification: CLASS.conflict, reason: 'SAME_ZOHO_ACCOUNT', resolution: `${r.code} and ${seen[id].code} would be on the same Zoho account "${r.zoho.name}" — they must be different accounts.` });
+      seen[id] = seen[id] || r; }
     const vat_diagnostic = await vatDiagnostic(cl, all, taxes);
     // the exact payload of every CREATE_APPROVED account (not sent by the preview); parents before their sub-accounts
     const order = r => (r.partner_id ? 2 : r.parent_key ? 1 : 0);
@@ -195,7 +233,7 @@ module.exports = ctx => {
     const parentRef = k => { const par = rowOf[k]; return par.zoho ? par.zoho.id : `(the new "${par.name}")`; };
     const mutations = creates.map(r => ({ method: 'POST', path: '/chartofaccounts', key: r.key, body: { account_name: r.name, account_code: r.code, account_type: r.type, ...(r.parent_key ? { parent_account_id: parentRef(r.parent_key) } : {}) } }));
     for (const m of mutations) { rowOf[m.key].payload = m.body; if (m.body.parent_account_id) { const par = rowOf[rowOf[m.key].parent_key]; m.parent_name = par.zoho ? par.zoho.name : par.name; } }
-    const adopts = [...rows, ...vat].filter(r => r.action === 'adopt').map(r => ({ key: r.key, zoho_id: r.zoho.id, how: r.classification }));
+    const adopts = [...rows, ...vat].filter(r => r.action === 'adopt' && !r.pending_repair).map(r => ({ key: r.key, zoho_id: r.zoho.id, how: r.classification }));   // (a repair is applied as one transaction)
     const every = [...rows, ...vat], n = cl2 => every.filter(r => r.classification === cl2).length;
     const counts = { ADOPT_EXISTING: n('ADOPT_EXISTING'), ADOPT_EXISTING_AFTER_CONFIRMATION: n('ADOPT_EXISTING_AFTER_CONFIRMATION'), SYSTEM_ACCOUNT_ADOPT: n('SYSTEM_ACCOUNT_ADOPT'), CREATE_APPROVED: n('CREATE_APPROVED'), VAT_CONFIGURATION_REQUIRED: n('VAT_CONFIGURATION_REQUIRED'), ACCOUNT_CONFLICT: n('ACCOUNT_CONFLICT'), AMBIGUOUS: n('AMBIGUOUS'), BLOCKED: n('BLOCKED') };
     // the four numbers that must be 0 before synchronisation (after provisioning, every account is mapped)
@@ -203,10 +241,14 @@ module.exports = ctx => {
     const tgt = list => ({ missing_mappings: list.filter(r => r.action !== 'ok').length, wrong_types: list.filter(r => ['WRONG_TYPE', 'NOT_SYSTEM_ACCOUNT'].includes(r.reason)).length,
       ambiguous_matches: list.filter(r => r.classification === 'AMBIGUOUS').length, blocking_conflicts: list.filter(r => ['ACCOUNT_CONFLICT', 'BLOCKED', 'VAT_CONFIGURATION_REQUIRED'].includes(r.classification)).length });
     const targets = tgt(live), targets_non_vat = tgt(live.filter(r => !isVat(r)));
+    // expected after provisioning (creations done, adoptions saved, the proposed confirmations and repairs confirmed)
+    const resolved = r => ['ok', 'adopt', 'create', 'follow', 'confirm', 'repair'].includes(r.action) && !(r.pending_repair && r.action !== 'adopt');
+    const expected_non_vat = { ...tgt(live.filter(r => !isVat(r))), missing_mappings: live.filter(r => !isVat(r) && !resolved(r)).length };
     const vat_state = every.filter(isVat).every(r => r.action === 'ok') ? 'VAT_READY' : every.filter(isVat).some(r => r.classification === 'VAT_CONFIGURATION_REQUIRED' || r.classification === 'AMBIGUOUS') ? 'VAT_PENDING' : 'VAT_TO_ADOPT';
     const deferred = every.filter(r => r.deferred).map(r => ({ code: r.code, why: X.DEFERRED[r.code] }));
     const state = counts.ACCOUNT_CONFLICT || counts.BLOCKED - deferred.length > 0 ? 'Conflict' : counts.AMBIGUOUS ? 'Ambiguous' : counts.VAT_CONFIGURATION_REQUIRED ? 'VAT_CONFIGURATION_REQUIRED' : targets.missing_mappings ? 'Missing' : 'Ready';
-    const confirmable = rows.filter(r => r.action === 'confirm').map(r => ({ key: r.key, zoho_id: r.zoho.id }));
+    const confirmable = [...rows.filter(r => r.action === 'confirm').map(r => ({ key: r.key, zoho_id: r.zoho.id })),
+      ...rows.filter(r => r.repair && r.repair.state === 'PROPOSED').map(r => ({ key: r.repair.key, zoho_id: r.zoho.id, repair: true, operations: r.repair.operations }))];
     const token = X.hashOf([mutations.map(m => m.body), adopts, confirmable]);
     // the three accounting decisions, stated in the preview
     const d3100 = rowOf['acct:3100'], d1690 = rowOf['acct:1690'], d6150 = rowOf['acct:6150'];
@@ -219,7 +261,7 @@ module.exports = ctx => {
         treatment: d6150.deferred ? 'Removed from automatic provisioning (accounting decision): gains must not show as a negative Other Expense. Planned, in a separate accounting change for Trigon and Zoho alike: Gain on Asset Disposal → Other Income; Loss on Asset Disposal → Other Expense. Until then nothing is created or adopted for 6150, and every transaction that uses it (asset disposals) is held — ACCOUNTING_CHANGE_PENDING — without blocking the rest.'
           : `Not deferred in this build: ${d6150.classification}.` },
     ];
-    return { at: stamp(), state, rows, vat, mutations, adopts, confirmable, token, counts, targets, targets_non_vat, vat_state, deferred, vat_diagnostic, decisions,
+    return { at: stamp(), state, rows, vat, mutations, adopts, confirmable, token, counts, targets, targets_non_vat, expected_non_vat, vat_state, deferred, vat_diagnostic, decisions,
       // (older names, kept for the screen and the scheduler)
       legacy_counts: { create: counts.CREATE_APPROVED, adopt: adopts.length, conflict: counts.ACCOUNT_CONFLICT + counts.BLOCKED, missing: counts.BLOCKED, ambiguous: counts.AMBIGUOUS, vat_required: counts.VAT_CONFIGURATION_REQUIRED } };
   }
@@ -227,11 +269,31 @@ module.exports = ctx => {
   // ---------- apply: POST /chartofaccounts only, each read back and checked, then remembered by its Zoho id ----------
   // the client given to provisioning cannot do anything else (a second barrier besides this code)
   const createOnly = cl => ({ get: (p, q) => cl.get(p, q), post: async (p, b) => { if (p !== '/chartofaccounts') throw new Error(`provisioning may only create accounts (refused: POST ${p})`); return cl.post(p, b); } });
+  const repairHook = step => { if (ctx.zohoAcct && typeof ctx.zohoAcct._repairHook === 'function') ctx.zohoAcct._repairHook(step); };   // (tests: a failure in the middle)
   async function apply(p, { user = '', trigger = 'manual', only = null, confirmed = [] } = {}) {
     const c = X.cfg(), cl = createOnly(X.client(c)), res = { created: [], adopted: [], failed: [], conflicts: p.rows.filter(r => ['conflict', 'blocked'].includes(r.action)).map(r => ({ key: r.key, code: r.code, reason: r.reason })) };
-    for (const k of confirmed) { const r = p.rows.find(x => x.key === k && x.action === 'confirm');   // administrator-confirmed adoption of an exact-name match
+    for (const k of confirmed.filter(k => !k.startsWith('repair:'))) { const r = p.rows.find(x => x.key === k && x.action === 'confirm');   // administrator-confirmed adoption of an exact-name match
       if (!r) continue; saveMap(k, { account_id: r.zoho.id, account_name: r.zoho.name, account_type: r.zoho.type, account_code: r.zoho.code, parent_account_id: r.zoho.parent_id }, { label: r.name });
       res.adopted.push({ key: k, zoho_id: r.zoho.id, how: 'ADOPT_EXISTING_AFTER_CONFIRMATION' }); }
+    // legacy mapping repairs: one Trigon transaction (old mapping removed, new mapping saved, the old code re-mapped, audit) — or nothing
+    for (const r of p.rows.filter(x => x.repair && x.repair.state === 'PROPOSED' && confirmed.includes(x.repair.key))) {
+      const rp = r.repair, [rm, ad, nx] = rp.operations, cur = mapRow(rm.trigon_key);
+      try {
+        if (!cur || String(cur.zoho_id) !== String(rm.zoho_id)) throw new Error(`${rm.trigon_key} is no longer mapped to ${rm.zoho_id} — preview again`);
+        if (nx.op !== 'ADOPT_EXISTING' || !nx.zoho_id) throw new Error(`no target for ${rm.trigon_key} after the repair (${nx.op})`);
+        const nrow = p.rows.find(x => x.key === nx.trigon_key);
+        ctx.tx(() => {
+          db.prepare("DELETE FROM zoho_map WHERE kind='account' AND local_key=?").run(rm.trigon_key); repairHook('removed');
+          saveMap(ad.trigon_key, { account_id: ad.zoho_id, account_name: r.zoho.name, account_type: r.zoho.type, account_code: r.zoho.code, parent_account_id: r.zoho.parent_id }, { label: r.name }); repairHook('adopted');
+          saveMap(nx.trigon_key, { account_id: nx.zoho_id, account_name: nrow.zoho.name, account_type: nrow.zoho.type, account_code: nrow.zoho.code, parent_account_id: nrow.zoho.parent_id }, { label: nrow.name }); repairHook('remapped');
+          db.prepare('INSERT INTO audit_log(ts,user,action,tbl,rec,detail) VALUES(?,?,?,?,?,?)').run(new Date().toISOString(), user || 'administrator', 'legacy_mapping_repair', 'zoho_map', 0, JSON.stringify({
+            reason: 'legacy_mapping_repair', actor: user || 'administrator', old_trigon_code: rm.trigon_key.split(':')[1], new_trigon_code: ad.trigon_key.split(':')[1], zoho_account_id: ad.zoho_id, zoho_account_name: ad.zoho_name,
+            previous_mapping_source: rp.previous.source, previous_mapped_at: rp.previous.mapped_at, new_mapping_for_old_code: { trigon_key: nx.trigon_key, zoho_id: nx.zoho_id, zoho_name: nx.zoho_name },
+            confirmation: `administrator confirmed ${rp.key} in the preview ${p.token}`, zoho_changes: 'none' })); repairHook('audited');
+        });
+        res.repaired = [...(res.repaired || []), { key: rp.key, removed: rm, adopted: ad, remapped: nx }];
+      } catch (e) { res.failed.push({ key: rp.key, name: 'legacy mapping repair', error: 'LEGACY_MAPPING_REPAIR: ' + String(e.message).slice(0, 300) + ' — nothing changed' }); }
+    }
     for (const a of p.adopts) {                                                          // local only: remember the Zoho id
       if (only && !only(a.key)) continue;
       const r = [...p.rows, ...p.vat].find(x => (x.key || 'acct:' + x.code) === a.key);
@@ -288,7 +350,9 @@ module.exports = ctx => {
     for (const t of pf.to_configure.filter(t => !/^(1200|2100)\b/.test(t) && !deferredCodes.some(c => t.startsWith(c + ' ')))) reasons.push(t);
     if (!post) reasons.push('"Post documents in Zoho" is off: Zoho keeps drafts out of its ledger, so its accounting effect could not equal Trigon\'s — switch it on in the Zoho settings');
     if (state === 'READY_NON_VAT') reasons.unshift('VAT_PENDING: transactions containing VAT are held until VAT is configured in Zoho and the gate is READY');
-    const gate = { state, verdict: pf.verdict, ready: readyAll, ready_non_vat: readyNonVat, vat, targets: all, targets_non_vat: nonVat, deferred: p.deferred || [],
+    const E = p.expected_non_vat || N, expectedNonVat = { ...E, wrong_types: E.wrong_types, blocking_conflicts: pfBlock + E.blocking_conflicts };
+    const expected_after_provisioning = { state: zero(expectedNonVat) && post && !p.error ? (vat === 'VAT_READY' ? 'READY' : 'READY_NON_VAT') : 'NOT_READY', targets_non_vat: expectedNonVat, vat, deferred: (p.deferred || []).map(d => d.code + ' ACCOUNTING_CHANGE_PENDING') };
+    const gate = { state, expected_after_provisioning, verdict: pf.verdict, ready: readyAll, ready_non_vat: readyNonVat, vat, targets: all, targets_non_vat: nonVat, deferred: p.deferred || [],
       missing_mappings: all.missing_mappings, wrong_types: all.wrong_types, ambiguous_matches: all.ambiguous_matches, blocking_conflicts: all.blocking_conflicts, account_state: p.state, reasons: [...new Set(reasons)].slice(0, 80), at: stamp(), why };
     X.setCfg('gate', readyAll ? 'READY' : readyNonVat ? 'READY_NON_VAT' : ''); X.setCfg('gate_info', JSON.stringify(gate)); X.setCfg('pf_verdict', pf.verdict); X.setCfg('pf_at', new Date().toISOString());
     X.setCfg('pf_nonvat_blockers', String(pfBlock));                                    // the preflight's blockers apart from VAT (pending registration)

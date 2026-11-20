@@ -930,6 +930,9 @@ module.exports = ctx => {
           if (!admin) return adminOnly(), true;
           const x = await readBody(req);
           if (!['account', 'project'].includes(x.kind) || !x.local_key) return send(res, 400, { error: 'kind and local_key are required' }), true;
+          const dc = ['acct:1010', 'acct:1020', 'acct:1030'];                              // never on one Zoho account
+          if (x.zoho_id && x.kind === 'account' && dc.includes(String(x.local_key))) { const clash = db.prepare(`SELECT local_key FROM zoho_map WHERE kind='account' AND zoho_id=? AND local_key<>? AND local_key IN (${dc.map(() => '?').join(',')})`).get(String(x.zoho_id), String(x.local_key), ...dc);
+            if (clash) return send(res, 400, { error: `${x.local_key} cannot use the Zoho account already used by ${clash.local_key}: 1010, 1020 and 1030 must be different accounts` }), true; }
           if (x.zoho_id) db.prepare('INSERT INTO zoho_map(kind,local_key,zoho_id,label) VALUES(?,?,?,?) ON CONFLICT(kind,local_key) DO UPDATE SET zoho_id=excluded.zoho_id, label=excluded.label').run(x.kind, String(x.local_key), String(x.zoho_id), String(x.label || ''));
           else db.prepare('DELETE FROM zoho_map WHERE kind=? AND local_key=?').run(x.kind, String(x.local_key));
           audit(req, 'update', 'zoho_map', 0, `${x.kind} ${x.local_key} → ${x.zoho_id || '(none)'}`);

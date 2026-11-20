@@ -279,6 +279,8 @@ ${(r.errors || []).length ? `<h2>Errors while reading</h2><ul>${r.errors.map(e =
     console.log(`Account provisioning preview (nothing created): ${accountsPlan.state} — ${Object.entries(accountsPlan.counts).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
     const tg = accountsPlan.targets; console.log(`  Targets before synchronisation: missing mappings ${tg.missing_mappings} · wrong types ${tg.wrong_types} · ambiguous matches ${tg.ambiguous_matches} · blocking conflicts ${tg.blocking_conflicts} (each must be 0)`);
     const tn = accountsPlan.targets_non_vat; console.log(`  Non-VAT targets (READY_NON_VAT): missing mappings ${tn.missing_mappings} · wrong types ${tn.wrong_types} · ambiguous matches ${tn.ambiguous_matches} · blocking conflicts ${tn.blocking_conflicts} (each must be 0) · VAT: ${accountsPlan.vat_state}`);
+    const ex = accountsPlan.expected_non_vat; if (ex) console.log(`  Expected after provisioning (with the proposed confirmations / repairs): non-VAT missing mappings ${ex.missing_mappings} · wrong types ${ex.wrong_types} · ambiguous matches ${ex.ambiguous_matches} · blocking conflicts ${ex.blocking_conflicts}`);
+    const r1020 = accountsPlan.rows.find(x => x.key === 'acct:1020'); if (r1020) console.log(`  1020 ${r1020.name}: ${r1020.classification}${r1020.reason ? ' (' + r1020.reason + ')' : ''}${r1020.zoho ? ' → ' + r1020.zoho.name + ' (id ' + r1020.zoho.id + ', ' + r1020.zoho.type + (r1020.zoho.code ? ', code ' + r1020.zoho.code : '') + ')' : ''}${r1020.proposed_payload ? ' proposed ' + JSON.stringify(r1020.proposed_payload) : ''}${r1020.pending_repair ? ' — after the repair' : ''}`);
     for (const d of accountsPlan.deferred || []) console.log(`  Deferred by accounting decision (not counted; its transactions are held): ${d.code} — ${d.why}`);
     for (const r of [...accountsPlan.rows, ...accountsPlan.vat].filter(r => !['ADOPT_EXISTING', 'SYSTEM_ACCOUNT_ADOPT', 'CREATE_APPROVED'].includes(r.classification))) console.log(`  ✖ ${r.code} ${r.name}: ${r.classification}${r.reason ? ' — ' + r.reason : ''}`);
     // the accounts that would actually be created: every one, with its exact fields (not sent)
@@ -293,6 +295,14 @@ ${(r.errors || []).length ? `<h2>Errors while reading</h2><ul>${r.errors.map(e =
         console.log(`    already owned by Trigon mapping (read only — not changed):`);
         for (const k of ['trigon_code', 'trigon_key', 'mapping_source', 'mapped_at', 'label', 'zoho_id', 'zoho_name', 'zoho_type', 'zoho_code']) console.log(`      ${k.padEnd(16)} ${o[k] === '' ? '(none)' : o[k]}`);
         console.log(`      ${'mapping history'.padEnd(16)} ${o.legacy_audit.length ? o.legacy_audit.join(' | ') : '(no audit entry)'}`);
+      }
+      if (r.repair) {
+        const rp = r.repair; console.log(`\n    LEGACY MAPPING REPAIR (preview — nothing changed): ${rp.state}`);
+        for (const [k, v] of Object.entries(rp.checks)) console.log(`      ${v ? '✔' : '✖'} ${k.replace(/_/g, ' ')}`);
+        for (const o of rp.operations) console.log(`      ${o.op.padEnd(22)} ${o.trigon_key.padEnd(10)} → ${o.zoho_id || '(none)'} ${o.zoho_name ? '"' + o.zoho_name + '"' : ''}${o.payload ? ' ' + JSON.stringify(o.payload) : ''}`);
+        console.log(`      previous mapping: ${rp.previous.trigon_key}, ${rp.previous.source}, ${rp.previous.mapped_at} (its audit history is kept)`);
+        console.log(`      Zoho: ${rp.zoho_changes}. Applied only after explicit administrator confirmation, as one Trigon transaction.`);
+        if (rp.next_for_old_code) console.log(`      ${rp.operations[0].trigon_key} on its own: ${rp.next_for_old_code.classification}${rp.next_for_old_code.reason ? ' (' + rp.next_for_old_code.reason + ')' : ''}${rp.next_for_old_code.zoho ? ' → ' + rp.next_for_old_code.zoho.name : ''}${rp.next_for_old_code.payload ? ' ' + JSON.stringify(rp.next_for_old_code.payload) : ''}`);
       }
       console.log(`    → ${r.classification === 'ADOPT_EXISTING_AFTER_CONFIRMATION' ? 'safe to adopt with an explicit administrator confirmation (nothing changes in Zoho; its id is remembered)' : 'NOT safe to adopt: ' + (r.resolution || '')}`);
     }
