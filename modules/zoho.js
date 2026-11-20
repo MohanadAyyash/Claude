@@ -364,7 +364,11 @@ module.exports = ctx => {
     let api = ''; try { api = c.api_domain ? new URL(c.api_domain).origin : ''; } catch { /* not connected */ }
     const expected = (Z.ACCOUNTS[c.dc] || '').replace('://accounts.zoho.', '://www.zohoapis.');
     const dcOk = mock ? null : !!(api && expected && api === expected && acc === Z.ACCOUNTS[c.dc]);
-    return { connected: !!(c.client_id && c.client_secret && c.refresh_token), organization_id: c.org || '', data_centre: c.dc, uae: c.dc === 'ae', accounts_url: acc, api_base_url: api ? api + '/books/v3' : '', expected_api_base_url: expected ? expected + '/books/v3' : '',
+    // where each credential comes from — never its value: '.env' (or the Windows environment), 'database' or 'missing'
+    const db0 = Object.fromEntries(db.prepare('SELECT key,value FROM zoho_config').all().map(r => [r.key, r.value]));
+    const src = k => envOf(k) ? '.env' : db0[k] ? 'database' : 'missing';
+    const credentials = { client_id: src('client_id'), client_secret: src('client_secret'), refresh_token: src('refresh_token'), dc: c.dc || '', dc_source: envOf('dc') ? '.env' : db0.dc ? 'database' : 'default', organization_id: c.org ? 'set' : 'missing', api_domain: c.api_domain ? 'set' : 'missing' };
+    return { credentials, connected: !!(c.client_id && c.client_secret && c.refresh_token), organization_id: c.org || '', data_centre: c.dc, uae: c.dc === 'ae', accounts_url: acc, api_base_url: api ? api + '/books/v3' : '', expected_api_base_url: expected ? expected + '/books/v3' : '',
       data_centre_ok: dcOk, note: mock ? 'development mock (ZOHO_ACCOUNTS_URL set) — data centre not checked' : dcOk ? `API and sign-in on the ${c.dc} data centre` : `the API domain ${api || '(none)'} does not belong to the ${c.dc} data centre (expected ${expected})` };
   }
   ctx.zohoConnection = () => connection(cfg());

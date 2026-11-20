@@ -144,8 +144,12 @@ server.listen(0, async () => {
         assert.deepEqual([k.data_centre_ok, k.accounts_url, k.api_base_url], [true, 'https://accounts.zoho.ae', 'https://www.zohoapis.ae/books/v3']);
         setDom('https://www.zohoapis.com'); k = ctx.zohoConnection();
         assert.equal(k.data_centre_ok, false); assert.match(k.note, /does not belong to the ae data centre \(expected https:\/\/www\.zohoapis\.ae\)/);
+        // the office's organisation is on the .com data centre (ZOHO_DC=com): accounts.zoho.com + www.zohoapis.com belong together
+        const dc0 = process.env.ZOHO_DC; process.env.ZOHO_DC = 'com';
+        try { k = ctx.zohoConnection(); assert.deepEqual([k.data_centre_ok, k.accounts_url, k.api_base_url, k.uae, k.credentials.dc, k.credentials.dc_source], [true, 'https://accounts.zoho.com', 'https://www.zohoapis.com/books/v3', false, 'com', '.env']); }
+        finally { if (dc0 === undefined) delete process.env.ZOHO_DC; else process.env.ZOHO_DC = dc0; }
       } finally { process.env.ZOHO_ACCOUNTS_URL = saved; setDom(dom); }
-      out.push('UAE data centre: zohoapis.ae accepted, zohoapis.com refused');
+      out.push('data centre: ae ↔ zohoapis.ae, com ↔ zohoapis.com accepted; a mismatch refused');
     }
 
     // ---- the Windows script: its own guard decides every request before it is sent
@@ -179,6 +183,34 @@ server.listen(0, async () => {
     const bad = await spawnAsync(['--no-warnings', 'scripts/zoho-preflight.js', '--data', path.join(copy, 'nothing'), '--yes'], { env });
     assert.equal(bad.status, 3); assert.match(bad.stderr, /No erp\.db/); assert.ok(!fs.existsSync(path.join(copy, 'nothing')));
     out.push(`Windows script: ${log.length} request(s) logged — Books: GET only; verdict BLOCKED; report and request log written`);
+    // credentials are reported as set / missing with their source — never their values
+    assert.match(run.stdout, /ZOHO_CLIENT_ID: +set \(Windows environment — overrides \.env\)/); assert.match(run.stdout, /Zoho refresh credential: +set \(database\)/);
+    assert.match(run.stdout, /ZOHO_DC: +ae \(/); assert.match(run.stdout, /organization_id: +set/); assert.match(run.stdout, /Network: Node v\d+/);
+    for (const s of [zoho.CLIENT_ID, zoho.CLIENT_SECRET, 'rt-', 'at-']) assert.ok(!run.stdout.includes(s) && !run.stderr.includes(s) && !JSON.stringify(rep.sign_in).includes(s), 'no secret printed: ' + s);
+    assert.equal(rep.sign_in.result.kind, 'ok'); assert.ok(log.every(l => /^HTTP \d{3}$/.test(l[5])), 'request log: outcome of every request');
+    // a revoked refresh token: the run stops after the access-token request with a diagnosis — nothing is read from Books, nothing written
+    { const callsR = zoho.calls.length, bad = '1000.revokedrefresh00000000.00000000';
+      const r2 = await spawnAsync(['--no-warnings', 'scripts/zoho-preflight.js', '--data', dataCopy, '--yes', '--out', path.join(copy, 'report-revoked')], { env: { ...env, ZOHO_REFRESH_TOKEN: bad } });
+      assert.equal(r2.status, 2, r2.stdout + r2.stderr); assert.match(r2.stdout, /Access-token request FAILED/); assert.match(r2.stdout, /kind: +oauth_rejected/); assert.match(r2.stdout, /OAuth error: +invalid_code/);
+      assert.match(r2.stdout, /HTTP status: +200/); assert.match(r2.stdout, /refresh token is invalid, revoked/); assert.match(r2.stdout, /0 Zoho Books read\(s\), 1 access-token request\(s\), 0 modifying call\(s\) sent/);
+      assert.match(r2.stdout, /Trigon copy unchanged: yes/); assert.match(r2.stdout, /VERDICT: BLOCKED — the sign-in did not succeed/); assert.match(r2.stdout, /Zoho refresh credential: +set \(Windows environment/);
+      const d = fs.readFileSync(path.join(copy, 'report-revoked', 'signin-diagnostics.json'), 'utf8');
+      for (const s of [bad, zoho.CLIENT_ID, zoho.CLIENT_SECRET]) assert.ok(!(r2.stdout + r2.stderr + d).includes(s), 'no secret printed or saved: ' + s);
+      assert.equal(JSON.parse(d).result.oauth_error, 'invalid_code'); assert.deepEqual(zoho.calls.slice(callsR), [], 'no Books request at all'); }
+    // a sign-in server that cannot be reached: network failure with Node's cause code
+    { const tmp = require('http').createServer(); await new Promise(r => tmp.listen(0, '127.0.0.1', r)); const p = tmp.address().port; await new Promise(r => tmp.close(r));
+      const r3 = await spawnAsync(['--no-warnings', 'scripts/zoho-preflight.js', '--data', dataCopy, '--yes', '--out', path.join(copy, 'report-down')], { env: { ...env, ZOHO_ACCOUNTS_URL: `http://127.0.0.1:${p}` } });
+      assert.equal(r3.status, 2, r3.stdout + r3.stderr); assert.match(r3.stdout, /Access-token request FAILED/); assert.match(r3.stdout, /kind: +network/); assert.match(r3.stdout, /cause code: +ECONNREFUSED/);
+      assert.match(r3.stdout, /HTTP status: +— \(no answer\)/); assert.match(fs.readFileSync(path.join(copy, 'report-down', 'request-log.csv'), 'utf8'), /access token,failed ECONNREFUSED/); }
+    // a .env saved with a BOM (PowerShell 5.1 Set-Content -Encoding UTF8): stopped before anything is sent
+    { const app = path.join(copy, 'app'); fs.mkdirSync(app);
+      for (const f of ['server.js', 'package.json', 'lib', 'modules', 'scripts', 'public']) fs.cpSync(f, path.join(app, f), { recursive: true });
+      fs.symlinkSync(path.resolve('node_modules'), path.join(app, 'node_modules'), 'junction');
+      fs.writeFileSync(path.join(app, '.env'), Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from('ZOHO_CLIENT_ID=1000.X\r\nZOHO_DC=ae\r\n')]));
+      const callsE = zoho.calls.length, r4 = await spawnAsync(['--no-warnings', path.join(app, 'scripts', 'zoho-preflight.js'), '--data', dataCopy, '--yes'], { env, cwd: app });
+      assert.equal(r4.status, 3, r4.stdout + r4.stderr); assert.match(r4.stdout, /\.env of this program folder: utf-8 with BOM, CRLF line endings; settings read: ZOHO_CLIENT_ID \(unreadable: BOM\)/); assert.match(r4.stdout, /✖ \.env starts with a byte-order mark.*ZOHO_CLIENT_ID/);
+      assert.match(r4.stderr, /not read correctly .* nothing was sent/); assert.ok(!/access-token request/i.test(r4.stdout.split('Network:')[1] || ''), 'stopped before the token request'); assert.deepEqual(zoho.calls.slice(callsE), []); }
+    out.push('Windows script: credentials shown as set / missing; revoked refresh token and unreachable sign-in server diagnosed; a BOM .env stops the run before anything is sent');
 
     console.log(out.map(x => '  ✔ ' + x).join('\n'));
     console.log('ZOHO PREFLIGHT TESTS PASSED');

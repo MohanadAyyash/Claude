@@ -22,7 +22,11 @@ It also checks that Trigon's copy (Zoho send log, mappings, settings, runs) is b
    cd /d D:\Trigon-preflight\app
    npm ci --omit=dev
    ```
-3. Keys: copy `C:\ERP\.env` to `D:\Trigon-preflight\app\.env`. If it has a `DATA_DIR=` line, delete that line (the script refuses to run otherwise).
+3. Keys: copy `C:\ERP\.env` without its `DATA_DIR=` line, **as UTF-8 without BOM**. In PowerShell (one line):
+   ```
+   [IO.File]::WriteAllLines('D:\Trigon-preflight\app\.env', (Get-Content 'C:\ERP\.env' | Where-Object { $_ -notmatch '^\s*DATA_DIR\s*=' }))
+   ```
+   Do not use `Set-Content -Encoding UTF8`, `Out-File` or `>` in Windows PowerShell 5.1: the first adds a byte-order mark (Node then ignores the first setting), the other two write UTF-16 (Node reads nothing). The script checks this and stops before sending anything.
 4. Data copy (consistent, taken while Trigon runs):
    ```
    cd /d C:\ERP
@@ -37,7 +41,8 @@ It also checks that Trigon's copy (Zoho send log, mappings, settings, runs) is b
    node --no-warnings scripts\zoho-preflight.js --data "D:\Trigon-preflight\data"
    ```
    Optional: `--from 2026-11-01 --to 2026-11-30` (default: the Zoho start date in Trigon → today).
-6. The script first shows, **without sending anything**: connected, organisation ID, data centre, sign-in server, API base URL, the API base URL expected for that data centre, and the result of the check. Type `YES` to continue.
+6. The script first shows, **without sending anything**: connected, organisation ID, data centre, sign-in server, API base URL, the API base URL expected for that data centre, and the result of the check. Then, never with values: `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, the refresh credential (set / MISSING, and whether from `.env`, the Windows environment or Trigon's database), `ZOHO_DC`, `organization_id`; the `.env` encoding, line endings and the settings Node actually read; the Node version and whether proxy / certificate variables are set. Type `YES` to continue.
+   If the access-token request fails, the script stops there (verdict BLOCKED, exit 2) and shows the cause: stage (no connection / Zoho answered), host, kind (`timeout`, `tls`, `dns`, `network`, `oauth_rejected`, `unexpected_response`), HTTP status, Node's cause code, the addresses tried, Zoho's OAuth error and description, and what it usually means. It is also saved in `signin-diagnostics.json` with `request-log.csv`. No client ID, secret, token, Authorization header or request body is ever printed or saved.
 7. It reads the organisation from Zoho and shows its **name**. Type `YES` to run the preflight.
 8. Report: `D:\Trigon-preflight\zoho-preflight-<date-time>\preflight-report.html` (with `preflight-report.json` and `request-log.csv`).
    Exit code: `0` READY · `1` READY WITH MISSING MAPPINGS · `2` BLOCKED · `3` could not run.
