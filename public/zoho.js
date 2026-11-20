@@ -137,7 +137,18 @@ function zohoPreflight(pf) {
   const how = h => { const m = HOW.find(([re]) => re.test(h)); return m ? tr(m[1], m[2] || h) : h; };
   const o = pf.organization || {};
   const rows = Object.entries(pf.plan || {});
-  return `<h3>${tr('فحص ما قبل الإرسال (قراءة فقط)', 'Preflight (read-only)')}</h3>
+  const ST = { mapped: ['مربوط', 'Mapped'], automatic: ['تلقائي (الحساب الوحيد من نوعه)', 'Automatic (the only one of its type)'], ambiguous: ['غير محدد — أكثر من حساب من نفس النوع', 'Ambiguous — several of that type'],
+    missing: ['غير مربوط', 'Not mapped'], type_mismatch: ['نوع الحساب لا يطابق', 'Type mismatch'], not_found: ['غير موجود في Zoho', 'Not found in Zoho'] };
+  const st = x => tr(...(ST[x] || [x, x])), zc = z => z ? `${esc(z.name)} <small class="muted">${esc(z.id)} · ${esc(z.type)}${z.code ? ' · ' + esc(z.code) : ''}${z.parent ? ' · ' + esc(z.parent) : ''}</small>` : '—';
+  const verdictBox = pf.verdict ? `<div class="card" style="border:2px solid ${pf.verdict === 'READY' ? '#2a7' : pf.verdict === 'BLOCKED' ? '#c33' : '#d90'}"><b>${tr('النتيجة', 'Verdict')}: ${esc(pf.verdict)}</b>
+    ${pf.blockers.length ? `<p class="err">${tr('يمنع الإرسال', 'Blocking')}:</p><ul>${pf.blockers.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
+    ${pf.to_configure.length ? `<p>${tr('يجب إعداده في Zoho قبل تفعيل الأنواع الجديدة', 'To configure in Zoho before the new types can be enabled')}:</p><ol>${pf.to_configure.map(b => `<li>${esc(b)}</li>`).join('')}</ol>` : ''}</div>
+    <h3>${tr('الحسابات المطلوبة للمزامنة المقترحة (تُطابق بالنوع وبالربط، لا بالاسم)', 'Accounts the proposed sync needs (matched by type and mapping, never by name)')}</h3>
+    <div class="tw"><table><thead><tr><th>${tr('الحساب', 'Account')}</th><th>${tr('الاسم', 'Name')}</th><th>${tr('مطلوب لـ', 'Needed by')}</th><th>${tr('النوع المتوقع', 'Expected type')}</th><th>${tr('الحالة', 'Status')}</th><th>${tr('حساب Zoho', 'Zoho account')}</th><th>${tr('ملاحظة', 'Note')}</th></tr></thead><tbody>
+      ${pf.required_accounts.map(a => `<tr${['type_mismatch', 'not_found'].includes(a.status) ? ' class="err"' : ''}><td>${esc(a.code)}</td><td>${esc(a.label)}</td><td>${esc(a.needed)}</td><td>${esc(a.expected)}</td><td><b>${st(a.status)}</b></td><td>${zc(a.zoho)}</td><td class="muted">${esc(a.note || '')}</td></tr>`).join('')}</tbody></table></div>
+    ${pf.partner_accounts.length ? `<h3>${tr('حسابات الشركاء (الهيكل المقترح — لم يُنشأ)', 'Partner accounts (proposed hierarchy — not created)')}</h3><div class="tw"><table><thead><tr><th>${tr('الشريك', 'Partner')}</th><th>${tr('الحساب', 'Account')}</th><th>${tr('الحساب المقترح', 'Proposed account')}</th><th>${tr('تحت', 'Under')}</th><th>${tr('النوع', 'Type')}</th><th>${tr('الحالة', 'Status')}</th><th>${tr('حساب Zoho', 'Zoho account')}</th></tr></thead><tbody>
+      ${pf.partner_accounts.flatMap(p => p.accounts.map(a => `<tr><td>${esc(p.partner)}</td><td>${esc(a.code)}</td><td>${esc(a.proposed)}</td><td>${esc(a.parent)}</td><td>${esc(a.expected)}</td><td><b>${st(a.status)}</b></td><td>${zc(a.zoho)}</td></tr>`)).join('')}</tbody></table></div>` : ''}` : '';
+  return `<h3>${tr('فحص ما قبل الإرسال (قراءة فقط)', 'Preflight (read-only)')}</h3>${verdictBox}
     <p>${tr('المؤسسة', 'Organisation')}: <b>${esc(o.name || '—')}</b> (${esc(o.id || '—')})${o.currency ? ' · ' + esc(o.currency) : ''}${o.error ? ` <span class="err">${esc(o.error)}</span>` : ''}
       · ${tr('مركز البيانات', 'Data centre')}: <b>${esc(pf.data_centre || '')}</b>${pf.api_host ? ' · ' + esc(pf.api_host) : ''}
       · ${tr('الفترة', 'Period')}: ${esc(pf.period.from || '…')} → ${esc(pf.period.to || '')}</p>
