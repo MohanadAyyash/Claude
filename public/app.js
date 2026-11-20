@@ -122,12 +122,16 @@ function markRoute() {
   const key = navGroupOf(NAVT, r); if (key) navOpen(key);
   const a = $(`.side a[data-r="${r}"]`); if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest' });
 }
+// company logo / name at the top of the menu and in the phone top bar (redrawn after the settings are saved)
+const topBrand = () => BR.has('logo') ? `<img src="/api/brand/logo" alt="">` : `<b>${esc(S.company_name || '')}</b>`;
+const sideBrand = () => `${BR.has('logo') ? `<img src="/api/brand/logo" alt="${esc(S.company_name || '')}">` : `<div class="wm"><span class="mark"><i></i><i></i><i></i></span>${esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}</div>`}<div class="who">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div>`;
+function paintBrand() { const b = $('.side .brand'), t = $('.topbar .tb'); if (b) b.innerHTML = sideBrand(); if (t) t.innerHTML = topBrand(); }
 function shell() {
   const ok = allowedNav(), okSet = new Set(ok.map(n => n[0]));
   NAVT = navTree(NAV, okSet);
   const links = NAVT.map(s => s.key === null ? s.items.map(navLink).join('')
     : `<div class="g" data-g="${esc(s.key)}"><button type="button" class="gh" aria-expanded="false"><span class="gbar"></span><span class="t">${tr(s.ar, s.en)}</span><span class="cnt">${s.items.length}</span></button><div class="items">${s.items.map(navLink).join('')}</div></div>`).join('');
-  $('#app').innerHTML = `<div class="topbar"><button type="button" id="menu" aria-label="menu">☰</button>${BR.has('logo') ? `<img src="/api/brand/logo" alt="">` : `<b>${esc(S.company_name || '')}</b>`}</div><div class="scrim" id="scrim"></div><div class="shell"><nav class="side"><div class="brand">${BR.has('logo') ? `<img src="/api/brand/logo" alt="${esc(S.company_name || '')}">` : `<div class="wm"><span class="mark"><i></i><i></i><i></i></span>${esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}</div>`}<div class="who">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
+  $('#app').innerHTML = `<div class="topbar"><button type="button" id="menu" aria-label="menu">☰</button><span class="tb">${topBrand()}</span></div><div class="scrim" id="scrim"></div><div class="shell"><nav class="side"><div class="brand">${sideBrand()}</div>
     <button type="button" class="gotob" id="goto">🔍 <span>${tr('انتقل إلى…', 'Go to…')}</span><kbd>Ctrl K</kbd></button>
     ${links}
     <a class="guide" href="${guideUrl()}" target="_blank" rel="noopener">📘 ${tr('دليل الاستخدام', 'User guide')}</a><div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
@@ -147,7 +151,12 @@ function shell() {
 }
 const go = r => { location.hash = r; };
 // moving between pages redraws only the page, never the menu (it used to jump back to the top on every click)
-window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) { markRoute(); render(); if (window.onShell) onShell(); } };
+window.onhashchange = () => {
+  route = location.hash.slice(1) || landing();
+  if (!$('#main')) return;
+  $('.side').classList.remove('open'); $('#scrim').classList.remove('on');   // phone drawer: closed however the page was reached (Go to, notification)
+  markRoute(); render(); if (window.onShell) onShell();
+};
 // "Go to" (Ctrl+K / ⌘K): type part of a page name, Arabic or English, to open it. Only the pages of this user's menu are searched.
 function openGoto() {
   if ($('.goto')) return $('#gotoq').focus();
@@ -832,7 +841,7 @@ PAGES.settings = async () => {
   if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
   $('#pack').onclick = guard(async () => { if (!confirm(tr('سيُركَّب الشعار والختم وتُحدَّث بيانات الشركة القانونية (الاسم، الرخصة، العنوان، ص.ب). متابعة؟', 'This installs the logos and stamp and sets the legal company details (name, licence, address, P.O. Box). Continue?'))) return; await api('POST', 'brand/pack'); S = { ...S, ...(await api('GET', 'settings')) }; toast(tr('تم تركيب الهوية', 'Brand pack installed')); boot(); });
-  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'print_arabic', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
+  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'print_arabic', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; paintBrand(); toast(tr('تم الحفظ', 'Saved')); });
   if ($('#saveE')) $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure', 'mail_method', 'graph_tenant', 'graph_client', 'graph_secret'].forEach(k => b[k] = val($('#ef'), k)); if (!b.graph_secret) delete b.graph_secret; if (!b.smtp_pass) delete b.smtp_pass; await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
   if ($('#ef')) { const mm = $('#ef [name=mail_method]'), sync = () => $('#ef').querySelectorAll('[data-mm]').forEach(d => { d.style.display = d.dataset.mm === mm.value ? '' : 'none'; }); mm.onchange = sync; sync(); }
   if ($('#test')) $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });

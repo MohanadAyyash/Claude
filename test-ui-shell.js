@@ -160,7 +160,30 @@ server.listen(0, async () => {
     await click('.side .g[data-g="Human resources"] .gh');
     await click('.side a[data-r="leave"]');
     await waitFor(`location.hash === '#leave' && !document.querySelector('.side').classList.contains('open')`);
+    // Go to from inside the drawer: the drawer closes once the page opens (it used to stay over the page)
+    await click('#menu');
+    await click('#goto'); await waitFor(`!!document.querySelector('#gotoq')`);
+    await typeQ('payroll'); await keyOn('#gotoq', 'Enter');
+    await waitFor(`location.hash === '#payroll'`);
+    await waitFor(`!document.querySelector('.side').classList.contains('open') && !document.querySelector('#scrim').classList.contains('on')`, 2000);
     await desktop();
+
+    // 11. switching language redraws the menu in English; the current page's group is open and the groups still toggle
+    await open('admin', 'secret12', 'ar', 'invoices');
+    await click('#lang');
+    await waitFor(`document.documentElement.dir === 'ltr' && /Accounting/.test(document.querySelector('.side .g[data-g="Accounting"] .gh').textContent)`);
+    assert.deepEqual(await openGroups(), ['Projects & sales']);
+    await click('.side .g[data-g="Accounting"] .gh');
+    assert.deepEqual(await openGroups(), ['Accounting']);
+    await click('#lang');
+    await waitFor(`document.documentElement.dir === 'rtl'`);
+
+    // 12. a new company name shows in the menu as soon as the settings are saved
+    await open('admin', 'secret12', 'en', 'settings');
+    await waitFor(`!!document.querySelector('#sf [name="company_name"]') && !!document.querySelector('#save')`);
+    await ev(`document.querySelector('#sf [name="company_name"]').value = 'Renamed Contracting'; true`);
+    await click('#save');
+    await waitFor(`/Renamed Contracting/.test(document.querySelector('.side .brand').textContent)`, 4000);
 
     console.log('test-ui-shell: all passed');
   } catch (e) { console.error(e); process.exitCode = 1; }
