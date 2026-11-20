@@ -133,6 +133,35 @@ server.listen(0, async () => {
     const menu = await ev(`[...document.querySelectorAll('.side a[data-r]')].map(a => a.dataset.r)`), found = await results();
     assert.ok(found.length > 0 && found.every(r => menu.includes(r)), 'every result is a page in this user\'s menu');
 
+    // 8. English: left-to-right, the same groups and finder
+    await open('admin', 'secret12', 'en');
+    assert.equal(await ev(`document.documentElement.dir`), 'ltr');
+    assert.match(await ev(`document.querySelector('.side .g[data-g="Accounting"] .gh').textContent`), /Accounting/);
+    await click('.side .g[data-g="Accounting"] .gh');
+    assert.deepEqual(await openGroups(), ['Accounting']);
+    await ctrlK(); await waitFor(`!!document.querySelector('#gotoq')`);
+    await typeQ('قيود');
+    assert.equal((await results())[0], 'journal', 'Arabic names work while the screen is in English');
+    await keyOn('#gotoq', 'Escape');
+
+    // 9. Trigon identity: Paper page, light menu; printing is untouched
+    const bg = sel => ev(`getComputedStyle(document.querySelector(${JSON.stringify(sel)})).backgroundColor`);
+    assert.equal(await bg('body'), 'rgb(242, 241, 238)', 'Paper #F2F1EE');
+    assert.equal(await bg('.side'), 'rgb(233, 231, 225)', 'menu #E9E7E1');
+    assert.equal(await ev(`getComputedStyle(document.querySelector('#print-area')).display`), 'none');
+
+    // 10. phone: the menu is a drawer with the same groups; choosing a page closes it
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 2, mobile: true });
+    await open('admin', 'secret12');
+    assert.equal(await ev(`getComputedStyle(document.querySelector('.topbar')).display`), 'flex');
+    assert.equal(await ev(`document.querySelector('.side').getBoundingClientRect().right <= 0 || document.querySelector('.side').getBoundingClientRect().left >= innerWidth`), true, 'drawer hidden');
+    await click('#menu');
+    assert.equal(await ev(`document.querySelector('.side').classList.contains('open')`), true);
+    await click('.side .g[data-g="Human resources"] .gh');
+    await click('.side a[data-r="leave"]');
+    await waitFor(`location.hash === '#leave' && !document.querySelector('.side').classList.contains('open')`);
+    await desktop();
+
     console.log('test-ui-shell: all passed');
   } catch (e) { console.error(e); process.exitCode = 1; }
   finally { try { ws && ws.close(); } catch {} if (proc) proc.kill('SIGKILL'); server.close(); setTimeout(() => process.exit(process.exitCode || 0), 200); }
