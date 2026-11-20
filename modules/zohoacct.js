@@ -272,7 +272,7 @@ module.exports = ctx => {
   // the client given to provisioning cannot do anything else (a second barrier besides this code)
   const createOnly = cl => ({ get: (p, q) => cl.get(p, q), post: async (p, b) => { if (p !== '/chartofaccounts') throw new Error(`provisioning may only create accounts (refused: POST ${p})`); return cl.post(p, b); } });
   const repairHook = step => { if (ctx.zohoAcct && typeof ctx.zohoAcct._repairHook === 'function') ctx.zohoAcct._repairHook(step); };   // (tests: a failure in the middle)
-  async function apply(p, { user = '', trigger = 'manual', only = null, confirmed = [] } = {}) {
+  async function apply(p, { user = '', trigger = 'manual', only = null, confirmed = [], stopOnFail = false } = {}) {   // stopOnFail: the first failure ends the run (nothing after it is attempted)
     const c = X.cfg(), cl = createOnly(X.client(c)), res = { created: [], adopted: [], failed: [], conflicts: p.rows.filter(r => ['conflict', 'blocked'].includes(r.action)).map(r => ({ key: r.key, code: r.code, reason: r.reason })) };
     for (const k of confirmed.filter(k => !k.startsWith('repair:'))) { const r = p.rows.find(x => x.key === k && x.action === 'confirm');   // administrator-confirmed adoption of an exact-name match
       if (!r) continue; saveMap(k, { account_id: r.zoho.id, account_name: r.zoho.name, account_type: r.zoho.type, account_code: r.zoho.code, parent_account_id: r.zoho.parent_id }, { label: r.name });
@@ -305,6 +305,7 @@ module.exports = ctx => {
         });
         res.repaired = [...(res.repaired || []), { key: rp.key, removed: rm, adopted: ad, remapped: nx }];
       } catch (e) { res.failed.push({ key: rp.key, name: 'legacy mapping repair', error: 'LEGACY_MAPPING_REPAIR: ' + String(e.message).slice(0, 300) + ' — nothing changed' }); }
+      if (stopOnFail && res.failed.length) return finish();
     }
     for (const a of p.adopts) {                                                          // local only: remember the Zoho id
       if (only && !only(a.key)) continue;
@@ -326,10 +327,15 @@ module.exports = ctx => {
         if (bad.length) { db.prepare("UPDATE zoho_map SET verified_at=NULL WHERE kind='account' AND local_key=?").run(m.key); throw new Error(`READ_BACK_MISMATCH: ${bad.map(([k, v]) => `${k} is "${a[k] || ''}", expected "${v}"`).join('; ')}`); }
         res.created.push({ key: m.key, zoho_id: id, name: body.account_name, code: body.account_code, type: body.account_type, parent_id: body.parent_account_id || '' });
       } catch (e) { res.failed.push({ key: m.key, name: body.account_name, error: String(e.message).slice(0, 300) }); }
+      if (stopOnFail && res.failed.length) return finish();
     }
     for (const r of p.rows.filter(x => x.action === 'follow' && (!only || only(x.key)))) { const m = mapRow(r.follows); if (m && m.zoho_id) { saveMap(r.key, { account_id: m.zoho_id, account_name: m.zoho_name, account_type: m.zoho_type, account_code: m.zoho_code, parent_account_id: m.parent_id }, { label: r.name }); res.adopted.push({ key: r.key, zoho_id: m.zoho_id, how: 'FOLLOWS ' + r.follows }); } }
-    db.prepare('INSERT INTO zoho_provision_runs(at,user,trigger,token,created,adopted,conflicts,failed,result) VALUES(?,?,?,?,?,?,?,?,?)').run(stamp(), user, trigger, p.token || '', res.created.length, res.adopted.length, res.conflicts.length, res.failed.length, JSON.stringify(res));
-    return res;
+    return finish();
+    function finish() {
+      if (stopOnFail && res.failed.length) res.stopped = `stopped at the first failure (${res.failed[0].key}) — nothing after it was attempted`;
+      db.prepare('INSERT INTO zoho_provision_runs(at,user,trigger,token,created,adopted,conflicts,failed,result) VALUES(?,?,?,?,?,?,?,?,?)').run(stamp(), user, trigger, p.token || '', res.created.length, res.adopted.length, res.conflicts.length, res.failed.length, JSON.stringify(res));
+      return res;
+    }
   }
 
   // ---------- the gate: the read-only preflight, then the account check; READY only with nothing missing, wrong or in conflict ----------

@@ -71,3 +71,30 @@ It also checks that Trigon's copy (Zoho send log, mappings, settings, runs) is b
 - **Partner accounts:** the proposed hierarchy per partner (Partner Capital → `<partner> Capital`, Partner Loans → `<partner> Loan`, Partner Current Accounts → `<partner> Current`). Not created.
 
 Send the developer the verdict, the "to configure" list and the proof lines. Do not send the keys, the database or the full report if it holds personal data.
+
+## The controlled provisioning run (`scripts/zoho-provision.js`) — only with written authorisation
+
+One run, from the same isolated copy, after the Preview shows `READY_NON_VAT` with every expected post-provisioning target 0.
+It creates the authorised non-VAT accounts in Zoho and maps them in the copy. It never sends a transaction, never touches VAT
+(1200, 2100, Standard 5%) or 6150, and never switches on continuous sync.
+
+```
+node --no-warnings scripts\zoho-provision.js --data "D:\Trigon-preflight\data" --org <organisation id> ^
+     --petty-cash-id <Zoho id of Petty Cash> --retained-earnings-id <Zoho id of Retained Earnings> [--partner-subaccounts]
+```
+
+- **Guard:** Zoho Books GET, the access-token request, and `POST /chartofaccounts`, only during the provisioning step and at
+  most once per planned account. Everything else is refused before it is sent.
+- **Before any change**, the plan read from Zoho must match the authorisation exactly. That covers the 13 accounts (names, codes,
+  types, 1690 under 1600), the Petty Cash and Retained Earnings ids, and the 1020 → 1010 legacy repair. Partner sub-accounts
+  need `--partner-subaccounts`. Any difference stops the run with no change (exit 2).
+- **The first failure stops the run** (exit 4). Nothing after it is attempted, and nothing is deleted. Investigate before
+  doing anything else; a second run refuses when the plan no longer matches.
+- **After provisioning**, every account is read back (id, code, name, type, parent, active). The script then checks that
+  1010 / 1020 / 1030 are three distinct accounts, that Petty Cash is unchanged and that the audit trail is kept. It reruns the
+  preflight (READY_NON_VAT, zeros, VAT_PENDING, 6150 pending), runs the Trial Balance reconciliation (read only) and proves that
+  only accounts were created.
+- **Report:** `provision-report.json` and `request-log.csv` (every modifying call, with the Zoho id it returned).
+- The mappings and the repair audit record stay in the copy. Production (`C:\ERP`) is not changed. When this version is later
+  deployed there, its own preview adopts the same accounts by code, and its repair maps 1020 to the existing Cash on Hand.
+  Nothing is created twice.
