@@ -15,11 +15,11 @@ The Copilot feature is an opt-in, read-only assistant. It is disabled by default
 
 ## API and UI
 
-`public/copilot-openapi.yaml` is the OpenAPI 3.1 description for Copilot Studio and other clients. The UI is at **Trigon Copilot** for allowlisted users. Every API route requires `COPILOT_ENABLED=1`, an active ERP identity, and `COPILOT_ALLOWED_USERS` containing the ERP user ID **or** `COPILOT_ALLOWED_ROLES` containing the role. Empty lists grant nobody access. Feature access never overrides a tool's normal ERP ACL.
+`public/copilot-openapi.yaml` is the OpenAPI 3.1 description for Copilot Studio and other clients. The UI is at **Trigon Copilot** for allowlisted users. Feature routes require `COPILOT_ENABLED=1`, an active ERP identity, and `COPILOT_ALLOWED_USERS` containing the ERP user ID **or** `COPILOT_ALLOWED_ROLES` containing the role. Empty lists grant nobody feature access. Feature access never overrides a tool's normal ERP ACL. The admin-only status route is the exception: an authenticated ERP administrator may read safe configuration and operational metadata while the feature is disabled.
 
 | Route | Behavior |
 |---|---|
-| `GET /api/copilot/status` | Supported intents, result/retention limits, and a provider-configured boolean; no secrets |
+| `GET /api/copilot/status` | Safe limits and provider metadata; admin-only operational aggregate details, including anonymous rate-limit counts |
 | `POST /api/copilot/ask` | Deterministically select one authorized read-only tool and phrase its projected results |
 | `GET /api/copilot/history` | Current user's recent question/answer history |
 | `DELETE /api/copilot/history` | Clear only the current user's history |
@@ -30,7 +30,7 @@ History is pruned after the configured retention period. History, feedback and C
 
 ## Identity and authorization
 
-The regular path uses the existing ERP session. The optional Entra bearer-token path is separately disabled unless `COPILOT_ENTRA_ENABLED=1`. It verifies an RS256 signature/JWKS, issuer, expiry, tenant (`tid`), the dedicated API audience, and the `Copilot.Read` scope; it maps `(tid, oid)` to exactly one active ERP-linked user. The login application's `M365_CLIENT_ID` audience is rejected. Both paths resolve to an ERP user and pass through the same feature allowlist and per-tool ERP ACL checks.
+The regular path uses the existing ERP session. The optional Entra bearer-token path is separately disabled unless `COPILOT_ENTRA_ENABLED=1`. Its expected acquisition flow is delegated OAuth 2.0 authorization code with PKCE where supported, requesting `Copilot.Read` for the dedicated ERP API app ID URI. It verifies an RS256 signature/JWKS, issuer, expiry, tenant (`tid`), the dedicated API audience, and the scope; it maps `(tid, oid)` to exactly one active ERP-linked user. The login application's `M365_CLIENT_ID` audience and app-only tokens are rejected. Both paths resolve to an ERP user and pass through the same feature allowlist and per-tool ERP ACL checks.
 
 ## Limits and configuration
 
@@ -59,7 +59,7 @@ The shipped `.env.example` keeps the feature and Entra path disabled. Use only a
 | `COPILOT_ENTRA_API_AUDIENCE` | unset | Dedicated ERP Copilot API audience, not the login app audience |
 | `COPILOT_ENTRA_ISSUER`, `COPILOT_ENTRA_JWKS_URL` | tenant defaults | Optional reviewed overrides; loopback HTTP is test-only |
 
-Hard request limits remain 1,000 characters per question, 16 KiB per body, 50 results per tool, and a 30-second maximum provider timeout. Rate defaults are 20 queries/minute/user plus 200/server process; these values are configurable within the ranges above. Throttles are in-memory and therefore apply per server process, not as a distributed cluster-wide quota.
+Hard request limits remain 1,000 characters per question, 16 KiB per body, 50 results per tool, and a 30-second maximum provider timeout. Rate defaults are 20 queries/minute/user plus 200/server process; these values are configurable within the ranges above. Throttles are in-memory and therefore apply per server process, not as a distributed cluster-wide quota. Requests combining a supported topic with URLs, path traversal, SQL/Graph commands, or credential-like terms are rejected before routing.
 
 ## Provider and production decisions
 
@@ -67,13 +67,15 @@ The `azure-openai` adapter uses the explicitly configured Azure OpenAI Chat Comp
 
 Before any production use, Trigon must approve the provider/service and deployment, Azure region and data residency, whether questions and projected ERP results may leave the ERP host, provider retention/training/abuse-monitoring/logging terms, outbound network rules, allowlisted users/roles, and provider-failure handling. The implementation and local mocks do not make those decisions or contact production services. Keep both `COPILOT_ENABLED` and `COPILOT_ENTRA_ENABLED` off until approval and deployment review.
 
+The deterministic server router is the only v1 tool-selection interface. If model-based selection is proposed later, its output must be constrained to the same fixed tool registry and re-authorized server-side; the model must never issue an arbitrary tool name, SQL, Graph request, or URL fetch.
+
 ## Deliberate first-release exclusions
 
 No mutation/action tools, general HR approvals, supplier contact fields, raw document/attachment contents, free-text feedback, model-based tool selection, or distributed rate limiting are included. SharePoint links are limited to validated links already mapped to an ERP record; Copilot does not fetch files or make Graph calls. These remaining exclusions require a separate security/product decision and must not be inferred as supported by this API. Copilot is supported only in the Node server deployment; the standalone browser edition has no server-side provider or Entra authentication path.
 
 ## Deployment and rollout boundary
 
-The updater downloads the configured default-branch head, so merging PR #21 updates the code used by updater-managed installations and is effectively a production deployment. Keep `COPILOT_ENABLED=0` after any update, including a merge, until Trigon separately completes staged validation and explicitly enables a reviewed ERP user ID or role. This PR does not change updater behavior or pin/record deployed commits. Rollback is `COPILOT_ENABLED=0` plus the normal approved application restart; no ERP or Microsoft 365 data or settings are changed.
+The updater downloads the configured default-branch head, so merging PR #21 updates the code used by updater-managed installations and is effectively a production deployment. Keep `COPILOT_ENABLED=0` after any update, including a merge, until Trigon separately completes staged validation and explicitly enables a reviewed ERP user ID or role. The staged process is: approve provider/region/data-handling/network decisions; validate with fake data and local mocks; stage the reviewed provider configuration with the feature disabled; verify admin status and the chosen staged ERP identity/role; then obtain explicit Trigon approval before enabling the narrow allowlist. Do not enable Copilot as part of the update itself. This PR does not change updater behavior or pin/record deployed commits. Rollback is `COPILOT_ENABLED=0` plus the normal approved application restart; no ERP or Microsoft 365 data or settings are changed.
 
 ---
 
@@ -94,11 +96,11 @@ The updater downloads the configured default-branch head, so merging PR #21 upda
 
 ## الواجهة وواجهة API
 
-يصف `public/copilot-openapi.yaml` واجهة OpenAPI 3.1 المتاحة لـ Copilot Studio والعملاء الآخرين. تظهر واجهة **مساعد Trigon** للمستخدمين المصرّح لهم. تتطلب جميع المسارات `COPILOT_ENABLED=1` وهوية ERP نشطة وإدراج معرّف المستخدم الرقمي في `COPILOT_ALLOWED_USERS` **أو** دوره في `COPILOT_ALLOWED_ROLES`. القائمتان الفارغتان تمنعان الجميع، ولا تتجاوز قائمة Copilot صلاحيات أداة ERP.
+يصف `public/copilot-openapi.yaml` واجهة OpenAPI 3.1 المتاحة لـ Copilot Studio والعملاء الآخرين. تظهر واجهة **مساعد Trigon** للمستخدمين المصرّح لهم. تتطلب مسارات الميزة `COPILOT_ENABLED=1` وهوية ERP نشطة وإدراج معرّف المستخدم الرقمي في `COPILOT_ALLOWED_USERS` **أو** دوره في `COPILOT_ALLOWED_ROLES`. القائمتان الفارغتان تمنعان الجميع من استخدام الميزة. استثناء ذلك مسار الحالة للمسؤول الموثق، إذ يعرض معلومات إعداد وتشغيل آمنة حتى أثناء التعطيل. ولا تتجاوز قائمة Copilot صلاحيات أداة ERP.
 
 | المسار | السلوك |
 |---|---|
-| `GET /api/copilot/status` | النوايا والحدود ومؤشر إعداد المزوّد بلا أسرار |
+| `GET /api/copilot/status` | حدود ومعلومات مزوّد آمنة؛ حالة تشغيلية مجمعة للمسؤول فقط |
 | `POST /api/copilot/ask` | اختيار أداة قراءة فقط بشكل حتمي وصياغة نتيجتها المسموح بها |
 | `GET /api/copilot/history` | سجل أسئلة وأجوبة المستخدم الحالي |
 | `DELETE /api/copilot/history` | مسح سجل المستخدم الحالي فقط |

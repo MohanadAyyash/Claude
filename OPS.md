@@ -122,12 +122,12 @@ daily-check.js ── فشل؟ ──► issue بعلامة ops-report ──►
 - إيقاف أي ميزة: صفرها في `.env` وأعد التشغيل؛ بيانات النظام لا تتأثر.
 
 ## Copilot (معطّل افتراضياً)
-- لا تضبط `COPILOT_ENABLED=1` ولا تتصل بمزوّد إنتاجي حتى تعتمد Trigon مزوّد Azure والمنطقة ومكان إقامة البيانات ومعالجة/احتفاظ/تدريب المزوّد وسياسة الشبكة وقوائم المستخدمين والأدوار؛ التفاصيل في `docs/COPILOT.md`.
+- لا تضبط `COPILOT_ENABLED=1` ولا تتصل بمزوّد إنتاجي حتى تعتمد Trigon مزوّد Azure والمنطقة ومكان إقامة البيانات ومعالجة/احتفاظ/تدريب المزوّد وسياسة الشبكة وقوائم المستخدمين والأدوار؛ التفاصيل في `COPILOT.md` و`docs/COPILOT.md`.
 - اختبارات Copilot تستخدم مزوّداً ومفاتيح Entra وهمية على loopback فقط. لا تستخدم قاعدة إنتاج أو بيانات نسخ احتياطية أو أسرار إنتاج للاختبار.
-- بعد اعتماد التفعيل: راجع `GET /api/copilot/status` كمستخدم مسموح؛ يعرض مؤشر إعداد المزوّد والحدود دون أسرار. واجهة التدقيق `GET /api/copilot/audit` للمسؤول فقط ولا تحتوي السؤال أو الإجابة.
+- حالة `GET /api/copilot/status` متاحة للمسؤول الموثق حتى عند التعطيل، وتعرض `enabled=false` دون أسرار؛ بعد اعتماد التفعيل، راجعها كمستخدم مسموح. واجهة التدقيق `GET /api/copilot/audit` للمسؤول فقط ولا تحتوي السؤال أو الإجابة.
 - حد الطلب الافتراضي 20 لكل مستخدم و200 لكل عملية خادم في الدقيقة؛ يمكن ضبط الحدود والنتائج والاحتفاظ ضمن النطاقات الموثقة في `docs/COPILOT.md` و`.env.example`.
 - السجل والتقييم وأحداث Copilot لا تُنسخ إلى النسخ المنقّحة. مسح سجل المستخدم لا يؤثر على سجل مستخدم آخر، ولا توجد أدوات تعديل أو موافقة.
 - فتح رابط داخل Copilot لا يمنح صلاحية؛ واجهة ERP المقصودة تعيد فحص الصلاحيات ونطاق المشروع مستقلاً.
 - المحدّث ينشر رأس الفرع الافتراضي؛ لذلك فإن دمج PR #21 يعدّ عملياً نشراً للإنتاج للتثبيتات التي تستخدم المحدّث. يجب أن يبقى `COPILOT_ENABLED=0` بعد أي تحديث أو دمج حتى اكتمال تحقق مرحلي منفصل واعتماد قائمة المستخدمين/الأدوار. لا يغيّر هذا PR مسار التحديث ولا يثبت أو يسجل commit النشر. للتراجع: `COPILOT_ENABLED=0` ثم إعادة تشغيل التطبيق بالطريقة المعتمدة.
 
-The updater deploys the configured default-branch head, so merging PR #21 is effectively a production deployment for updater-managed installs. Keep `COPILOT_ENABLED=0` after every update and merge until separate staged validation and explicit allowlist approval. Rollback is `COPILOT_ENABLED=0` followed by the approved application restart; this feature does not alter ERP or Microsoft 365 data.
+The updater deploys the configured default-branch head, so merging PR #21 is effectively a production deployment for updater-managed installs. Keep `COPILOT_ENABLED=0` after every update and merge until provider/region/data-handling decisions, staged validation, and explicit allowlist approval are complete. See `COPILOT.md` and `docs/COPILOT.md` for the staged process. Rollback is `COPILOT_ENABLED=0` followed by the approved application restart; this feature does not alter ERP or Microsoft 365 data.

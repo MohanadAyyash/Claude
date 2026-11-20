@@ -5,7 +5,7 @@ info:
   description: >
     Read-only, deterministic tool routing. Every tool applies its existing ERP role ACL and
     explicit field projection before the configured provider may phrase authorized results.
-    Feature access also requires COPILOT_ENABLED=1 and an ERP user-ID or role allowlist. Intent routing is deterministic;
+    Feature access also requires COPILOT_ENABLED=1 and an ERP user-ID or role allowlist. The authenticated administrator-only status route remains available while disabled. Intent routing is deterministic;
     the model receives only projected facts, never ERP or SharePoint links, SQL, arbitrary URLs, or tool choices.
 servers:
   - url: /api
@@ -23,7 +23,7 @@ paths:
       summary: Get the authorized user's Copilot status
       responses:
         '200':
-          description: Feature state, limits and safe provider metadata; admin-only operational aggregate details are omitted for other roles.
+          description: Feature state, limits and safe provider metadata; while disabled this is administrator-only. When enabled, operational aggregate details are omitted for other roles.
           content:
             application/json:
               schema:
@@ -33,7 +33,7 @@ paths:
         '403':
           description: User is not on the feature allowlist.
         '404':
-          description: Copilot is disabled.
+          description: Copilot is disabled and the caller is not an authenticated ERP administrator.
   /copilot/ask:
     post:
       tags: [Copilot]
@@ -80,7 +80,7 @@ paths:
         '502':
           description: Provider failure.
         '503':
-          description: Provider or Entra authentication is not configured.
+          description: Provider rate limit or Entra authentication/provider configuration is unavailable.
         '504':
           description: Provider timeout.
   /copilot/history:
@@ -172,9 +172,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: >
-        Optional and disabled by default. Requires RS256 signature/JWKS, issuer, expiry,
-        configured tid, one dedicated ERP API aud, Copilot.Read scope, and unique user mapping
-        by (tenant_id, oid). The Microsoft login application's audience is rejected.
+          Optional delegated user token, disabled by default. Expected acquisition is OAuth 2.0
+          authorization code with PKCE where supported, requesting Copilot.Read for the dedicated
+          ERP API app ID URI. Requires RS256 signature/JWKS, issuer, expiry, configured tid, one
+          dedicated ERP API aud, and unique user mapping by (tenant_id, oid). The Microsoft login
+          application's audience and app-only service tokens are rejected.
   schemas:
     CopilotStatus:
       type: object
@@ -216,6 +218,25 @@ components:
               type: integer
             recent_failure_count:
               type: integer
+            last_failure:
+              type: [object, 'null']
+              description: Safe summary only; no question, provider body, user ID, or internal error detail.
+              properties:
+                category:
+                  type: string
+                  enum: [failed, rate_limited]
+                http_status:
+                  type: [integer, 'null']
+                at:
+                  type: integer
+            rate_limit_state:
+              type: object
+              required: [current_user_queries_last_minute, process_queries_last_minute]
+              properties:
+                current_user_queries_last_minute:
+                  type: integer
+                process_queries_last_minute:
+                  type: integer
     CopilotAuditEvent:
       type: object
       required: [user_id, event, outcome, created_at, authorized_count, redacted]
