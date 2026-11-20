@@ -1,0 +1,45 @@
+// Navigation helpers: grouping, search, Arabic normalisation: node --no-warnings test-nav.js
+const assert = require('assert');
+const { navNorm, navTree, navGroupOf, navSearch } = require('./public/nav.js');
+
+const NAV = [['dashboard', 'لوحة التحكم', 'Dashboard'], ['tasks', 'المهام', 'Tasks'],
+  ['#', 'المحاسبة', 'Accounting'], ['ledger', 'دفتر الأستاذ', 'General ledger'], ['journal', 'قيود اليومية', 'Journal entries'],
+  ['#', 'الموارد البشرية', 'Human resources'], ['leave', 'الإجازات', 'Leave'], ['payroll', 'الرواتب ونظام حماية الأجور', 'Payroll & WPS'],
+  ['#', 'الضرائب والامتثال', 'Tax & compliance'], ['vat', 'ضريبة القيمة المضافة', 'VAT report'],
+  ['notifications', 'الإشعارات', 'Notifications'], ['settings', 'الإعدادات', 'Settings']];
+const all = new Set(NAV.filter(n => n[0] !== '#').map(n => n[0]));
+
+// Arabic spelling variants and tashkeel do not matter when searching
+assert.equal(navNorm('الإجازات'), navNorm('الاجازات'));
+assert.equal(navNorm('ضريبة'), navNorm('ضريبه'));
+assert.equal(navNorm('مستشفى'), navNorm('مستشفي'));
+assert.equal(navNorm('رَوَاتِب'), 'رواتب');
+assert.equal(navNorm('  Payroll '), 'payroll');
+
+// sections: leading loose links, one per '#' heading, notifications + settings kept outside the last group
+const tree = navTree(NAV, all);
+assert.deepEqual(tree.map(s => s.key), [null, 'Accounting', 'Human resources', 'Tax & compliance', null]);
+assert.deepEqual(tree[4].items.map(r => r[0]), ['notifications', 'settings']);
+assert.deepEqual(tree[3].items.map(r => r[0]), ['vat']);
+assert.deepEqual(tree[0].items.map(r => r[0]), ['dashboard', 'tasks']);
+
+// a group with no page the role may open is not shown at all
+const t2 = navTree(NAV, new Set(['dashboard', 'leave', 'settings']));
+assert.deepEqual(t2.map(s => s.key), [null, 'Human resources', null]);
+
+// which group a route (with or without an id) belongs to
+assert.equal(navGroupOf(tree, 'payroll'), 'Human resources');
+assert.equal(navGroupOf(tree, 'ledger/5'), 'Accounting');
+assert.equal(navGroupOf(tree, 'dashboard'), null);
+assert.equal(navGroupOf(tree, 'nope'), null);
+
+// search: Arabic variants, English while the UI is Arabic, group names, empty query, role limits
+assert.equal(navSearch(tree, 'اجازات')[0].row[0], 'leave');
+assert.equal(navSearch(tree, 'payroll')[0].row[0], 'payroll');
+assert.deepEqual(navSearch(tree, 'المحاسبة').map(r => r.row[0]), ['ledger', 'journal']);
+assert.equal(navSearch(tree, '').length, Math.min(9, all.size));
+assert.equal(navSearch(tree, '', 3).length, 3);
+assert.equal(navSearch(tree, 'payroll')[0].section.key, 'Human resources');
+assert.equal(navSearch(navTree(NAV, new Set(['dashboard', 'leave'])), 'payroll').length, 0);
+
+console.log('test-nav: all passed');
