@@ -200,6 +200,7 @@ server.listen(0, async () => {
     const cs = (sel, prop) => ev(`getComputedStyle(document.querySelector(${JSON.stringify(sel)})).${prop}`);
     assert.equal(await ev(`document.querySelector('#main .crumb') && document.querySelector('#main .crumb').textContent.trim()`), 'المشاريع والمبيعات');
     assert.match(await cs('#main td.n', 'fontFamily'), /IBM Plex Mono/);
+    assert.doesNotMatch(await cs('#main th.n', 'fontFamily'), /^"?IBM Plex Mono/, 'column titles stay in the text font');
     assert.equal(await cs('#main > .bar', 'borderBottomStyle'), 'solid', 'letterhead rule under the title, also with the section name');
     assert.equal(await cs('#main > .bar h1', 'marginBottom'), '0px', 'the rule sits right under the title');
     assert.equal(await cs('#main .tag', 'backgroundColor'), 'rgba(0, 0, 0, 0)');
@@ -226,6 +227,7 @@ server.listen(0, async () => {
     assert.deepEqual([...new Set(await ev(`[...document.querySelectorAll('#main .kpi .v')].filter(v => !/^-/.test(v.textContent.trim())).map(v => getComputedStyle(v).color)`))], [steel], 'figures in Steel Blue (red is kept only for a negative figure)');
     assert.equal(await cs('#main .b.in', 'backgroundColor'), steel, 'cash in drawn in Steel Blue');
     assert.equal(await cs('#hlp', 'textDecorationLine'), 'none');
+    assert.equal(await cs('#main h2 a', 'color'), steel, 'links in Steel Blue, not browser blue');
     assert.ok(await ev(`!!document.querySelector('#main .alert') && !/[⚠⛔]/.test(document.querySelector('#main .alert').textContent)`), 'compliance alerts as marks, not emoji');
     await ev(`location.hash = 'invoices'; true`);
     await waitFor(`!!document.querySelector('#main tbody td.ref')`);

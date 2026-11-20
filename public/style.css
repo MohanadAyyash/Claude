@@ -100,7 +100,7 @@ body[data-role=viewer] #prt{display:inline-block}
 .grid:has(>.kpi){gap:14px 0;padding-block:4px 16px;border-bottom:1px solid var(--line)}
 .kpi{background:none;border:0;border-inline-start:1px solid var(--line);border-radius:0;padding:2px 16px}
 .kpi .v{font-family:"IBM Plex Mono","IBM Plex Sans Arabic",monospace;font-weight:500;font-variant-numeric:tabular-nums}
-td.n,th.n,.totals div span:last-child{font-family:"IBM Plex Mono","IBM Plex Sans Arabic",monospace;font-size:13px}
+td.n,.totals div span:last-child{font-family:"IBM Plex Mono","IBM Plex Sans Arabic",monospace;font-size:13px}
 .tag{background:none;padding:0;border-radius:0;font-weight:600;display:inline-flex;align-items:center;gap:6px}
 .tag::before{content:"";width:10px;height:3px;background:currentColor;flex-shrink:0}
 .tag{color:var(--mute)}.tag.paid,.tag.active,.tag.accepted,.tag.completed{color:#2E6B4E}.tag.overdue,.tag.rejected,.tag.cancelled{color:#A33B32}.tag.partial,.tag.unpaid,.tag.sent,.tag.retention,.tag.hold{color:#8C6420}
@@ -151,3 +151,4 @@ input:focus,select:focus,textarea:focus{outline:2px solid rgba(31,58,95,.18);bor
 .login{border-top:3px solid var(--brand);box-shadow:0 18px 40px -28px rgba(31,58,95,.6)}.lmark:not([hidden]){display:flex;justify-content:center;margin:0 0 18px}.lmark .mark{transform:scale(1.6)}
 .side a .ico,.gotob .ico{color:var(--brand)}
 .mk{display:inline-block;width:10px;height:3px;vertical-align:middle;margin-inline-end:6px;background:var(--mute)}.mk.ok{background:#2E6B4E}.mk.warn{background:#8C6420}.mk.bad{background:#A33B32}
+a{color:var(--brand);text-decoration-color:rgba(31,58,95,.35);text-underline-offset:2px}
