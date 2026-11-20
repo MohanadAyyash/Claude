@@ -19,4 +19,6 @@ jobs:
         env:
           SKIP_PDF: '1'          # no headless-browser PDF rendering in CI
           TZ: Asia/Dubai
+      - name: Test PDF rendering with the runner's headless browser
+        run: node --no-warnings test-reportpdf.js
       - run: npm run build:standalone
