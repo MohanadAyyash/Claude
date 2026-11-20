@@ -67,6 +67,7 @@ It also checks that Trigon's copy (Zoho send log, mappings, settings, runs) is b
   | **not found** | blocks |
 
   Matching is by mapping and type, never by a similar name; accounts of the right type are listed as candidates only.
+- **Account provisioning preview** (from the account-provisioning PR on): every account "Provision approved accounts" would create, adopt (by code, by a known rule, or Zoho's VAT accounts) or stop (ACCOUNT_CONFLICT with the recommended resolution, VAT_CONFIGURATION_REQUIRED), and the exact `POST /chartofaccounts` bodies. Read under the same guard: **nothing is created**; the proof counts these reads too.
 - **Partner accounts:** the proposed hierarchy per partner (Partner Capital → `<partner> Capital`, Partner Loans → `<partner> Loan`, Partner Current Accounts → `<partner> Current`). Not created.
 
 Send the developer the verdict, the "to configure" list and the proof lines. Do not send the keys, the database or the full report if it holds personal data.

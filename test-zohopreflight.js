@@ -6,6 +6,8 @@ const mockZoho = require('./tools/zoho-mock.js');
 const zoho = mockZoho();
 process.env.ZOHO_CLIENT_ID = zoho.CLIENT_ID; process.env.ZOHO_CLIENT_SECRET = zoho.CLIENT_SECRET;      // as the office PC's .env would
 const { server, ctx } = require('./server.js');
+// this suite tests the send engine itself: the READY gate of the account-provisioning workflow is tested in test-zohoacct.js
+ctx.db.prepare("UPDATE zoho_config SET value='0' WHERE key='gate_required'").run();
 const Z = require('./lib/zoho.js');
 
 server.listen(0, async () => {
@@ -178,7 +180,10 @@ server.listen(0, async () => {
     assert.ok(log.length >= 5 && log.every(([, m, , p, d]) => (m === 'GET' && d === 'read') || (m === 'POST' && p === '/oauth/v2/token' && d === 'access token')), 'request log: reads and the access token only');
     assert.ok(!/refresh_token|access_token|Zoho-oauthtoken/.test(fs.readFileSync(path.join(copy, 'report', 'request-log.csv'), 'utf8')), 'no token in the log');
     const html = fs.readFileSync(path.join(copy, 'report', 'preflight-report.html'), 'utf8');
-    for (const t of ['Verdict: BLOCKED', 'Proof: zero modifying calls', 'Partner Alpha Capital', 'Partner Current Accounts', 'type mismatch', 'Already synced']) assert.ok(html.includes(t), 'report: ' + t);
+    for (const t of ['Verdict: BLOCKED', 'Proof: zero modifying calls', 'Partner Alpha Capital', 'Partner Current Accounts', 'type mismatch', 'Already synced', 'Account provisioning preview (read only — nothing was created)', 'POST /chartofaccounts']) assert.ok(html.includes(t), 'report: ' + t);
+    assert.match(run.stdout, /Account provisioning preview: \w+ — would create \d+, adopt \d+, conflicts \d+, to map by hand \d+, VAT configuration required \d+ \(nothing created\)/);
+    assert.ok(rep.account_provisioning_preview && Array.isArray(rep.account_provisioning_preview.mutations) && rep.account_provisioning_preview.mutations.length > 0, 'the preview lists what would be created');
+    assert.ok(!zoho.calls.slice(callsB).some(c => /^POST \/chartofaccounts/.test(c)), 'and nothing was created');
     // refuses a folder without a database (and so never creates one)
     const bad = await spawnAsync(['--no-warnings', 'scripts/zoho-preflight.js', '--data', path.join(copy, 'nothing'), '--yes'], { env });
     assert.equal(bad.status, 3); assert.match(bad.stderr, /No erp\.db/); assert.ok(!fs.existsSync(path.join(copy, 'nothing')));

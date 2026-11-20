@@ -9,6 +9,15 @@ module.exports = ctx => {
   CREATE TABLE IF NOT EXISTS zoho_sync(id INTEGER PRIMARY KEY, kind TEXT, local_id INTEGER, zoho_id TEXT, zoho_type TEXT, status TEXT, error TEXT, hash TEXT, synced_at TEXT, UNIQUE(kind, local_id));
   CREATE TABLE IF NOT EXISTS zoho_map(kind TEXT, local_key TEXT, zoho_id TEXT, label TEXT, PRIMARY KEY(kind, local_key));
   CREATE TABLE IF NOT EXISTS zoho_runs(id INTEGER PRIMARY KEY, started TEXT, finished TEXT, trigger TEXT, user TEXT, sent INTEGER DEFAULT 0, updated INTEGER DEFAULT 0, failed INTEGER DEFAULT 0, skipped INTEGER DEFAULT 0, message TEXT);`);
+  // the send log is also the outbound queue and the exactly-once mapping (one row per Trigon record):
+  //   attempts / next_at: retry with back-off · pending_create: a create was sent and its answer not recorded (look it up before sending again)
+  //   doc_date: the record's date (closed periods) · sent_eff: the accounting effect last sent (read-back and Zoho-side edits) · recon*: last reconciliation
+  // zoho_map also records what the account provisioning found or created in Zoho
+  const addCol = (t, c, d) => { if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${d}`); };
+  for (const [c, d] of [['attempts', 'INTEGER DEFAULT 0'], ['next_at', 'TEXT'], ['created_at', 'TEXT'], ['verified_at', 'TEXT'], ['doc_date', 'TEXT'], ['sent_eff', 'TEXT'], ['pending_create', 'INTEGER DEFAULT 0'], ['recon', 'TEXT'], ['recon_at', 'TEXT'], ['recon_note', 'TEXT']]) addCol('zoho_sync', c, d);
+  for (const [c, d] of [['zoho_code', 'TEXT'], ['zoho_name', 'TEXT'], ['zoho_type', 'TEXT'], ['parent_id', 'TEXT'], ['created_by_trigon', 'INTEGER DEFAULT 0'], ['mapped_at', 'TEXT'], ['verified_at', 'TEXT'], ['partner_id', 'INTEGER']]) addCol('zoho_map', c, d);
+  // no real transaction is sent until the read-only preflight has reached READY (set by the account provisioning, modules/zohoacct.js)
+  db.prepare("INSERT OR IGNORE INTO zoho_config(key,value) VALUES('gate_required','1')").run();
   const SECRETS = ['client_secret', 'refresh_token'];
   // the OAuth client (and optionally the refresh token) come from .env when set there; they then cannot be changed from the screen
   const ENV = { client_id: 'ZOHO_CLIENT_ID', client_secret: 'ZOHO_CLIENT_SECRET', dc: 'ZOHO_DC', refresh_token: 'ZOHO_REFRESH_TOKEN' };
@@ -42,9 +51,52 @@ module.exports = ctx => {
   const note = (kind, id, ref, action, why) => { if (dry) dry.items.push({ kind, local_id: id, ref: String(ref || ''), action, why: why || '' }); };
   const useAcct = (code, label, zohoId, how) => { if (dry && !dry.accts.has(String(code))) dry.accts.set(String(code), { code: String(code), label, zoho_id: zohoId || null, how }); };
   const rec = (kind, id) => (dry && dry.recs.has(kind + ':' + id) ? dry.recs.get(kind + ':' + id) || undefined : db.prepare('SELECT * FROM zoho_sync WHERE kind=? AND local_id=?').get(kind, id));
-  const mark = (kind, id, zohoId, type, status, error, hash) => dry ? void dry.recs.set(kind + ':' + id, { kind, local_id: id, zoho_id: zohoId == null ? (rec(kind, id) || {}).zoho_id : String(zohoId), zoho_type: type, status, error, hash }) : db.prepare(`INSERT INTO zoho_sync(kind,local_id,zoho_id,zoho_type,status,error,hash,synced_at) VALUES(?,?,?,?,?,?,?,?)
-    ON CONFLICT(kind,local_id) DO UPDATE SET zoho_id=COALESCE(excluded.zoho_id,zoho_id), zoho_type=COALESCE(excluded.zoho_type,zoho_type), status=excluded.status, error=excluded.error, hash=COALESCE(excluded.hash,hash), synced_at=excluded.synced_at`)
-    .run(kind, id, zohoId == null ? null : String(zohoId), type ?? null, status, error ?? null, hash ?? null, now());
+  const WAIT = ['error', 'retrying', 'blocked'];                                      // a row in one of these keeps its retry count
+  const mark = (kind, id, zohoId, type, status, error, hash, x = {}) => dry ? void dry.recs.set(kind + ':' + id, { kind, local_id: id, zoho_id: zohoId == null ? (rec(kind, id) || {}).zoho_id : String(zohoId), zoho_type: type, status, error, hash }) : db.prepare(`INSERT INTO zoho_sync(kind,local_id,zoho_id,zoho_type,status,error,hash,synced_at,created_at,doc_date,sent_eff,verified_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(kind,local_id) DO UPDATE SET zoho_id=COALESCE(excluded.zoho_id,zoho_id), zoho_type=COALESCE(excluded.zoho_type,zoho_type), status=excluded.status, error=excluded.error, hash=COALESCE(excluded.hash,hash), synced_at=excluded.synced_at,
+      doc_date=COALESCE(excluded.doc_date,doc_date), sent_eff=COALESCE(excluded.sent_eff,sent_eff), verified_at=COALESCE(excluded.verified_at,verified_at),
+      pending_create=CASE WHEN excluded.zoho_id IS NOT NULL THEN 0 ELSE pending_create END,
+      attempts=CASE WHEN excluded.status IN ('error','retrying','blocked') THEN attempts ELSE 0 END, next_at=CASE WHEN excluded.status IN ('error','retrying','blocked') THEN next_at ELSE NULL END`)
+    .run(kind, id, zohoId == null ? null : String(zohoId), type ?? null, status, error ?? null, hash ?? null, now(), now(), x.date || null, x.eff ? JSON.stringify(x.eff) : null, x.verified || null);
+  // a create is about to be sent: if its answer is lost (timeout, crash), the next attempt looks it up in Zoho instead of sending it twice
+  const pendingCreate = (kind, id, type, date) => { if (dry) return; mark(kind, id, null, type, (rec(kind, id) || {}).status === 'ok' ? 'ok' : 'sending', null, null, { date });
+    db.prepare('UPDATE zoho_sync SET pending_create=1 WHERE kind=? AND local_id=?').run(kind, id); };
+  const blocked = (code, msg) => Object.assign(new Error(`${code}: ${msg}`), { blocked: code });
+  // closed accounting period (Settings → closing date): nothing dated on or before it is created, changed or removed in Zoho
+  const lockDate = () => { try { const v = (db.prepare("SELECT value FROM settings WHERE key='lock_date'").get() || {}).value; return /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : ''; } catch { return ''; } };
+  const guardPeriod = (date, what) => { const l = lockDate(); if (l && date && date <= l) throw blocked('CLOSED_PERIOD', `${what} dated ${date} is in the closed period (closed up to ${l}) — not changed in Zoho`); };
+  const newMode = () => cfg().gate_required === '1';
+  // ---------- accounting effect of a Zoho object (what it posts), to compare what was sent with what Zoho holds ----------
+  // { date, total, lines: [[amount, tax, account, …]] } — an empty account means "Zoho's default account" (not compared)
+  function effect(type, o, lk) {
+    if (!o) return null;
+    const pct = id => { const t = ((lk && lk.taxes) || []).find(x => String(x.tax_id) === String(id)); return t ? +t.tax_percentage : 0; };
+    if (['invoice', 'creditnote', 'bill'].includes(type)) {
+      const lines = (o.line_items || []).map(l => [round((+l.quantity || 0) * (+l.rate || 0)), l.tax_id ? String(l.tax_id) : '', l.account_id ? String(l.account_id) : '']);
+      const byLine = round(lines.reduce((s, l) => s + l[0] + round(l[0] * pct(l[1]) / 100), 0)), byTotal = round(lines.reduce((s, l) => s + l[0] * (1 + pct(l[1]) / 100), 0));
+      return { date: o.date, total: o.total != null && o.line_items && !o.__sent ? round(+o.total) : byTotal, alt: byLine, lines, status: o.status || '' };
+    }
+    if (type === 'expense' || type === 'expense2') { const a = round(+o.amount || 0); return { date: o.date, total: round(a * (1 + pct(o.tax_id) / 100)), alt: round(a + round(a * pct(o.tax_id) / 100)), lines: [[a, o.tax_id ? String(o.tax_id) : '', String(o.account_id || ''), String(o.paid_through_account_id || '')]] }; }
+    if (type === 'journal') { const lines = (o.line_items || []).map(l => [round(+l.amount || 0), l.debit_or_credit, String(l.account_id || '')]); return { date: o.journal_date, total: round(lines.filter(l => l[1] === 'debit').reduce((s, l) => s + l[0], 0)), lines, status: o.status || '' }; }
+    if (type === 'customerpayment' || type === 'vendorpayment') return { date: o.date, total: round(+o.amount || 0), lines: [[round(+o.amount || 0), '', String((type === 'customerpayment' ? o.account_id : o.paid_through_account_id) || '')]] };
+    return null;
+  }
+  const sentEff = (type, vals, lk) => effect(type, { ...vals, __sent: true }, lk);
+  // MATCH · AMOUNT_MISMATCH · ACCOUNT_MISMATCH · DATE_MISMATCH (in that order of gravity); tolerance: the ledger's 2 decimals
+  function compareEff(exp, got) {
+    if (!exp || !got) return 'AMOUNT_MISMATCH';
+    const near = (a, b) => Math.abs(a - b) < 0.005;
+    if (!near(exp.total, got.total) && !(exp.alt != null && near(exp.alt, got.total))) return 'AMOUNT_MISMATCH';
+    const key = (l, withAcct) => l.map((v, i) => (i === 2 || i === 3) && !withAcct ? '' : typeof v === 'number' ? v.toFixed(2) : v).join('|');
+    const a = exp.lines.map(l => key(l, false)).sort(), b = got.lines.map(l => key(l, false)).sort();
+    if (a.length !== b.length || a.some((x, i) => x !== b[i])) return 'AMOUNT_MISMATCH';
+    const unmatched = [...got.lines];                                                   // each expected line finds a Zoho line with the same amount and the expected account
+    for (const l of exp.lines) { const i = unmatched.findIndex(g => key(g, false) === key(l, false) && l.every((v, k) => !(k === 2 || k === 3) || !v || String(g[k]) === String(v)));
+      if (i < 0) return 'ACCOUNT_MISMATCH'; unmatched.splice(i, 1); }
+    return exp.date === got.date ? 'MATCH' : 'DATE_MISMATCH';
+  }
+  // Zoho changed it after Trigon sent it? (only when the effect sent is known — rows sent before this version have none)
+  const modifiedInZoho = (r, type, cur, lk) => !!(r && r.sent_eff && cur && compareEff(JSON.parse(r.sent_eff), effect(type, cur, lk)) !== 'MATCH');
   const gone = e => e.status === 404 || e.code === 1002 || /does not exist/i.test(e.message);
 
   // ---------- our accounts / projects → Zoho accounts / projects or reporting-tag options ----------
@@ -68,6 +120,11 @@ module.exports = ctx => {
     const label = own ? `${name} — ${partnerName(partnerId)}` : bank ? `Bank — ${bank.name}` : name;
     useAcct(key.slice(5), label, m || (auto && auto.account_id), m ? 'mapped' : auto ? 'automatic (Zoho default account of that type)' : 'missing');
     if (!m && !auto) throw new Error(`map our account ${key.slice(5).replace(':p', ' of partner #')} (${label}) to a Zoho account first`);
+    if (m && newMode() && lk.coa && !dry) {                                            // the mapped Zoho account must still exist, be active and have a type that fits
+      const a = lk.coa.find(x => String(x.account_id) === String(m)), types = expectTypes(key);
+      if (!a) throw blocked('ACCOUNT_CONFLICT', `${key.slice(5)} is mapped to Zoho account ${m}, which no longer exists or is inactive — nothing is sent with it`);
+      if (types && !types.includes(a.account_type)) throw blocked('ACCOUNT_CONFLICT', `${key.slice(5)} is mapped to "${a.account_name}" of type ${a.account_type}; expected ${types.join(' or ')}`);
+    }
     return m || auto.account_id;
   };
   // a project's reference on a line: a Zoho project (project:<id>) or a reporting-tag option (tag:<tag_id>:<option_id>)
@@ -135,7 +192,7 @@ module.exports = ctx => {
     const coa = ((await cl.get('/chartofaccounts', { filter_by: 'AccountType.Active' })).chartofaccounts || []);
     const tax = (pct, re) => taxes.find(t => +t.tax_percentage === pct && t.tax_type !== 'tax_group' && (!re || re.test(t.tax_name || '')));
     const expense = coa.filter(a => EXPENSE_TYPES.includes(a.account_type));
-    return { std: tax(5), zero: tax(0, /zero/i), exempt: tax(0, /exempt/i), bank: banks.find(a => a.account_type === 'bank'), cash: banks.find(a => a.account_type === 'cash'), ar: coa.find(a => a.account_type === 'accounts_receivable'), ap: coa.find(a => a.account_type === 'accounts_payable'), retention: coa.find(a => /retention/i.test(a.account_name || '') && /asset/.test(a.account_type || '')),
+    return { taxes, std: tax(5), zero: tax(0, /zero/i), exempt: tax(0, /exempt/i), bank: banks.find(a => a.account_type === 'bank'), cash: banks.find(a => a.account_type === 'cash'), ar: coa.find(a => a.account_type === 'accounts_receivable'), ap: coa.find(a => a.account_type === 'accounts_payable'), retention: coa.find(a => /retention/i.test(a.account_name || '') && /asset/.test(a.account_type || '')),
       coa: [...coa, ...banks], expense, assets: coa.filter(a => a.account_type === 'fixed_asset'), cogs: expense.find(a => /^cost of goods sold$/i.test(a.account_name || '')) || expense.find(a => a.account_type === 'cost_of_goods_sold') || expense[0] };   // the standard account, not another COGS account (e.g. site salaries)
   }
   const taxOf = (lk, k) => (k === 'std' ? lk.std : k === 'zero' ? lk.zero : k === 'exempt' ? lk.exempt : null);
@@ -202,36 +259,63 @@ module.exports = ctx => {
   const LOCKED = ['paid', 'partially_paid', 'closed'];                                  // money has been applied in Zoho → never overwrite
   const lineItems = (lines, lk, pid, adv) => lines.map(l => { const t = taxOf(lk, l.tax); return { name: l.name.slice(0, 100), description: l.name.length > 100 ? l.name : '', quantity: l.quantity, rate: l.rate, ...(t ? { tax_id: t.tax_id } : {}), ...(adv && l.adv ? { account_id: adv } : {}), ...projectRef(pid) }; });
 
+  // read-back after a send (new mode): what Zoho holds must be what was sent, else the record is blocked for review
+  async function verifySent(cl, kind, localId, type, path, key, id, sent, lk) {
+    if (dry || !newMode()) return;
+    const got = effect(type, (await cl.get(`${path}/${id}`))[key], lk), res = compareEff(sent, got);
+    if (res !== 'MATCH') throw blocked('VERIFY_MISMATCH', `read back from Zoho: ${res.toLowerCase().replace('_', ' ')} — check it in Zoho`);
+    db.prepare('UPDATE zoho_sync SET verified_at=? WHERE kind=? AND local_id=?').run(now(), kind, localId);
+  }
   async function pushDoc(cl, kind, localId, type, vals, { voided, find, label }, run) {
-    const t = DOC[type], h = hashOf(vals), r = rec(kind, localId), q = t.num ? { ignore_auto_number_generation: 'true' } : undefined;
+    const t = DOC[type], h = hashOf(vals), r = rec(kind, localId), q = t.num ? { ignore_auto_number_generation: 'true' } : undefined, lk = run.lk, eff = sentEff(type, vals, lk);
+    if (dry) dry.vals.set(kind + ':' + localId, { type, eff });
     if (voided) {                                                                     // cancelled here → void there (if it was sent)
       if (!r || !r.zoho_id) { note(kind, localId, label, 'skip', 'void here, never sent'); mark(kind, localId, null, type, 'skipped', 'void — not sent', h); run.skipped++; return; }
       if (r.status === 'cancelled') { note(kind, localId, label, 'unchanged', 'already void in Zoho'); return; }
+      guardPeriod(r.doc_date || vals.date, label);
+      if (r.sent_eff) { let cur = null; try { cur = (await cl.get(`${t.path}/${r.zoho_id}`))[t.key]; } catch (e) { if (!gone(e)) throw e; } if (modifiedInZoho(r, type, cur, lk)) throw blocked('ZOHO_MODIFIED', `${label} was changed in Zoho after Trigon sent it — not voided automatically`); }
       await cl.post(`${t.path}/${r.zoho_id}/status/void`); note(kind, localId, label, 'void', 'void here — would be voided in Zoho'); mark(kind, localId, r.zoho_id, type, 'cancelled', null, h); run.updated++; return;
     }
     let again = false;
-    if (r && r.zoho_id && ['ok', 'changed', 'error'].includes(r.status)) {     // 'error' with a Zoho id: it IS there (a later update failed) → update it, never post a second one
+    if (r && r.zoho_id && ['ok', 'changed', 'error', 'retrying'].includes(r.status)) {     // 'error' with a Zoho id: it IS there (a later update failed) → update it, never post a second one
       if (r.zoho_type && r.zoho_type !== type) { note(kind, localId, label, 'conflict', 'changed between bill and expense after it was sent'); if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, null, 'changed', `${label} changed between bill and expense after it was sent — fix it in Zoho`, null); run.failed++; } return; }
-      if (r.hash === h && r.status !== 'error') { note(kind, localId, label, 'unchanged', 'already in Zoho'); return; }
+      if (r.hash === h && r.status === 'ok') { note(kind, localId, label, 'unchanged', 'already in Zoho'); return; }
       let cur = null; try { cur = (await cl.get(`${t.path}/${r.zoho_id}`))[t.key]; } catch (e) { if (!gone(e)) throw e; }
       if (cur && r.hash === h) { note(kind, localId, label, 'unchanged', 'already in Zoho (an earlier error is cleared)'); mark(kind, localId, r.zoho_id, type, 'ok', null, h); return; }          // unchanged since it was sent: only the error flag is cleared
-      if (cur && !LOCKED.includes(cur.status)) { await cl.put(`${t.path}/${r.zoho_id}`, vals, q); note(kind, localId, label, 'update', `changed here; ${cur.status} in Zoho`); mark(kind, localId, r.zoho_id, type, 'ok', null, h); run.updated++; return; }
+      if (cur && !LOCKED.includes(cur.status)) {
+        guardPeriod(r.doc_date, label); guardPeriod(vals.date, label);
+        if (modifiedInZoho(r, type, cur, lk)) { note(kind, localId, label, 'conflict', 'changed in Zoho after Trigon sent it — not overwritten'); throw blocked('ZOHO_MODIFIED', `${label} was changed in Zoho after Trigon sent it — not overwritten (review it in Zoho, then retry)`); }
+        await cl.put(`${t.path}/${r.zoho_id}`, vals, q); note(kind, localId, label, 'update', `changed here; ${cur.status} in Zoho`); mark(kind, localId, r.zoho_id, type, 'ok', null, h, { date: vals.date, eff }); run.updated++;
+        return verifySent(cl, kind, localId, type, t.path, t.key, r.zoho_id, eff, lk);
+      }
       if (cur) { note(kind, localId, label, 'conflict', `edited here after it was ${cur.status} in Zoho — correct it in Zoho or issue a credit note`); if (r.status !== 'changed') { mark(kind, localId, r.zoho_id, type, 'changed', 'edited here after it was paid in Zoho — correct it in Zoho or issue a credit note', null); run.failed++; } return; }
       again = true;                                                                    // deleted in Zoho → send it again
     }
+    guardPeriod(vals.date, label);
     let id = null;
-    if (find) { const hit = ((await cl.get(t.path, find))[t.key + 's'] || []).find(x => x[t.num] === vals[t.num]); if (hit) id = hit[t.id]; }
-    note(kind, localId, label, id ? 'link' : 'create', id ? `${vals[t.num]} already exists in Zoho but is not in the send log — it would be linked, not created again (check that it is the same document)` : again ? 'deleted in Zoho — would be sent again' : '');
+    let hitStatus = '';
+    if (find) { const hit = ((await cl.get(t.path, find))[t.key + 's'] || []).find(x => x[t.num] === vals[t.num]); if (hit) { id = hit[t.id]; hitStatus = hit.status; } }
+    else if (r && r.pending_create && vals.reference_number) {                          // an earlier create may have reached Zoho: look for it
+      const hits = ((await cl.get(t.path, { reference_number: vals.reference_number }))[t.key + 's'] || []).filter(x => x.reference_number === vals.reference_number && x.date === vals.date);
+      if (hits.length > 1) throw blocked('POSSIBLE_DUPLICATE', `${hits.length} ${t.key}s with reference ${vals.reference_number} on ${vals.date} in Zoho — check them`);
+      if (hits.length) { id = hits[0][t.id]; hitStatus = hits[0].status; }
+    }
+    if (id && r && r.pending_create && t.post && hitStatus === 'draft' && cfg().post === '1') await cl.post(`${t.path}/${id}/status/${t.post}`);   // our own lost create: finish it as a fresh one
+    note(kind, localId, label, id ? 'link' : 'create', id ? `${vals[t.num] || vals.reference_number} already exists in Zoho but is not in the send log — it would be linked, not created again (check that it is the same document)` : again ? 'deleted in Zoho — would be sent again' : '');
     if (!id) {
+      pendingCreate(kind, localId, type, vals.date);
       id = (await cl.post(t.path, vals, q))[t.key][t.id];
+      mark(kind, localId, id, type, 'ok', null, h, { date: vals.date, eff });           // the Zoho id is kept at once
       if (t.post && cfg().post === '1') await cl.post(`${t.path}/${id}/status/${t.post}`);
     }
-    mark(kind, localId, id, type, 'ok', null, h); run.sent++;
+    mark(kind, localId, id, type, 'ok', null, h, { date: vals.date, eff }); run.sent++;
+    return verifySent(cl, kind, localId, type, t.path, t.key, id, eff, lk);
   }
 
   async function pushPayment(cl, p, lk, run) {
     const r = rec('payment', p.id), label = `${p.kind === 'in' ? 'receipt' : 'payment'} ${p.reference || '#' + p.id}`;
-    if (r && (['ok', 'skipped', 'included'].includes(r.status) || (r.status === 'error' && r.zoho_id))) { note('payment', p.id, label, r.status === 'ok' || r.zoho_id ? 'unchanged' : 'skip', r.status === 'ok' || r.zoho_id ? 'already in Zoho' : r.error || r.status); return; }   // already in Zoho (a payment is never posted twice)
+    if (dry && r && r.zoho_id) { const d0 = payDoc(p, run.e); dry.vals.set('payment:' + p.id, { type: r.zoho_type, eff: { date: d0.date, total: d0.amount, lines: [[d0.amount, '', '']] } }); }
+    if (r && (['ok', 'skipped', 'included'].includes(r.status) || (['error', 'retrying'].includes(r.status) && r.zoho_id))) { note('payment', p.id, label, r.status === 'ok' || r.zoho_id ? 'unchanged' : 'skip', r.status === 'ok' || r.zoho_id ? 'already in Zoho' : r.error || r.status); return; }   // already in Zoho (a payment is never posted twice)
     if (p.method === 'cheque' && p.cheque_status === 'pending') { note('payment', p.id, label, 'skip', 'post-dated cheque — sent once it clears'); return; }   // post-dated cheque: sent once it clears
     const d = payDoc(p, run.e), skip = why => { note('payment', p.id, label, 'skip', why); mark('payment', p.id, null, null, 'skipped', why, null); run.skipped++; };
     if (p.method === 'offset') return skip('offset against another balance — record it in Zoho directly');
@@ -253,19 +337,25 @@ module.exports = ctx => {
       const pcode = d.cash ? (p.method === 'petty' ? (p.employee_id ? '1030' : '1010') : '1020') : ctx.bankCode ? ctx.bankCode(p.bank_account_id) : '1000';
       useAcct(pcode, d.cash ? (p.method === 'petty' ? 'Petty cash' : 'Cash on hand') : 'Bank', acct && acct.account_id, mapped ? 'mapped' : acct ? `automatic (first Zoho ${d.cash && lk.cash ? 'cash' : 'bank'} account)` : 'missing');
     }
-    const ref = String(p.reference || '').slice(0, 100);
-    note('payment', p.id, label, 'create', `${d.inbound ? 'customer payment' : 'vendor payment'} applied to ${d.inv ? d.inv.number : d.bill.reference || 'bill #' + d.bill.id}`);
-    let id;
-    if (d.inbound) {
-      const vals = { customer_id: contact, payment_mode: d.mode, amount: d.amount, date: d.date, reference_number: ref, description: d.memo, ...(acct ? { account_id: acct.account_id } : {}),
-        invoices: apply > 0 ? [{ invoice_id: docRec.zoho_id, amount_applied: apply }] : [] };
-      id = (await cl.post('/customerpayments', vals)).payment.payment_id;
-    } else {
-      const vals = { vendor_id: contact, payment_mode: d.mode, amount: d.amount, date: d.date, reference_number: ref, description: d.memo, ...(acct ? { paid_through_account_id: acct.account_id } : {}),
-        bills: apply > 0 ? [{ bill_id: docRec.zoho_id, amount_applied: apply }] : [] };
-      id = (await cl.post('/vendorpayments', vals)).vendorpayment.payment_id;
+    const ref = String(p.reference || '').slice(0, 100), ztype = d.inbound ? 'customerpayment' : 'vendorpayment', path = d.inbound ? '/customerpayments' : '/vendorpayments', party = d.inbound ? 'customer_id' : 'vendor_id';
+    guardPeriod(d.date, label);
+    const vals = d.inbound
+      ? { customer_id: contact, payment_mode: d.mode, amount: d.amount, date: d.date, reference_number: ref, description: d.memo, ...(acct ? { account_id: acct.account_id } : {}), invoices: apply > 0 ? [{ invoice_id: docRec.zoho_id, amount_applied: apply }] : [] }
+      : { vendor_id: contact, payment_mode: d.mode, amount: d.amount, date: d.date, reference_number: ref, description: d.memo, ...(acct ? { paid_through_account_id: acct.account_id } : {}), bills: apply > 0 ? [{ bill_id: docRec.zoho_id, amount_applied: apply }] : [] };
+    const eff = sentEff(ztype, vals, lk);
+    let id = null;
+    if (r && r.pending_create) {                                                       // an earlier send may have reached Zoho: same contact, date and amount
+      const hits = ((await cl.get(path, { date: d.date }))[path.slice(1)] || []).filter(x => String(x[party]) === String(contact) && Math.abs(+x.amount - d.amount) < 0.005 && x.date === d.date);
+      if (hits.length > 1) throw blocked('POSSIBLE_DUPLICATE', `${hits.length} payments of ${d.amount} on ${d.date} for this contact in Zoho — check them`);
+      if (hits.length) id = hits[0].payment_id;
     }
-    mark('payment', p.id, id, d.inbound ? 'customerpayment' : 'vendorpayment', 'ok', null, payHash(d)); run.sent++;
+    note('payment', p.id, label, id ? 'link' : 'create', `${d.inbound ? 'customer payment' : 'vendor payment'} applied to ${d.inv ? d.inv.number : d.bill.reference || 'bill #' + d.bill.id}${id ? ' — found in Zoho from an earlier attempt, linked' : ''}`);
+    if (!id) {
+      pendingCreate('payment', p.id, ztype, d.date);
+      id = d.inbound ? (await cl.post(path, vals)).payment.payment_id : (await cl.post(path, vals)).vendorpayment.payment_id;
+    }
+    mark('payment', p.id, id, ztype, 'ok', null, payHash(d), { date: d.date, eff }); run.sent++;
+    return verifySent(cl, 'payment', p.id, ztype, path, d.inbound ? 'payment' : 'vendorpayment', id, eff, lk);
   }
 
   // ---------- manual journals: payroll by project, salaries paid, end-of-service provision / settlement, salary advances, retention ----------
@@ -390,6 +480,8 @@ module.exports = ctx => {
     if (j.voided) {                                                                   // invoice cancelled here → its retention journal is removed there
       if (!r0 || !r0.zoho_id || r0.status === 'cancelled') { note(j.kind, j.local_id, j.ref, 'skip', 'its invoice is void; nothing in Zoho'); return; }
       note(j.kind, j.local_id, j.ref, 'remove', 'its invoice is void here — the journal would be deleted in Zoho');
+      guardPeriod(r0.doc_date || j.date, j.ref);
+      if (r0.sent_eff) { let cur = null; try { cur = (await cl.get('/journals/' + r0.zoho_id)).journal; } catch (e) { if (!gone(e)) throw e; } if (modifiedInZoho(r0, 'journal', cur, lk)) throw blocked('ZOHO_MODIFIED', `${j.ref} was changed in Zoho after Trigon sent it — not deleted automatically`); }
       try { await cl.del('/journals/' + r0.zoho_id); } catch (e) { if (!gone(e)) throw e; }
       mark(j.kind, j.local_id, r0.zoho_id, 'journal', 'cancelled', null, null); run.updated++; return;
     }
@@ -403,15 +495,33 @@ module.exports = ctx => {
       if (!acc && !j.codes) throw new Error(`map our account ${l.acct === 'ar' ? '1100 (Accounts receivable)' : l.acct}${LEDGER[l.acct] ? ' (' + LEDGER[l.acct] + ')' : ''} to a Zoho account first`);
       lines.push({ account_id: acc, debit_or_credit: l.dc, amount: round(l.amount), description: l.desc || '', ...(l.customer ? { customer_id: await contactId(cl, l.customer, run) } : l.sundry ? { customer_id: await sundryId(cl, run) } : {}), ...projectRef(l.project_id) });
     }
-    const vals = { journal_date: j.date, reference_number: j.ref.slice(0, 100), notes: j.notes, line_items: lines }, h = hashOf(vals), r = rec(j.kind, j.local_id);
-    if (r && ['ok', 'error'].includes(r.status) && r.zoho_id) {                   // also after a failed update: the journal exists there, so it is updated, not posted twice
+    const vals = { journal_date: j.date, reference_number: j.ref.slice(0, 100), notes: j.notes, line_items: lines }, h = hashOf(vals), r = rec(j.kind, j.local_id), eff = sentEff('journal', vals, lk);
+    if (dry) dry.vals.set(j.kind + ':' + j.local_id, { type: 'journal', eff });
+    if (r && ['ok', 'error', 'retrying'].includes(r.status) && r.zoho_id) {        // also after a failed update: the journal exists there, so it is updated, not posted twice
       if (r.hash === h && r.status === 'ok') { note(j.kind, j.local_id, j.ref, 'unchanged', 'already in Zoho'); return; }
-      try { await cl.put('/journals/' + r.zoho_id, vals); note(j.kind, j.local_id, j.ref, 'update', 'changed here since it was sent'); mark(j.kind, j.local_id, r.zoho_id, 'journal', 'ok', null, h); run.updated++; return; } catch (e) { if (!gone(e)) throw e; }
+      let cur = null; if (r.sent_eff) try { cur = (await cl.get('/journals/' + r.zoho_id)).journal; } catch (e) { if (!gone(e)) throw e; }
+      if (!r.sent_eff || cur) {
+        guardPeriod(r.doc_date, j.ref); guardPeriod(j.date, j.ref);
+        if (modifiedInZoho(r, 'journal', cur, lk)) { note(j.kind, j.local_id, j.ref, 'conflict', 'changed in Zoho after Trigon sent it — not overwritten'); throw blocked('ZOHO_MODIFIED', `${j.ref} was changed in Zoho after Trigon sent it — not overwritten (review it in Zoho, then retry)`); }
+        try { await cl.put('/journals/' + r.zoho_id, vals); note(j.kind, j.local_id, j.ref, 'update', 'changed here since it was sent'); mark(j.kind, j.local_id, r.zoho_id, 'journal', 'ok', null, h, { date: j.date, eff }); run.updated++; return verifySent(cl, j.kind, j.local_id, 'journal', '/journals', 'journal', r.zoho_id, eff, lk); } catch (e) { if (!gone(e)) throw e; }
+      }
     }
-    note(j.kind, j.local_id, j.ref, 'create', '');
-    const id = (await cl.post('/journals', vals)).journal.journal_id;
-    if (cfg().post === '1') await cl.post(`/journals/${id}/status/publish`);
-    mark(j.kind, j.local_id, id, 'journal', 'ok', null, h); run.sent++;
+    guardPeriod(j.date, j.ref);
+    let id = null;
+    if (r && r.pending_create) {                                                       // an earlier create may have reached Zoho: look for it by reference and date
+      const hits = ((await cl.get('/journals', { reference_number: vals.reference_number })).journals || []).filter(x => x.reference_number === vals.reference_number && x.journal_date === j.date);
+      if (hits.length > 1) throw blocked('POSSIBLE_DUPLICATE', `${hits.length} journals ${vals.reference_number} on ${j.date} in Zoho — check them`);
+      if (hits.length) { id = hits[0].journal_id; if (hits[0].status === 'draft' && cfg().post === '1') await cl.post(`/journals/${id}/status/publish`); }   // our own lost create: finish it as a fresh one
+    }
+    note(j.kind, j.local_id, j.ref, id ? 'link' : 'create', id ? 'found in Zoho from an earlier attempt — linked, not created again' : '');
+    if (!id) {
+      pendingCreate(j.kind, j.local_id, 'journal', j.date);
+      id = (await cl.post('/journals', vals)).journal.journal_id;
+      mark(j.kind, j.local_id, id, 'journal', 'ok', null, h, { date: j.date, eff });     // the Zoho id is kept at once
+      if (cfg().post === '1') await cl.post(`/journals/${id}/status/publish`);
+    }
+    mark(j.kind, j.local_id, id, 'journal', 'ok', null, h, { date: j.date, eff }); run.sent++;
+    return verifySent(cl, j.kind, j.local_id, 'journal', '/journals', 'journal', id, eff, lk);
   }
 
   // dry run: real reads when connected (offline stand-ins otherwise), every write is recorded instead of sent
@@ -450,7 +560,8 @@ module.exports = ctx => {
     ['6100', 'Depreciation', ['expense', 'other_expense'], 'new types'], ['6150', 'Gain / loss on disposal of assets', ['other_expense', 'other_income', 'expense'], 'new types'],
   ];
   const PARTNER_REQ = [['3000', 'Capital', 'Partner Capital', ['equity']], ['2500', 'Loan', 'Partner Loans', ['long_term_liability', 'other_liability', 'other_current_liability']], ['3110', 'Current', 'Partner Current Accounts', ['equity']]];
-  const AUTO = { 1000: 'bank', 1020: 'cash', 1100: 'accounts_receivable', 2000: 'accounts_payable' };   // Zoho's own account of that type, if there is exactly one
+  const AUTO = { 1000: 'bank', 1020: 'cash', 1100: 'accounts_receivable', 2000: 'accounts_payable' };
+  const expectTypes = key => { const [, code, p] = String(key).split(':'); if (p) { const r = PARTNER_REQ.find(x => x[0] === code); return r ? r[3] : null; } const r = REQUIRED.find(x => x[0] === code); return r && Array.isArray(r[2]) ? r[2] : null; };   // Zoho's own account of that type, if there is exactly one
   function requiredAccounts(coa, lk, partners) {
     const byId = new Map((coa || []).map(a => [String(a.account_id), a])), mapped = key => mapOf('account', key);
     const view = a => a ? { id: String(a.account_id), name: a.account_name || '', type: a.account_type || '', code: a.account_code || '', parent: a.parent_account_name || '' } : null;
@@ -534,16 +645,32 @@ module.exports = ctx => {
   }
 
   let running = null;
-  async function sync({ trigger = 'manual', user = '', from, to, dryRun = false } = {}) {
+  async function sync({ trigger = 'manual', user = '', from, to, dryRun = false, keepVals = false } = {}) {
     if (running) throw new Error('A sync is already running');
     const c = cfg(); if (!dryRun && c.enabled !== '1') throw new Error('The Zoho link is switched off');
+    if (!dryRun && c.gate_required === '1' && c.gate !== 'READY') throw new Error('GATE: nothing is sent to Zoho until the read-only preflight reaches READY (0 missing mappings, 0 wrong account types, 0 blocking conflicts) — run it on the Zoho page');
     const run = { sent: 0, updated: 0, failed: 0, skipped: 0, errors: [] }, started = now();
-    if (dryRun) dry = { recs: new Map(), ops: [], items: [], accts: new Map() };
+    if (dryRun) dry = { recs: new Map(), ops: [], items: [], accts: new Map(), vals: new Map() };
     let offline = false;
     running = (async () => {
       const cl = dryRun ? dryClient(c) : client(c), lk = await lookups(cl); offline = !!cl.offline; run.coa = lk.coa; run.cl = cl; run.lk = lk;
       const { e, invoices, bills, payments } = data(from || c.start || null, to || today()); run.e = e;
-      const each = async (kind, id, label, fn) => { try { await fn(); } catch (err) { run.failed++; run.errors.push(`${label}: ${err.message}`); note(kind, id, label, 'error', err.message); mark(kind, id, null, null, 'error', err.message.slice(0, 500), null); } };
+      // one record at a time. Continuous runs respect each record's back-off and leave blocked records alone (they need a person).
+      // A failure: blocked (closed period, conflict, Zoho-side edit…) · retrying (Zoho or the network failed) · error (the record itself)
+      const nowIso = new Date().toISOString();
+      const each = async (kind, id, label, fn) => {
+        const r0 = !dryRun && trigger === 'continuous' ? rec(kind, id) : null;
+        if (r0 && (r0.status === 'blocked' || (WAIT.includes(r0.status) && r0.next_at && r0.next_at > nowIso))) { run.waiting = (run.waiting || 0) + 1; return; }
+        try { await fn(); }
+        catch (err) {
+          const transient = !err.blocked && (!!err.diag || (err.upstream && (!(err.status > 0) || err.status >= 500 || err.status === 429)));
+          const status = err.blocked ? 'blocked' : transient ? 'retrying' : 'error';
+          run.failed++; run.errors.push(`${label}: ${err.message}`); note(kind, id, label, 'error', err.message);
+          mark(kind, id, null, null, status, err.message.slice(0, 500), null);
+          if (!dryRun) { const n = ((rec(kind, id) || {}).attempts || 0) + 1, wait = Math.min(60, 2 ** (n - 1));      // 1, 2, 4, 8, 16, 32, 60, 60 … minutes
+            db.prepare('UPDATE zoho_sync SET attempts=?, next_at=? WHERE kind=? AND local_id=?').run(n, status === 'blocked' ? null : new Date(Date.now() + wait * 60000).toISOString(), kind, id); }
+        }
+      };
       if (dryRun) {                                                                    // accounts every invoice / bill uses in Zoho without a mapping of ours
         useAcct('4000', 'Contract revenue', null, "Zoho default (the line's sales account)"); useAcct('1100', 'Accounts receivable', (lk.ar || {}).account_id, 'automatic (Zoho Accounts Receivable)');
         useAcct('2100', 'VAT output', lk.std && lk.std.tax_id, lk.std ? `Zoho tax ${lk.std.tax_name}` : 'missing (no 5% tax in Zoho)'); useAcct('1200', 'VAT input', lk.std && lk.std.tax_id, lk.std ? `Zoho tax ${lk.std.tax_name}` : 'missing (no 5% tax in Zoho)');
@@ -603,7 +730,11 @@ module.exports = ctx => {
         const p = e.payments.find(x => x.id === r.local_id), live = p && p.cheque_status !== 'bounced';
         if (live && (!r.hash || r.hash === payHash(payDoc(p, e)))) return;
         note('payment', r.local_id, `payment #${r.local_id}`, 'remove', !p ? 'deleted here — would be removed from Zoho' : !live ? 'cheque bounced — would be removed from Zoho' : 'changed here — would be removed from Zoho and sent again');
-        try { await cl.del(`/${r.zoho_type === 'vendorpayment' ? 'vendorpayments' : 'customerpayments'}/${r.zoho_id}`); } catch (err) { if (!gone(err)) throw err; }
+        const zpath = `/${r.zoho_type === 'vendorpayment' ? 'vendorpayments' : 'customerpayments'}/${r.zoho_id}`;
+        let cur = null; if (!r.doc_date || r.sent_eff) try { cur = (await cl.get(zpath))[r.zoho_type === 'vendorpayment' ? 'vendorpayment' : 'payment']; } catch (err) { if (!gone(err)) throw err; }
+        guardPeriod(r.doc_date || (cur && cur.date), `payment #${r.local_id}`); if (live) guardPeriod(payDoc(p, e).date, `payment #${r.local_id}`);
+        if (modifiedInZoho(r, r.zoho_type, cur, lk)) throw blocked('ZOHO_MODIFIED', `payment #${r.local_id} was changed in Zoho after Trigon sent it — not removed automatically`);
+        try { await cl.del(zpath); } catch (err) { if (!gone(err)) throw err; }
         if (dryRun) { if (live) dry.recs.set('payment:' + r.local_id, null); else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', null, null); run.updated++; return; }
         if (live) db.prepare("DELETE FROM zoho_sync WHERE kind='payment' AND local_id=?").run(r.local_id);
         else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', p ? 'cheque bounced — removed from Zoho' : 'deleted here — removed from Zoho', null);
@@ -617,6 +748,9 @@ module.exports = ctx => {
         if (alive.has(r.kind + ':' + r.local_id) || (dry && dry.recs.has(r.kind + ':' + r.local_id) && !dry.recs.get(r.kind + ':' + r.local_id))) continue;
         await each(r.kind, r.local_id, `${r.kind} #${r.local_id}`, async () => {
           note(r.kind, r.local_id, `${r.kind} #${r.local_id}`, 'remove', 'deleted here — would be removed from Zoho');
+          let cur = null; if (!r.doc_date || r.sent_eff) try { cur = (await cl.get('/journals/' + r.zoho_id)).journal; } catch (err) { if (!gone(err)) throw err; }
+          guardPeriod(r.doc_date || (cur && cur.journal_date), `${r.kind} #${r.local_id}`);
+          if (modifiedInZoho(r, 'journal', cur, lk)) throw blocked('ZOHO_MODIFIED', `${r.kind} #${r.local_id} was changed in Zoho after Trigon sent it — not deleted automatically`);
           try { await cl.del('/journals/' + r.zoho_id); } catch (err) { if (!gone(err)) throw err; }
           mark(r.kind, r.local_id, r.zoho_id, 'journal', 'cancelled', 'deleted here — removed from Zoho', null); run.updated++;
         });
@@ -626,14 +760,18 @@ module.exports = ctx => {
     try { await running; } catch (err) { message = err.message; run.failed++; } finally { running = null; }
     if (!message && run.errors.length) message = run.errors.slice(0, 5).join(' | ');
     if (dryRun) {
-      const { ops, items, accts } = dry; dry = null;
-      return { dry_run: true, offline, would_send: run.sent, would_update: run.updated, failed: run.failed, skipped: run.skipped, errors: message && !run.errors.length ? [message] : run.errors,
+      const { ops, items, accts, vals } = dry; dry = null;
+      return { dry_run: true, offline, ...(keepVals ? { vals, items_all: items } : {}), would_send: run.sent, would_update: run.updated, failed: run.failed, skipped: run.skipped, errors: message && !run.errors.length ? [message] : run.errors,
         ops: ops.map(({ body, ...o }) => o), payloads: ops.slice(0, 200), preflight: await preflight(c, offline, items, accts, run.coa, from || c.start || null, to || today(), run.lk, run.errors) };
     }
     db.prepare('INSERT INTO zoho_runs(started,finished,trigger,user,sent,updated,failed,skipped,message) VALUES(?,?,?,?,?,?,?,?,?)').run(started, now(), trigger, user, run.sent, run.updated, run.failed, run.skipped, message);
     setCfg('last_run', today());
-    return { sent: run.sent, updated: run.updated, failed: run.failed, skipped: run.skipped, message };
+    return { sent: run.sent, updated: run.updated, failed: run.failed, skipped: run.skipped, waiting: run.waiting || 0, message, errors: run.errors.slice(0, 50) };
   }
+
+  // for the account provisioning, the continuous sync and the reconciliation (modules/zohoacct.js)
+  ctx.zohoX = { cfg, setCfg, client, lookups, mapOf, sync, isRunning: () => !!running, effect, compareEff, hashOf, has, partnerName, REQUIRED, PARTNER_REQ, AUTO, LEDGER, LEDGER2, CAT, journals, data,
+    lockDate, rec, expectTypes, bankAccounts: () => (ctx.bankAccounts ? ctx.bankAccounts() : []) };
 
   // nightly run on the server edition (the browser-only edition cannot call Zoho: CORS + no background process)
   if (typeof window === 'undefined' && !process.env.ZOHO_NO_SCHEDULER) {
@@ -799,7 +937,8 @@ module.exports = ctx => {
           return send(res, 200, { local, saved, zoho, error }), true;
         }
       }
-      if (m === 'POST' && b === 'retry') { db.prepare("DELETE FROM zoho_sync WHERE status IN ('error','skipped') AND zoho_id IS NULL").run(); return send(res, 200, { ok: true }), true; }
+      // (a create whose answer was lost keeps its row: it is looked up in Zoho before it is sent again)
+      if (m === 'POST' && b === 'retry') { db.prepare("DELETE FROM zoho_sync WHERE status IN ('error','skipped') AND zoho_id IS NULL AND COALESCE(pending_create,0)=0").run(); return send(res, 200, { ok: true }), true; }
       if (m === 'GET' && b === 'log') return send(res, 200, db.prepare('SELECT * FROM zoho_sync ORDER BY synced_at DESC, id DESC LIMIT 300').all()), true;
       if (m === 'GET' && b === 'report') { const d = q.get('date') || today(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return send(res, 400, { error: 'date must be YYYY-MM-DD' }), true; return send(res, 200, report(d)), true; }
       if (m === 'GET' && b === 'export') {

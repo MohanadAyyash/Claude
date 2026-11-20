@@ -212,6 +212,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 
   // ---------- 5. the preflight ----------
   let r; try { r = await ctx.zohoPreflight(from || undefined, to || undefined); } catch (e) { die('The preflight could not run: ' + e.message); }
+  // the account-provisioning preview (read only, under the same guard): what "Provision approved accounts" would create / adopt / stop
+  let accountsPlan = null, accountsError = ''; if (ctx.zohoAcct) try { accountsPlan = await ctx.zohoAcct.plan(); } catch (e) { accountsError = e.message; }
   const pf = r.preflight, after = snap();
   const books = requests.filter(x => x.decision === 'read' || (x.decision === 'BLOCKED' && /zohoapis|localhost|127\.0\.0\.1/.test(x.host)));
   const proof = {
@@ -229,7 +231,10 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 
   // ---------- 6. the report ----------
   fs.mkdirSync(outDir, { recursive: true });
-  const report = { generated: new Date().toISOString(), data_copy: dataDir, organization: org, sign_in: signIn, ...pf, verdict, blockers, proof, errors: r.errors, ops: r.ops };
+  proof.books_reads = requests.filter(x => x.decision === 'read').length; proof.requests = requests.length; proof.blocked_attempts = requests.filter(x => x.decision === 'BLOCKED');   // (the preview's reads included)
+  proof.modifying_calls_sent = requests.filter(x => x.decision !== 'BLOCKED' && x.method !== 'GET' && x.decision !== 'access token').length; proof.local_copy_unchanged = snap() === before;
+  if (proof.modifying_calls_sent && !blockers.some(b => /modifying call/.test(b))) blockers.unshift(`${proof.modifying_calls_sent} modifying call(s) were sent`), verdict = 'BLOCKED';
+  const report = { generated: new Date().toISOString(), data_copy: dataDir, organization: org, sign_in: signIn, ...pf, verdict, blockers, proof, errors: r.errors, ops: r.ops, account_provisioning_preview: accountsPlan || { error: accountsError } };
   fs.writeFileSync(path.join(outDir, 'preflight-report.json'), JSON.stringify(report, null, 2));
   writeLog();
   const zcell = z => z ? `${esc(z.name)}<br><small>${esc(z.id)} · ${esc(z.type)}${z.code ? ' · code ' + esc(z.code) : ''}${z.parent ? ' · under ' + esc(z.parent) : ''}</small>` : '—';
@@ -250,6 +255,10 @@ ${pf.to_configure.length ? `<h2>To configure in Zoho before the new sync (#24) c
 ${tbl(['Trigon', 'Account', 'Needed by', 'Expected Zoho type', 'Status', 'Zoho account', 'Note'], pf.required_accounts.map(row))}
 <h2>Partner accounts (proposed hierarchy — not created)</h2>${pf.partner_accounts.length ? pf.partner_accounts.map(p => `<h3>${esc(p.partner)}</h3>${tbl(['Trigon', 'Proposed Zoho account', 'Parent', 'Expected type', 'Status', 'Zoho account', 'Note'], p.accounts.map(a => `<tr class="${a.status}"><td>${esc(a.code)}</td><td>${esc(a.proposed)}</td><td>${esc(a.parent)}</td><td>${esc(a.expected)}</td><td><b>${esc(a.status.replace('_', ' '))}</b></td><td>${zcell(a.zoho)}</td><td>${esc(a.note || '')}</td></tr>`))}`).join('')
     + `<pre>${['Partner Capital', 'Partner Loans', 'Partner Current Accounts'].map((parent, i) => parent + '\n' + pf.partner_accounts.map(p => `└── ${p.partner} ${['Capital', 'Loan', 'Current'][i]}`).join('\n')).map(esc).join('\n\n')}</pre>` : '<p>No partners recorded in Trigon.</p>'}
+<h2>Account provisioning preview (read only — nothing was created)</h2>${accountsPlan ? `<p>State: <b>${esc(accountsPlan.state)}</b> · ${esc(Object.entries(accountsPlan.counts).map(([k, v]) => `${k}: ${v}`).join(' · '))}</p>
+${tbl(['Trigon', 'Name in Zoho', 'Type', 'Action', 'Zoho account', 'Note / recommended resolution'], accountsPlan.rows.map(a => `<tr class="${a.action === 'conflict' || a.action === 'blocked' ? 'type_mismatch' : a.action === 'create' || a.action === 'missing' ? 'missing' : 'mapped'}"><td>${esc(a.code)}</td><td>${esc(a.name)}</td><td>${esc(a.type || (a.types || []).join(' / '))}</td><td><b>${esc(a.action)}</b>${a.reason ? '<br><small>' + esc(a.reason) + '</small>' : ''}</td><td>${zcell(a.zoho && { ...a.zoho, parent: '' })}</td><td>${esc(a.resolution || a.note || '')}</td></tr>`))}
+<h3>VAT (never created)</h3><ul>${accountsPlan.vat.map(v => `<li>${esc(v.code)} ${esc(v.label)}: <b>${esc(v.state)}</b>${v.zoho ? ' → ' + esc(v.zoho.name) + ' (' + esc(v.zoho.type) + ')' : ''}${v.reason ? ' — ' + esc(v.reason) : ''}</li>`).join('')}</ul>
+<h3>Exact changes "Provision approved accounts" would make (${accountsPlan.mutations.length})</h3><pre>${esc(accountsPlan.mutations.map(m => `${m.method} ${m.path} ${JSON.stringify(m.body)}`).join('\n') || 'none')}</pre>` : `<p>Not available: ${esc(accountsError)}</p>`}
 <h2>Saved Trigon → Zoho mappings</h2>${tbl(['Kind', 'Trigon', 'Zoho'], pf.mappings.map(m => `<tr><td>${esc(m.kind)}</td><td>${esc(m.local_key)}</td><td>${esc(m.label || m.zoho_id)} <small>${esc(m.zoho_id)}</small></td></tr>`))}
 <h2>Conflicts and possible duplicates</h2>${pf.conflicts.length ? tbl(['Type', 'Document', 'Action', 'Why'], pf.conflicts.map(i => `<tr><td>${esc(i.kind)}</td><td>${esc(i.ref)}</td><td>${esc(i.action)}</td><td>${esc(i.why)}</td></tr>`)) : '<p>None.</p>'}
 <h2>Plan per type</h2>${tbl(['Type', 'Actions'], Object.entries(pf.plan).map(([k, a]) => `<tr><td>${esc(k)}</td><td>${esc(Object.entries(a).map(([x, n]) => `${x}: ${n}`).join(' · '))}</td></tr>`))}
@@ -260,6 +269,8 @@ ${(r.errors || []).length ? `<h2>Errors while reading</h2><ul>${r.errors.map(e =
   console.log(`\nProof: ${proof.books_reads} Zoho Books read(s) (GET), ${proof.access_token_requests} access-token request(s), ${proof.modifying_calls_sent} modifying call(s) sent, ${proof.blocked_attempts.length} refused by the guard; Trigon copy unchanged: ${proof.local_copy_unchanged ? 'yes' : 'NO'}`);
   console.log(`Would create ${pf.summary.would_create} · update ${pf.summary.would_update} · delete ${pf.summary.would_delete} · already synced ${pf.summary.unchanged_already_synced} · possible duplicates ${pf.summary.possible_duplicates} · conflicts ${pf.summary.conflicts}`);
   console.log(`Required accounts: ${pf.required_accounts.filter(a => ['mapped', 'automatic'].includes(a.status)).length} ok, ${pf.required_accounts.filter(a => ['missing', 'ambiguous'].includes(a.status)).length} to map, ${pf.required_accounts.filter(a => ['type_mismatch', 'not_found'].includes(a.status)).length} wrong`);
+  if (accountsPlan) console.log(`Account provisioning preview: ${accountsPlan.state} — would create ${accountsPlan.counts.create}, adopt ${accountsPlan.counts.adopt}, conflicts ${accountsPlan.counts.conflict}, to map by hand ${accountsPlan.counts.missing}, VAT configuration required ${accountsPlan.counts.vat_required} (nothing created)`);
+  else if (accountsError) console.log(`Account provisioning preview: not available — ${accountsError}`);
   console.log(`\nVERDICT: ${verdict}`);
   for (const b of blockers) console.log('  ✖ ' + b);
   for (const t of pf.to_configure) console.log('  • ' + t);
