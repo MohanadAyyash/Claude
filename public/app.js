@@ -128,6 +128,7 @@ function shell() {
   const links = NAVT.map(s => s.key === null ? s.items.map(navLink).join('')
     : `<div class="g" data-g="${esc(s.key)}"><button type="button" class="gh" aria-expanded="false"><span class="bar"></span><span class="t">${tr(s.ar, s.en)}</span><span class="cnt">${s.items.length}</span></button><div class="items">${s.items.map(navLink).join('')}</div></div>`).join('');
   $('#app').innerHTML = `<div class="topbar"><button type="button" id="menu" aria-label="menu">☰</button>${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="">` : `<b>${esc(S.company_name || '')}</b>`}</div><div class="scrim" id="scrim"></div><div class="shell"><nav class="side"><div class="brand">${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="${esc(S.company_name || '')}">` : esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
+    <button type="button" class="gotob" id="goto">🔍 <span>${tr('انتقل إلى…', 'Go to…')}</span><kbd>Ctrl K</kbd></button>
     ${links}
     <a class="guide" href="${guideUrl()}" target="_blank" rel="noopener">📘 ${tr('دليل الاستخدام', 'User guide')}</a><div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
     <main class="main" id="main"></main></div>`;
@@ -135,6 +136,7 @@ function shell() {
   $('#menu').onclick = () => drawer(!$('.side').classList.contains('open')); $('#scrim').onclick = () => drawer(false);
   document.querySelectorAll('.side a[data-r]').forEach(a => a.onclick = () => { drawer(false); go(a.dataset.r); });
   document.querySelectorAll('.side .g .gh').forEach(b => b.onclick = () => { const g = b.parentElement; navOpen(g.classList.contains('open') ? null : g.dataset.g); });
+  $('#goto').onclick = () => openGoto();
   $('#lang').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('#out').onclick = async () => { await api('POST', 'logout'); boot(); };
   let saved = null; try { saved = localStorage.navOpen; } catch { /* private window */ }
@@ -146,6 +148,38 @@ function shell() {
 const go = r => { location.hash = r; };
 // moving between pages redraws only the page, never the menu (it used to jump back to the top on every click)
 window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) { markRoute(); render(); if (window.onShell) onShell(); } };
+// "Go to" (Ctrl+K / ⌘K): type part of a page name, Arabic or English, to open it. Only the pages of this user's menu are searched.
+function openGoto() {
+  if ($('.goto')) return $('#gotoq').focus();
+  const box = document.createElement('div'); box.className = 'goto'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', tr('انتقل إلى', 'Go to'));
+  box.innerHTML = `<div class="gotobox"><input id="gotoq" autocomplete="off" placeholder="${tr('اكتب اسم الصفحة…', 'Type a page name…')}"><div id="gotores"></div></div>`;
+  document.body.appendChild(box);
+  const q = $('#gotoq'), res = $('#gotores'); let hits = [], sel = 0;
+  const close = () => { box.remove(); const b = $('#goto'); if (b) b.focus(); };
+  const pick = h => { close(); go(h.row[0]); };
+  const draw = () => {
+    hits = navSearch(NAVT, q.value); sel = 0;
+    res.innerHTML = hits.length ? hits.map((h, i) => `<button type="button" data-r="${h.row[0]}" class="${i === sel ? 'sel' : ''}">${esc(tr(h.row[1], h.row[2]))}${h.section.key === null ? '' : `<span class="muted">${esc(tr(h.section.ar, h.section.en))}</span>`}</button>`).join('')
+      : `<div class="muted gotoempty">${tr('لا توجد صفحة بهذا الاسم', 'No page with that name')}</div>`;
+  };
+  q.oninput = draw;
+  q.onkeydown = e => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (hits[sel]) pick(hits[sel]); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); sel = Math.max(0, Math.min(hits.length - 1, sel + (e.key === 'ArrowDown' ? 1 : -1)));
+      res.querySelectorAll('button').forEach((b, i) => b.classList.toggle('sel', i === sel));
+    }
+  };
+  res.onclick = e => { const b = e.target.closest('button[data-r]'); if (b) pick(hits[[...res.children].indexOf(b)]); };
+  box.onclick = e => { if (e.target === box) close(); };
+  draw(); q.focus();
+}
+document.addEventListener('keydown', e => {                               // registered once; e.code so it also works on an Arabic keyboard
+  if (!(e.ctrlKey || e.metaKey) || e.code !== 'KeyK') return;
+  if (!$('.side') || $('#modal-root .overlay')) return;                    // not signed in, or a form is open: leave the key alone
+  e.preventDefault(); openGoto();
+});
 // user guide (public/guide, built from docs/USER-GUIDE-*.md by tools/build-guide.js): the section that explains each page
 const GUIDE = { hired: 43, cheques: 35, cashflow: 36, guarantees: 37, spend: 38, equipment: 41, schedule: 42, dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
   employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31, partners: 45, myaccount: 46, claims: 46, staffaccounts: 46 };

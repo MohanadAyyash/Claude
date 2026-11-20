@@ -95,6 +95,44 @@ server.listen(0, async () => {
     await waitFor(`document.querySelector('.side a.on') && document.querySelector('.side a.on').dataset.r === 'payroll'`);
     assert.deepEqual(await openGroups(), ['Human resources']);
 
+    // 4. Go to (Ctrl+K): Arabic search, then Enter opens the page and its group
+    const ctrlK = () => ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true })); true`);
+    const typeQ = q => ev(`(() => { const i = document.querySelector('#gotoq'); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    const results = () => ev(`[...document.querySelectorAll('#gotores button')].map(b => b.dataset.r)`);
+    const keyOn = (sel, key) => ev(`document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true })); true`);
+    await open('admin', 'secret12');
+    await ctrlK(); await waitFor(`!!document.querySelector('#gotoq')`);
+    await typeQ('رواتب');
+    assert.equal((await results())[0], 'payroll');
+    await keyOn('#gotoq', 'Enter');
+    await waitFor(`location.hash === '#payroll' && !document.querySelector('.goto')`);
+    assert.deepEqual(await openGroups(), ['Human resources']);
+
+    // 5. English names work while the screen is in Arabic
+    await click('#goto'); await waitFor(`!!document.querySelector('#gotoq')`);
+    await typeQ('payroll');
+    assert.equal((await results())[0], 'payroll');
+    await keyOn('#gotoq', 'Escape');
+
+    // 6. Esc closes it and gives the focus back; Ctrl+K does nothing while a form is open
+    await ctrlK(); await waitFor(`!!document.querySelector('#gotoq')`);
+    await keyOn('#gotoq', 'Escape');
+    await waitFor(`!document.querySelector('.goto')`);
+    assert.equal(await ev(`document.activeElement && document.activeElement.id`), 'goto');
+    await ev(`document.querySelector('#modal-root').insertAdjacentHTML('beforeend', '<div class="overlay" id="fakemodal"></div>'); true`);
+    await ctrlK(); await sleep(300);
+    assert.equal(await ev(`!!document.querySelector('.goto')`), false, 'no finder over an open form');
+    await ev(`document.querySelector('#fakemodal').remove(); true`);
+
+    // 7. a storekeeper only finds the pages a storekeeper may open
+    await open('storekeeper1', 'pass1234');
+    await ctrlK(); await waitFor(`!!document.querySelector('#gotoq')`);
+    await typeQ('دفتر');
+    assert.deepEqual(await results(), [], 'no general ledger for a storekeeper');
+    await typeQ('');
+    const menu = await ev(`[...document.querySelectorAll('.side a[data-r]')].map(a => a.dataset.r)`), found = await results();
+    assert.ok(found.length > 0 && found.every(r => menu.includes(r)), 'every result is a page in this user\'s menu');
+
     console.log('test-ui-shell: all passed');
   } catch (e) { console.error(e); process.exitCode = 1; }
   finally { try { ws && ws.close(); } catch {} if (proc) proc.kill('SIGKILL'); server.close(); setTimeout(() => process.exit(process.exitCode || 0), 200); }

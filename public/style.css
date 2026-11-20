@@ -103,3 +103,12 @@ body[data-role=viewer] #prt{display:inline-block}
   .login{margin-top:calc(6vh + env(safe-area-inset-top))}
 }
 .side .g:not(.open) .items{display:none}
+.side .gotob{display:flex;align-items:center;gap:8px;width:calc(100% - 24px);margin:0 12px 8px;padding:7px 10px;border:1px solid rgba(255,255,255,.25);border-radius:4px;background:none;color:inherit;cursor:pointer;text-align:start}
+.side .gotob span{flex:1}.side .gotob kbd{font-family:"IBM Plex Mono",monospace;font-size:11px;opacity:.7;direction:ltr}
+.goto{position:fixed;inset:0;z-index:40;background:rgba(18,26,37,.35);display:flex;justify-content:center;align-items:flex-start;padding:calc(12vh + env(safe-area-inset-top)) 12px 12px}
+.gotobox{width:100%;max-width:480px;background:var(--card);border:1px solid var(--line);border-radius:4px;box-shadow:0 20px 40px -20px rgba(0,0,0,.5)}
+.gotobox input{border:0;border-bottom:1.5px solid var(--brand);border-radius:0;padding:14px 16px;font-size:15px;outline:none}
+#gotores{max-height:50vh;overflow:auto;padding:6px}
+#gotores button{display:flex;justify-content:space-between;gap:12px;width:100%;background:none;border:0;padding:9px 10px;border-radius:3px;cursor:pointer;text-align:start}
+#gotores button:hover,#gotores button.sel{background:#ECEAE4}
+.gotoempty{padding:10px}
