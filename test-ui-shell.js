@@ -201,6 +201,7 @@ server.listen(0, async () => {
     assert.equal(await ev(`document.querySelector('#main .crumb') && document.querySelector('#main .crumb').textContent.trim()`), 'المشاريع والمبيعات');
     assert.match(await cs('#main td.n', 'fontFamily'), /IBM Plex Mono/);
     assert.equal(await cs('#main > .bar', 'borderBottomStyle'), 'solid', 'letterhead rule under the title, also with the section name');
+    assert.equal(await cs('#main > .bar h1', 'marginBottom'), '0px', 'the rule sits right under the title');
     assert.equal(await cs('#main .tag', 'backgroundColor'), 'rgba(0, 0, 0, 0)');
     await ev(`location.hash = 'dashboard'; true`);
     await waitFor(`!!document.querySelector('#main .kpi')`);
@@ -214,6 +215,32 @@ server.listen(0, async () => {
     assert.deepEqual(bars.map(b => b.v), [overdueSum, Math.round((dash.receivable - overdueSum) * 100) / 100, dash.receivable]);
     assert.equal(bars[2].w, 100);
     assert.ok(Math.abs(bars[0].w - overdueSum / dash.receivable * 100) < 0.1 && Math.abs(bars[1].w - (dash.receivable - overdueSum) / dash.receivable * 100) < 0.1, 'bars to scale');
+
+    // 15. nothing of the old look: line icons instead of emoji, Steel Blue figures, document digits for references, identity on forms, alerts, notices, login
+    await open('admin', 'secret12', 'ar', 'dashboard');
+    await waitFor(`!!document.querySelector('#main .kpi') && !!document.querySelector('#hlp')`);
+    const shellText = await ev(`[document.querySelector('.side'), document.querySelector('.topbar'), document.querySelector('#main > .bar')].map(e => e.textContent).join(' ')`);
+    assert.doesNotMatch(shellText, /[\u{1F4D8}\u{1F50D}\u{1F514}\u{1F5A8}❓☰⚠⛔]/u, 'no emoji icons in the menu, top bar or page header');
+    assert.ok(await ev(`!!document.querySelector('#goto svg') && !!document.querySelector('.side a.guide svg') && !!document.querySelector('#hlp svg') && !!document.querySelector('#prt svg')`), 'line icons');
+    const steel = 'rgb(31, 58, 95)';
+    assert.deepEqual([...new Set(await ev(`[...document.querySelectorAll('#main .kpi .v')].filter(v => !/^-/.test(v.textContent.trim())).map(v => getComputedStyle(v).color)`))], [steel], 'figures in Steel Blue (red is kept only for a negative figure)');
+    assert.equal(await cs('#main .b.in', 'backgroundColor'), steel, 'cash in drawn in Steel Blue');
+    assert.equal(await cs('#hlp', 'textDecorationLine'), 'none');
+    assert.ok(await ev(`!!document.querySelector('#main .alert') && !/[⚠⛔]/.test(document.querySelector('#main .alert').textContent)`), 'compliance alerts as marks, not emoji');
+    await ev(`location.hash = 'invoices'; true`);
+    await waitFor(`!!document.querySelector('#main tbody td.ref')`);
+    assert.match(await ev(`document.querySelector('#main tbody td.ref').textContent`), /^INV-/);
+    assert.match(await cs('#main tbody td.ref', 'fontFamily'), /IBM Plex Mono/);
+    await click('#add'); await waitFor(`!!document.querySelector('#modal-root .modal h2')`);
+    assert.equal(await cs('#modal-root .modal h2', 'borderBottomColor'), steel, 'forms carry the letterhead rule');
+    assert.equal(await cs('#modal-root .modal', 'backgroundColor'), 'rgb(251, 250, 248)');
+    await ev(`document.querySelector('#modal-root').innerHTML = ''; true`);
+    await ev(`toast('x'); true`);
+    assert.equal(await cs('.toast', 'backgroundColor'), steel);
+    await ev(`fetch('/api/logout', { method: 'POST' }).then(() => boot()).then(() => true)`);
+    await waitFor(`!!document.querySelector('.login')`);
+    assert.equal(await cs('.login', 'borderTopColor'), steel, 'sign-in card with the letterhead rule');
+    await waitFor(`(() => { const m = document.querySelector('.login .lmark'); return !!m && !m.hidden && m.getBoundingClientRect().height > 0 && !document.querySelector('.login img.logo'); })()`);   // no logo installed: the Trigon mark instead
 
     console.log('test-ui-shell: all passed');
   } catch (e) { console.error(e); process.exitCode = 1; }

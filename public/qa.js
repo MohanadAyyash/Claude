@@ -2,7 +2,7 @@
 (function () {
   var box = document.getElementById('qa'); if (!box) return;
   var tok = box.getAttribute('data-token'), cv = document.getElementById('qa-sig'), cx = cv.getContext('2d'), drawn = false, down = false;
-  cx.lineWidth = 2.2; cx.lineCap = 'round'; cx.strokeStyle = '#12283a';
+  cx.lineWidth = 2.2; cx.lineCap = 'round'; cx.strokeStyle = '#1F3A5F';
   function pos(e) { var r = cv.getBoundingClientRect(), t = e.touches ? e.touches[0] : e; return [(t.clientX - r.left) * cv.width / r.width, (t.clientY - r.top) * cv.height / r.height]; }
   function start(e) { e.preventDefault(); down = true; var p = pos(e); cx.beginPath(); cx.moveTo(p[0], p[1]); }
   function move(e) { if (!down) return; e.preventDefault(); var p = pos(e); cx.lineTo(p[0], p[1]); cx.stroke(); drawn = true; }

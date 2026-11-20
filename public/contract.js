@@ -14,7 +14,7 @@ projectDetail = async id => {
   card.innerHTML = `<h2>${tr('الدفعة المقدمة والمحتجزات', 'Advance payment & retention')}</h2><div class="f2">
     <div><h3>${tr('الدفعة المقدمة', 'Advance payment')} ${A.pct ? `(${A.pct}% — ${tr('استرداد', 'recovered at')} ${A.recovery_pct}%)` : ''}</h3>
       ${A.invoiced ? `<table>${row(tr('فاتورة المقدمة', 'Advance invoiced'), money(A.invoiced))}${row(tr('المسترد من المستخلصات', 'Recovered from progress invoices'), money(A.recovered))}${row(tr('المتبقي للاسترداد', 'Still to recover'), money(A.remaining), A.remaining > 0 ? 'warn' : 'pos')}</table>
-        <div style="background:#e6e2d8;border-radius:6px;height:8px;margin:8px 0"><div style="background:#2e7d4f;height:8px;border-radius:6px;width:${pct}%"></div></div>
+        <div style="background:#D6D2C8;height:6px;margin:8px 0"><div style="background:#1F3A5F;height:6px;width:${pct}%"></div></div>
         ${A.invoices.map(i => `<a href="#" onclick="openInvoice(${i.id});return false">${esc(i.number)}</a> ${tag(i.status)}`).join(' ')}`
       : A.pct ? (fin ? `<p class="muted">${tr('لم تُصدر فاتورة الدفعة المقدمة بعد. تُحسب عليها الضريبة، وتُسترد تلقائياً من كل فاتورة إنجاز.', 'No advance invoice yet. VAT applies to it, and it is recovered automatically from each progress invoice.')}</p><button class="btn sm" id="advinv">${tr('إصدار فاتورة الدفعة المقدمة', 'Issue the advance payment invoice')}</button>` : '')
       : `<p class="muted">${tr('لا توجد دفعة مقدمة في هذا العقد. حدّدها من «تعديل» المشروع.', 'No advance payment on this contract. Set it under Edit project.')}</p>`}</div>

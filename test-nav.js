@@ -42,4 +42,11 @@ assert.equal(navSearch(tree, '', 3).length, 3);
 assert.equal(navSearch(tree, 'payroll')[0].section.key, 'Human resources');
 assert.equal(navSearch(navTree(NAV, new Set(['dashboard', 'leave'])), 'payroll').length, 0);
 
+// the Trigon look has no emoji icons: every page script uses line icons (ico) and status marks (MK) instead
+const fs = require('fs'), path = require('path');
+const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B50}\u{2B06}\u{2B07}]/u;
+for (const f of fs.readdirSync(path.join(__dirname, 'public')).filter(f => f.endsWith('.js'))) {
+  fs.readFileSync(path.join(__dirname, 'public', f), 'utf8').split('\n').forEach((l, i) => assert.doesNotMatch(l, EMOJI, `public/${f}:${i + 1} uses an emoji icon`));
+}
+
 console.log('test-nav: all passed');
