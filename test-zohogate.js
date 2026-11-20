@@ -39,8 +39,7 @@ server.listen(0, async () => {
     const coded = { 3102: '2200', 3104: '2250', 3106: '2300', 3101: '5200', 3105: '5260', 3202: '1150', 3103: '1300' };
     for (const a of T.chartofaccounts) if (coded[a.account_id]) a.account_code = coded[a.account_id];
     T.bankaccounts.find(a => a.account_id === '2001').account_code = '1000';
-    T.bankaccounts.find(a => a.account_id === '2002').is_system_account = true;            // "Petty Cash", system, cash, no code
-    T.bankaccounts.push({ account_id: '2003', account_name: 'Cash on Hand', account_code: '1020', account_type: 'cash', is_active: true });   // the right account for 1020
+    T.bankaccounts.find(a => a.account_id === '2002').is_system_account = true;            // "Petty Cash", system, cash, no code   // (as in the real organisation: no Zoho account carries code 1020 — "Cash on Hand" is created by the repair)
     T.chartofaccounts.push({ account_id: '3301', account_name: 'Accounts Payable', account_type: 'accounts_payable', is_active: true, is_system_account: true },
       { account_id: '3501', account_name: 'Retained Earnings', account_type: 'equity', is_active: true, is_system_account: true },
       { account_id: '3801', account_name: 'Office Salaries', account_code: '6200', account_type: 'expense', is_active: true });
@@ -61,13 +60,16 @@ server.listen(0, async () => {
     // the legacy 1020 → Petty Cash mapping is detected and a Trigon-side repair is proposed: remove 1020's mapping only, adopt the same id for 1010
     assert.equal(pc.classification, 'ADOPT_EXISTING_AFTER_CONFIRMATION'); assert.equal(pc.reason, 'LEGACY_MAPPING_REPAIR'); assert.equal(pc.repair.state, 'PROPOSED');
     assert.ok(Object.values(pc.repair.checks).every(Boolean), JSON.stringify(pc.repair.checks)); assert.equal(Object.keys(pc.repair.checks).length, 9);
-    assert.deepEqual(pc.repair.operations.map(o => [o.op, o.trigon_key, o.zoho_id]), [['REMOVE_MAPPING_ONLY', 'acct:1020', '2002'], ['ADOPT_EXISTING', 'acct:1010', '2002'], ['ADOPT_EXISTING', 'acct:1020', '2003']]);
+    assert.deepEqual(pc.repair.operations.map(o => [o.op, o.trigon_key, o.zoho_id]), [['CREATE_APPROVED', 'acct:1020', null], ['REMOVE_MAPPING_ONLY', 'acct:1020', '2002'], ['ADOPT_EXISTING', 'acct:1010', '2002'], ['MAP', 'acct:1020', '(newly created)']]);
+    assert.deepEqual(pc.repair.operations[0].payload, { account_name: 'Cash on Hand', account_code: '1020', account_type: 'cash' });
     assert.match(pc.repair.zoho_changes, /^none/); assert.ok(pv.confirmable.some(c => c.key === 'repair:1020>1010'));
-    // 1020 resolved on its own (exact code + cash), never the same account as 1010; nothing adopted outside the repair
-    const r20 = pv.rows.find(r => r.key === 'acct:1020'); assert.equal(r20.classification, 'ADOPT_EXISTING'); assert.equal(r20.zoho.id, '2003'); assert.equal(r20.pending_repair, 'repair:1020>1010');
+    // 1020 on its own: CREATE_APPROVED Cash on Hand / 1020 / cash, part of the repair (not created without it); 1010 is never created
+    const r20 = pv.rows.find(r => r.key === 'acct:1020'); assert.equal(r20.classification, 'CREATE_APPROVED'); assert.equal(r20.pending_repair, 'repair:1020>1010');
+    const m20 = pv.mutations.find(m => m.body.account_code === '1020'); assert.deepEqual(m20.body, { account_name: 'Cash on Hand', account_code: '1020', account_type: 'cash' }); assert.equal(m20.repair, 'repair:1020>1010');
+    assert.ok(!pv.mutations.some(m => m.body.account_code === '1010' || /petty cash/i.test(m.body.account_name)), 'no second Petty Cash');
     assert.ok(!pv.adopts.some(a => ['acct:1010', 'acct:1020'].includes(a.key)), 'the repair is not part of the ordinary adoptions');
     assert.equal(JSON.stringify(ctx.db.prepare("SELECT * FROM zoho_map WHERE local_key='acct:1020'").get()), map1020, 'the owning mapping is not modified by the preview');
-    out.push('legacy 1020 → Petty Cash detected; repair proposed (REMOVE_MAPPING_ONLY 1020, ADOPT_EXISTING 1010 on the same id, 1020 → Cash on Hand by code); 9 checks; preview changes nothing');
+    out.push('legacy 1020 → Petty Cash detected; repair proposed (CREATE_APPROVED Cash on Hand / 1020 / cash, REMOVE_MAPPING_ONLY 1020, ADOPT_EXISTING 1010 on the same id, MAP 1020 → the new account); 9 checks; preview changes nothing');
 
     // each safety condition blocks the reassignment on its own (LEGACY_MAPPING_REPAIR_BLOCKED) — nothing repaired
     const blockedBy = async (setup, undo, check) => { setup(); const q = await A.plan(), r = q.rows.find(x => x.key === 'acct:1010'); undo();
@@ -78,10 +80,10 @@ server.listen(0, async () => {
     await blockedBy(() => { pcA.is_active = false; }, () => { pcA.is_active = true; }, 'active');
     await blockedBy(() => ctx.db.prepare("UPDATE zoho_map SET mapped_at='2026-11-01 10:00:00' WHERE local_key='acct:1020'").run(), () => ctx.db.prepare("UPDATE zoho_map SET mapped_at=NULL WHERE local_key='acct:1020'").run(), 'current_owner_is_exactly_legacy_acct_1020');
     await blockedBy(() => ctx.db.prepare(`INSERT INTO zoho_sync(kind,local_id,zoho_id,zoho_type,status,sent_eff) VALUES('payment',999,'Z9','customerpayment','ok','{"lines":[[1,"","2002"]]}')`).run(), () => ctx.db.prepare("DELETE FROM zoho_sync WHERE local_id=999").run(), 'no_synchronized_object_depends_on_it');
-    await blockedBy(() => { acct('2003').account_code = ''; }, () => { acct('2003').account_code = '1020'; }, 'new_1020_target_resolved_for_an_atomic_repair');
-    { acct('2003').account_code = ''; const q = await A.plan(), r = q.rows.find(x => x.key === 'acct:1010'); acct('2003').account_code = '1020';
-      assert.equal(r.repair.next_for_old_code.reason, 'CREATE_NEEDS_APPROVAL'); assert.deepEqual(r.repair.next_for_old_code.payload, { account_name: 'Cash on Hand', account_code: '1020', account_type: 'cash' }); assert.ok(!q.mutations.some(m => m.body.account_code === '1020'), 'not created unless approved'); }
-    out.push('reassignment blocked (LEGACY_MAPPING_REPAIR_BLOCKED) by: transactions on the account, wrong type, inactive, a non-legacy owner, a synchronised object using it, no target for 1020 (then: CREATE_NEEDS_APPROVAL Cash on Hand / 1020 / cash, not created)');
+    // no possible target for 1020 (a Zoho account already carries code 1020 with a wrong type): blocked
+    T.chartofaccounts.push({ account_id: '3990', account_name: 'Misc 1020', account_code: '1020', account_type: 'expense', is_active: true });
+    await blockedBy(() => {}, () => { T.chartofaccounts.pop(); }, 'new_1020_target_resolved_for_an_atomic_repair');
+    out.push('reassignment blocked (LEGACY_MAPPING_REPAIR_BLOCKED) by: transactions on the account, wrong type, inactive, a non-legacy owner, a synchronised object using it, no valid target for 1020');
 
     // 1010 and 1020 can never be on one Zoho account — on the mapping screen either
     const bad = await call('PUT', 'zoho/mapping', { kind: 'account', local_key: 'acct:1010', zoho_id: '2002' }); assert.equal(bad.s, 400); assert.match(bad.j.error, /must be different accounts/);
@@ -101,9 +103,28 @@ server.listen(0, async () => {
     assert.equal(g.gate.expected_after_provisioning.state, 'READY_NON_VAT', JSON.stringify(g.gate.expected_after_provisioning)); assert.deepEqual(g.gate.expected_after_provisioning.targets_non_vat, { missing_mappings: 0, wrong_types: 0, ambiguous_matches: 0, blocking_conflicts: 0 });
     out.push('gate: NOT_READY today; expected after provisioning with the repair: READY_NON_VAT (0 / 0 / 0 / 0), VAT_PENDING and 6150 not blocking');
     pv = ok(await call('GET', 'zoho-sync/preview'));
+    // provisioning without confirming the repair: the other approved accounts are created, but not Cash on Hand, and 1010 / 1020 are untouched
+    const pr0 = ok(await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token }));
+    assert.ok(pr0.result.created.length > 0 && !pr0.result.created.some(c => c.code === '1020')); assert.ok(!(pr0.result.repaired || []).length);
+    assert.equal(T.chartofaccounts.concat(T.bankaccounts).filter(a => a.account_name === 'Cash on Hand').length, 0);
+    assert.equal(JSON.stringify(ctx.db.prepare("SELECT * FROM zoho_map WHERE local_key='acct:1020'").get()), map1020); assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM zoho_map WHERE local_key='acct:1010'").get().n, 0);
+    pv = ok(await call('GET', 'zoho-sync/preview')); assert.equal(pv.rows.find(r => r.key === 'acct:1010').repair.state, 'PROPOSED');
+    out.push('provisioning without confirming the repair: Cash on Hand not created, 1010 / 1020 untouched');
     // a failure in the middle of the repair: everything rolls back (mappings and audit), nothing in Zoho
     const audit0 = ctx.db.prepare("SELECT * FROM audit_log WHERE tbl='zoho_map' ORDER BY id").all(), zw0 = zoho.calls.filter(c => !/^GET /.test(c)).length;
-    for (const step of ['removed', 'adopted', 'remapped', 'audited']) {
+    const cashOnHand = () => T.chartofaccounts.concat(T.bankaccounts).filter(a => a.account_name === 'Cash on Hand');
+    // Zoho refuses the creation: nothing mapped, nothing audited
+    zoho.state.failPost = 1; zoho.state.failPath = '/chartofaccounts';
+    { const res = await A.apply(await A.plan(), { user: 'admin', confirmed: ['repair:1020>1010'], only: () => false }); assert.ok(res.failed.some(f => /LEGACY_MAPPING_REPAIR/.test(f.error)));
+      assert.equal(JSON.stringify(ctx.db.prepare("SELECT * FROM zoho_map WHERE local_key='acct:1020'").get()), map1020); assert.equal(cashOnHand().length, 0); }
+    zoho.state.failPath = '';
+    // Zoho stores the new account with another type: READ_BACK_MISMATCH, nothing mapped; once corrected in Zoho it is adopted by code
+    zoho.state.tamperAccount = 'other_current_asset';
+    { const res = await A.apply(await A.plan(), { user: 'admin', confirmed: ['repair:1020>1010'], only: () => false }); assert.ok(res.failed.some(f => /READ_BACK_MISMATCH on the new Cash on Hand/.test(f.error)), JSON.stringify(res.failed));
+      assert.equal(JSON.stringify(ctx.db.prepare("SELECT * FROM zoho_map WHERE local_key='acct:1020'").get()), map1020); assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM zoho_map WHERE local_key='acct:1010'").get().n, 0);
+      assert.equal((await A.plan()).rows.find(r => r.key === 'acct:1010').repair.state, 'LEGACY_MAPPING_REPAIR_BLOCKED', 'a 1020 of the wrong type blocks the repair');
+      cashOnHand()[0].account_type = 'cash'; }
+    for (const step of ['zoho', 'removed', 'adopted', 'remapped', 'audited']) {
       A._repairHook = st => { if (st === step) throw new Error('simulated failure after ' + st); };
       const res = await A.apply(await A.plan(), { user: 'admin', confirmed: ['repair:1020>1010'], only: () => false });
       assert.ok(res.failed.some(f => /LEGACY_MAPPING_REPAIR: simulated failure after/.test(f.error)), step);
@@ -111,33 +132,44 @@ server.listen(0, async () => {
       assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM zoho_map WHERE local_key='acct:1010'").get().n, 0, step);
       assert.deepEqual(ctx.db.prepare("SELECT * FROM audit_log WHERE tbl='zoho_map' ORDER BY id").all(), audit0, 'no audit written: ' + step);
     }
-    A._repairHook = null; assert.equal(zoho.calls.filter(c => !/^GET /.test(c)).length, zw0, 'nothing sent to Zoho');
-    out.push('a failure after any step of the repair rolls the whole repair back (mappings and audit unchanged)');
+    A._repairHook = null;
+    // the only Zoho write in all these attempts: Cash on Hand, created once — later attempts adopt it by code, never a second one
+    assert.equal(cashOnHand().length, 1);
+    assert.equal((await A.plan()).rows.find(r => r.key === 'acct:1010').repair.operations.find(o => o.op === 'MAP').zoho_id, cashOnHand()[0].account_id, 'the next attempt maps 1020 to the account already created');
+    out.push('Zoho refusing the creation, Zoho storing it with another type (READ_BACK_MISMATCH), or a failure after the creation or any Trigon step: the whole Trigon repair rolls back (mappings and audit unchanged); Cash on Hand is created at most once and adopted by code on the next attempt');
     // without the confirmation nothing is repaired (and 1020 is not re-mapped on its own either)
     await A.apply(await A.plan(), { user: 'admin', confirmed: [], only: () => false });
     assert.equal(JSON.stringify(ctx.db.prepare("SELECT * FROM zoho_map WHERE local_key='acct:1020'").get()), map1020); assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM zoho_map WHERE local_key='acct:1010'").get().n, 0);
     // even if Zoho's Petty Cash also carried code 1020, 1020 is never resolved to the account 1010 takes
     acct('2002').account_code = '1020'; { const q = await A.plan(), r = q.rows.find(x => x.key === 'acct:1010'); acct('2002').account_code = '';
-      assert.equal(r.repair.state, 'PROPOSED'); assert.equal(r.repair.operations[2].zoho_id, '2003'); assert.notEqual(r.repair.operations[2].zoho_id, r.repair.operations[1].zoho_id); }
+      assert.equal(r.repair.state, 'PROPOSED'); const mp = r.repair.operations.find(o => o.op === 'MAP'); assert.notEqual(mp.zoho_id, '2002'); }
     out.push('no repair without the explicit confirmation; 1020 is never resolved to the account 1010 takes');
     // confirmed: one Trigon transaction; no Zoho call for it; history kept; a new audit entry with every field
+    // the preview from before the failed attempts proposed creating Cash on Hand, which now exists: it is stale and refused
+    const stale = await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token, confirm_adopt: ['repair:1020>1010'] }); assert.equal(stale.s, 400); assert.match(stale.j.error, /differ from the preview/);
+    pv = ok(await call('GET', 'zoho-sync/preview')); assert.equal(pv.rows.find(r => r.key === 'acct:1010').repair.operations[0].op, 'REMOVE_MAPPING_ONLY', 'no second creation proposed');
     const zw = zoho.calls.length;
     const prov = ok(await call('POST', 'zoho-sync/provision', { confirm: true, token: pv.token, confirm_adopt: ['repair:1020>1010'] }));
     assert.deepEqual(prov.result.repaired.map(x => x.key), ['repair:1020>1010']);
-    assert.equal(ctx.db.prepare("SELECT zoho_id FROM zoho_map WHERE local_key='acct:1010'").get().zoho_id, '2002'); assert.equal(ctx.db.prepare("SELECT zoho_id FROM zoho_map WHERE local_key='acct:1020'").get().zoho_id, '2003');
+    const coh = cashOnHand(); assert.equal(coh.length, 1); assert.equal(coh[0].account_code, '1020'); assert.equal(coh[0].account_type, 'cash');
+    assert.equal(ctx.db.prepare("SELECT zoho_id FROM zoho_map WHERE local_key='acct:1010'").get().zoho_id, '2002'); assert.equal(ctx.db.prepare("SELECT zoho_id FROM zoho_map WHERE local_key='acct:1020'").get().zoho_id, coh[0].account_id);
+    const ids3 = ['1010', '1020', '1030'].map(c => ctx.db.prepare("SELECT zoho_id FROM zoho_map WHERE local_key=?").get('acct:' + c).zoho_id); assert.equal(new Set(ids3).size, 3, '1010, 1020, 1030: three distinct Zoho accounts');
     assert.deepEqual(zoho.calls.slice(zw).filter(c => !/^GET /.test(c) && c !== 'POST /chartofaccounts'), [], 'no Zoho change but the approved account creations');
+    assert.equal(T.chartofaccounts.concat(T.bankaccounts).filter(a => /^petty cash$/i.test(a.account_name)).length, 1, 'no duplicate Petty Cash');
     assert.ok(acct('2002').account_name === 'Petty Cash' && acct('2002').is_active && !acct('2002').account_code && acct('2002').account_type === 'cash', "Zoho's Petty Cash untouched");
     const audits = ctx.db.prepare("SELECT * FROM audit_log WHERE tbl='zoho_map' ORDER BY id").all();
     assert.ok(audit0.length && audit0.every(a => audits.some(b => b.id === a.id && b.detail === a.detail && b.ts === a.ts)), 'the mapping-screen history is kept');
     const rep1 = audits.filter(a => a.action === 'legacy_mapping_repair'); assert.equal(rep1.length, 1); const det = JSON.parse(rep1[0].detail);
     assert.equal(rep1[0].user, 'admin'); assert.ok(rep1[0].ts);
     for (const [k, v] of Object.entries({ reason: 'legacy_mapping_repair', actor: 'admin', old_trigon_code: '1020', new_trigon_code: '1010', zoho_account_id: '2002' })) assert.equal(det[k], v, k);
-    assert.match(det.previous_mapping_source, /legacy/); assert.ok(det.previous_mapped_at); assert.match(det.confirmation, /confirmed repair:1020>1010/); assert.equal(det.new_mapping_for_old_code.zoho_id, '2003');
-    out.push('repair applied on confirmation: 1010 → Petty Cash (same id), 1020 → Cash on Hand, one transaction, no Zoho call for it; old history kept; audit: actor, time, codes, Zoho id, reason, previous source / date, confirmation');
+    assert.match(det.previous_mapping_source, /legacy/); assert.ok(det.previous_mapped_at); assert.match(det.confirmation, /confirmed repair:1020>1010/); assert.equal(det.new_mapping_for_old_code.zoho_id, coh[0].account_id);
+    out.push('repair applied on confirmation: Cash on Hand (1020, cash) created, 1010 → Petty Cash (same id, untouched in Zoho), 1020 → Cash on Hand, three distinct ids for 1010 / 1020 / 1030, one Trigon transaction; old history kept; audit: actor, time, codes, Zoho id, reason, previous source / date, confirmation');
     // rerun: nothing to repair, nothing changes, no second audit entry
     const again = await A.plan(); assert.ok(!again.rows.some(r => r.repair)); assert.equal(again.rows.find(r => r.key === 'acct:1010').classification, 'ADOPT_EXISTING');
     await A.apply(again, { user: 'admin', confirmed: ['repair:1020>1010'] }); assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM audit_log WHERE action='legacy_mapping_repair'").get().n, 1);
-    assert.equal(ctx.db.prepare("SELECT zoho_id FROM zoho_map WHERE local_key='acct:1020'").get().zoho_id, '2003');
+    assert.equal(ctx.db.prepare("SELECT zoho_id FROM zoho_map WHERE local_key='acct:1020'").get().zoho_id, coh[0].account_id); assert.equal(cashOnHand().length, 1);
+    for (let i = 0; i < 5; i++) { const q = await A.plan(); assert.ok(!q.rows.some(r => r.repair)); assert.equal(q.mutations.length, 0); await A.apply(q, { user: 'admin', confirmed: ['repair:1020>1010'] }); }
+    assert.equal(cashOnHand().length, 1); assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM audit_log WHERE action='legacy_mapping_repair'").get().n, 1);
     out.push('rerun after success: idempotent (no repair proposed, mappings unchanged, no second audit entry)');
     // provisioning itself refuses to put 1030 (or 1020) on the account 1010 holds
     await assert.rejects(A.apply({ token: 't', rows: [{ key: 'acct:1030', name: 'x', zoho: { id: '2002', name: 'Petty Cash', type: 'cash', code: '' } }], vat: [], mutations: [], adopts: [{ key: 'acct:1030', zoho_id: '2002', how: 'test' }] }, { user: 'admin' }), /SAME_ZOHO_ACCOUNT/);
