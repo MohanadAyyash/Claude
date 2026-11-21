@@ -120,8 +120,8 @@ window.TrigonCopilotWidget = { escapeHtml: copilotEscape, recordCardHtml: copilo
         <div class="tc-answer">${copilotEscape(item.answer)}</div>
         ${item.data?.length ? `<div class="tc-facts"><b>${tr('حقائق ERP المصرح بها', 'Authorized ERP facts')}</b>${records}</div>` : ''}
         ${item.id ? `<div class="tc-feedback"><span>${tr('هل كانت الإجابة مفيدة؟', 'Was this answer helpful?')}</span>
-          <button type="button" class="btn sec sm" data-feedback="${item.id}" data-rating="helpful" aria-label="${tr('إجابة مفيدة', 'Helpful answer')}">👍</button>
-          <button type="button" class="btn sec sm" data-feedback="${item.id}" data-rating="not_helpful" aria-label="${tr('إجابة غير مفيدة', 'Not helpful')}">👎</button></div>` : ''}
+          <button type="button" class="btn sec sm" data-feedback="${item.id}" data-rating="helpful" aria-label="${tr('إجابة مفيدة', 'Helpful answer')}">${tr('نعم', 'Yes')}</button>
+          <button type="button" class="btn sec sm" data-feedback="${item.id}" data-rating="not_helpful" aria-label="${tr('إجابة غير مفيدة', 'Not helpful')}">${tr('لا', 'No')}</button></div>` : ''}
       </section></div>`;
   }
   function memoryHtml() {
@@ -158,7 +158,7 @@ window.TrigonCopilotWidget = { escapeHtml: copilotEscape, recordCardHtml: copilo
     const host = root();
     if (!host) return;
     host.innerHTML = `<button type="button" class="tc-launcher" id="tc-launcher" title="Trigon Assistant / مساعد تريجون"
-      aria-label="Trigon Assistant / مساعد تريجون" aria-expanded="${state.open && !state.minimized}" aria-controls="tc-window">✦</button>
+      aria-label="Trigon Assistant / مساعد تريجون" aria-expanded="${state.open && !state.minimized}" aria-controls="tc-window">T</button>
       ${state.open && !state.minimized ? `<section id="tc-window" class="tc-window" role="dialog" aria-modal="false"
         aria-labelledby="tc-title" dir="${lang === 'ar' ? 'rtl' : 'ltr'}">
         <header class="tc-header"><div class="tc-heading"><h2 id="tc-title">Trigon Assistant</h2>
@@ -166,7 +166,7 @@ window.TrigonCopilotWidget = { escapeHtml: copilotEscape, recordCardHtml: copilo
             ${state.conversations.map(item => `<option value="${copilotEscape(item.id)}" ${item.id === state.conversationId ? 'selected' : ''}>${copilotEscape(item.title)}</option>`).join('')}
             ${!state.conversations.length ? `<option value="">${tr('محادثة جديدة', 'New conversation')}</option>` : ''}
           </select></div>
-          <div class="tc-actions"><button type="button" id="tc-memory" class="tc-icon" aria-label="${tr('ذاكرتي', 'My memory')}" title="${tr('ذاكرتي', 'My memory')}">♡</button>
+          <div class="tc-actions"><button type="button" id="tc-memory" class="tc-icon" aria-label="${tr('ذاكرتي', 'My memory')}" title="${tr('ذاكرتي', 'My memory')}">M</button>
             <button type="button" id="tc-new" class="tc-icon" aria-label="${tr('محادثة جديدة', 'New conversation')}" title="${tr('محادثة جديدة', 'New conversation')}">＋</button>
             <button type="button" id="tc-delete" class="tc-icon" aria-label="${tr('حذف المحادثة', 'Delete conversation')}" title="${tr('حذف المحادثة', 'Delete conversation')}" ${state.conversationId ? '' : 'disabled'}>⌫</button>
             <button type="button" id="tc-clear-all" class="tc-icon" aria-label="${tr('مسح كل المحادثات', 'Clear all conversations')}" title="${tr('مسح كل المحادثات', 'Clear all conversations')}">⌧</button>
