@@ -48,11 +48,41 @@ server.listen(0, async () => {
     // ---- payments: a changed one is replaced, a bounced one is removed
     ok(await call('PUT', 'payments/' + pay, { amount: 700 }));
     r = await sync(); assert.equal(zoho.T.customerpayments.length, 1); assert.equal(zoho.T.customerpayments[0].amount, 700);
+    const oldPaymentId = zoho.T.customerpayments[0].payment_id, invoiceBalance = zoho.T.invoices[0].balance;
+    ok(await call('PUT', 'payments/' + pay, { cheque_status: 'pending' }));
+    zoho.state.failPath = '/customerpayments'; zoho.state.failDelete = 1;
+    r = await sync(); assert.equal(r.failed, 1); assert.equal(zoho.T.customerpayments.length, 1, 'failed removal retains the Zoho payment');
+    assert.equal(sql("SELECT zoho_id FROM zoho_sync WHERE kind='payment' AND local_id=?", pay)[0].zoho_id, oldPaymentId);
+    r = await sync(); assert.equal(r.failed, 0, JSON.stringify(r)); assert.equal(zoho.T.customerpayments.length, 0, 'pending cheque removed from Zoho');
+    let paymentSync = sql("SELECT * FROM zoho_sync WHERE kind='payment' AND local_id=?", pay)[0];
+    assert.equal(paymentSync.status, 'cancelled'); assert.equal(paymentSync.zoho_id, null);
+    assert.equal(zoho.T.invoices[0].balance, invoiceBalance + 700, 'removal restores invoice balance');
+    r = await sync(); assert.equal(r.failed, 0, JSON.stringify(r)); assert.equal(zoho.T.customerpayments.length, 0, 'pending cheque stays unsent');
+    ok(await call('PUT', 'payments/' + pay, { cheque_status: 'cleared' }));
+    zoho.state.failPath = '/customerpayments'; zoho.state.failPost = 1;
+    r = await sync(); assert.equal(r.failed, 1); assert.equal(zoho.T.customerpayments.length, 0);
+    paymentSync = sql("SELECT * FROM zoho_sync WHERE kind='payment' AND local_id=?", pay)[0];
+    assert.equal(paymentSync.zoho_id, null, 'failed re-send must not retain the removed Zoho ID');
+    r = await sync(); assert.equal(r.failed, 0, JSON.stringify(r));
+    assert.equal(zoho.T.customerpayments.length, 1); assert.notEqual(zoho.T.customerpayments[0].payment_id, oldPaymentId);
+    assert.equal(zoho.T.invoices[0].balance, invoiceBalance, 're-sent payment is applied again');
+    assert.equal(sql("SELECT status FROM zoho_sync WHERE kind='payment' AND local_id=?", pay)[0].status, 'ok');
+    zoho.state.failPath = '';
+    const vendorPay = ok(await call('POST', 'payments', { kind: 'out', date: '2026-11-10', amount: 300, method: 'cheque', cheque_date: '2026-11-10', cheque_status: 'cleared', reference: 'CHQ2', bill_id: bill })).id;
+    r = await sync(); assert.equal(r.failed, 0, JSON.stringify(r)); assert.equal(zoho.T.vendorpayments.length, 1);
+    const oldVendorId = zoho.T.vendorpayments[0].payment_id, billBalance = zoho.T.bills.find(b => b.bill_number === 'SC-1').balance;
+    ok(await call('PUT', 'payments/' + vendorPay, { cheque_status: 'pending' }));
+    r = await sync(); assert.equal(r.failed, 0, JSON.stringify(r)); assert.equal(zoho.T.vendorpayments.length, 0);
+    assert.equal(zoho.T.bills.find(b => b.bill_number === 'SC-1').balance, billBalance + 300);
+    ok(await call('PUT', 'payments/' + vendorPay, { cheque_status: 'cleared' }));
+    r = await sync(); assert.equal(r.failed, 0, JSON.stringify(r)); assert.equal(zoho.T.vendorpayments.length, 1);
+    assert.notEqual(zoho.T.vendorpayments[0].payment_id, oldVendorId);
+    assert.equal(zoho.T.bills.find(b => b.bill_number === 'SC-1').balance, billBalance);
     ok(await call('PUT', 'payments/' + pay, { cheque_status: 'bounced' }));
     r = await sync(); assert.equal(zoho.T.customerpayments.length, 0, 'bounced cheque removed from Zoho');
     assert.equal(sql("SELECT status FROM zoho_sync WHERE kind='payment' AND local_id=?", pay)[0].status, 'cancelled');
     r = await sync(); assert.equal(zoho.T.customerpayments.length, 0);
-    console.log('✔ payments: edited → replaced in Zoho; bounced → removed from Zoho');
+    console.log('✔ payments: edited → replaced; pending → removed and re-sent on clearance; bounced → removed');
     console.log('ZOHO FIX TESTS PASSED');
   } catch (err) { console.error('FAIL', err); process.exitCode = 1; }
   finally { server.close(); zoho.srv.close(); setTimeout(() => process.exit(process.exitCode || 0), 100); }

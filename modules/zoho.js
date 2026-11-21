@@ -52,12 +52,12 @@ module.exports = ctx => {
   const useAcct = (code, label, zohoId, how) => { if (dry && !dry.accts.has(String(code))) dry.accts.set(String(code), { code: String(code), label, zoho_id: zohoId || null, how }); };
   const rec = (kind, id) => (dry && dry.recs.has(kind + ':' + id) ? dry.recs.get(kind + ':' + id) || undefined : db.prepare('SELECT * FROM zoho_sync WHERE kind=? AND local_id=?').get(kind, id));
   const WAIT = ['error', 'retrying', 'blocked'];                                      // a row in one of these keeps its retry count
-  const mark = (kind, id, zohoId, type, status, error, hash, x = {}) => dry ? void dry.recs.set(kind + ':' + id, { kind, local_id: id, zoho_id: zohoId == null ? (rec(kind, id) || {}).zoho_id : String(zohoId), zoho_type: type, status, error, hash }) : db.prepare(`INSERT INTO zoho_sync(kind,local_id,zoho_id,zoho_type,status,error,hash,synced_at,created_at,doc_date,sent_eff,verified_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(kind,local_id) DO UPDATE SET zoho_id=COALESCE(excluded.zoho_id,zoho_id), zoho_type=COALESCE(excluded.zoho_type,zoho_type), status=excluded.status, error=excluded.error, hash=COALESCE(excluded.hash,hash), synced_at=excluded.synced_at,
+  const mark = (kind, id, zohoId, type, status, error, hash, x = {}) => dry ? void dry.recs.set(kind + ':' + id, { kind, local_id: id, zoho_id: x.clearZohoId ? null : zohoId == null ? (rec(kind, id) || {}).zoho_id : String(zohoId), zoho_type: type, status, error, hash }) : db.prepare(`INSERT INTO zoho_sync(kind,local_id,zoho_id,zoho_type,status,error,hash,synced_at,created_at,doc_date,sent_eff,verified_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(kind,local_id) DO UPDATE SET zoho_id=CASE WHEN ? THEN NULL ELSE COALESCE(excluded.zoho_id,zoho_id) END, zoho_type=COALESCE(excluded.zoho_type,zoho_type), status=excluded.status, error=excluded.error, hash=COALESCE(excluded.hash,hash), synced_at=excluded.synced_at,
       doc_date=COALESCE(excluded.doc_date,doc_date), sent_eff=COALESCE(excluded.sent_eff,sent_eff), verified_at=COALESCE(excluded.verified_at,verified_at),
-      pending_create=CASE WHEN excluded.zoho_id IS NOT NULL THEN 0 ELSE pending_create END,
+      pending_create=CASE WHEN ? OR excluded.zoho_id IS NOT NULL THEN 0 ELSE pending_create END,
       attempts=CASE WHEN excluded.status IN ('error','retrying','blocked') THEN attempts ELSE 0 END, next_at=CASE WHEN excluded.status IN ('error','retrying','blocked') THEN next_at ELSE NULL END`)
-    .run(kind, id, zohoId == null ? null : String(zohoId), type ?? null, status, error ?? null, hash ?? null, now(), now(), x.date || null, x.eff ? JSON.stringify(x.eff) : null, x.verified || null);
+    .run(kind, id, zohoId == null ? null : String(zohoId), type ?? null, status, error ?? null, hash ?? null, now(), now(), x.date || null, x.eff ? JSON.stringify(x.eff) : null, x.verified || null, x.clearZohoId ? 1 : 0, x.clearZohoId ? 1 : 0);
   // a create is about to be sent: if its answer is lost (timeout, crash), the next attempt looks it up in Zoho instead of sending it twice
   const pendingCreate = (kind, id, type, date) => { if (dry) return; mark(kind, id, null, type, (rec(kind, id) || {}).status === 'ok' ? 'ok' : 'sending', null, null, { date });
     db.prepare('UPDATE zoho_sync SET pending_create=1 WHERE kind=? AND local_id=?').run(kind, id); };
@@ -740,19 +740,20 @@ module.exports = ctx => {
               { account_id: acct.account_id, description: `${d.description} — part without VAT (retention / outside VAT)`, quantity: 1, rate: round(d.amount - taxable), ...projectRef(b.project_id) }] };   // … and the rest, so the VAT equals the VAT on the document
         await pushDoc(cl, 'bill', b.id, 'bill', vals, { find: { bill_number: d.number, vendor_id: vendor }, label: d.number }, run);
       });
-      // receipts / payments already in Zoho that bounced, were deleted or were changed here: removed there (a changed one is sent again just below)
-      for (const r of db.prepare("SELECT * FROM zoho_sync WHERE kind='payment' AND status='ok' AND zoho_id IS NOT NULL").all()) await each('payment', r.local_id, `payment #${r.local_id}`, async () => {
-        const p = e.payments.find(x => x.id === r.local_id), live = p && p.cheque_status !== 'bounced';
+      // receipts / payments already in Zoho that bounced, became pending, were deleted or were changed here: removed there
+      for (const r of db.prepare("SELECT * FROM zoho_sync WHERE kind='payment' AND status IN ('ok','error','retrying','blocked') AND zoho_id IS NOT NULL").all().filter(r => r.status === 'ok' || e.payments.some(p => p.id === r.local_id && p.method === 'cheque' && p.cheque_status === 'pending'))) await each('payment', r.local_id, `payment #${r.local_id}`, async () => {
+        const p = e.payments.find(x => x.id === r.local_id), pending = p && p.method === 'cheque' && p.cheque_status === 'pending', live = p && p.cheque_status !== 'bounced' && !pending;
+        const reason = !p ? 'deleted here' : pending ? 'cheque pending' : 'cheque bounced';
         if (live && (!r.hash || r.hash === payHash(payDoc(p, e)))) return;
-        note('payment', r.local_id, `payment #${r.local_id}`, 'remove', !p ? 'deleted here — would be removed from Zoho' : !live ? 'cheque bounced — would be removed from Zoho' : 'changed here — would be removed from Zoho and sent again');
+        note('payment', r.local_id, `payment #${r.local_id}`, 'remove', !live ? `${reason} — would be removed from Zoho` : 'changed here — would be removed from Zoho and sent again');
         const zpath = `/${r.zoho_type === 'vendorpayment' ? 'vendorpayments' : 'customerpayments'}/${r.zoho_id}`;
         let cur = null; if (!r.doc_date || r.sent_eff) try { cur = (await cl.get(zpath))[r.zoho_type === 'vendorpayment' ? 'vendorpayment' : 'payment']; } catch (err) { if (!gone(err)) throw err; }
         guardPeriod(r.doc_date || (cur && cur.date), `payment #${r.local_id}`); if (live) guardPeriod(payDoc(p, e).date, `payment #${r.local_id}`);
         if (modifiedInZoho(r, r.zoho_type, cur, lk)) throw blocked('ZOHO_MODIFIED', `payment #${r.local_id} was changed in Zoho after Trigon sent it — not removed automatically`);
         try { await cl.del(zpath); } catch (err) { if (!gone(err)) throw err; }
-        if (dryRun) { if (live) dry.recs.set('payment:' + r.local_id, null); else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', null, null); run.updated++; return; }
+        if (dryRun) { if (live) dry.recs.set('payment:' + r.local_id, null); else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', null, null, { clearZohoId: pending }); run.updated++; return; }
         if (live) db.prepare("DELETE FROM zoho_sync WHERE kind='payment' AND local_id=?").run(r.local_id);
-        else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', p ? 'cheque bounced — removed from Zoho' : 'deleted here — removed from Zoho', null);
+        else mark('payment', r.local_id, null, r.zoho_type, 'cancelled', `${reason} — removed from Zoho`, null, { clearZohoId: pending });
         run.updated++;
       });
       for (const p of payments) await each('payment', p.id, `${p.kind === 'in' ? 'receipt' : 'payment'} ${p.reference || '#' + p.id}`, () => pushPayment(cl, p, lk, run));

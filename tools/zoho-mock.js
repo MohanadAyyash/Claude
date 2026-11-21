@@ -19,7 +19,7 @@ function mockZoho() {
   const KEY = { journals: ['journal', 'journal_id'], invoices: ['invoice', 'invoice_id', 'invoice_number'], creditnotes: ['creditnote', 'creditnote_id', 'creditnote_number'], bills: ['bill', 'bill_id', 'bill_number'], expenses: ['expense', 'expense_id'], contacts: ['contact', 'contact_id'], customerpayments: ['payment', 'payment_id'], vendorpayments: ['vendorpayment', 'payment_id'] };
   const total = d => Math.round((d.line_items || []).reduce((s, l) => { const t = T.taxes.find(x => x.tax_id === l.tax_id); return s + l.quantity * l.rate * (1 + (t ? t.tax_percentage : 0) / 100); }, 0) * 100) / 100;
   const err = (status, code, message) => Object.assign(new Error(message), { status, code });
-  const state = { down: false, failPost: 0, failNth: 0, lostPost: 0, failPath: '', tamperJournal: 0, tamperAccount: '' };   // tamper*: Zoho stores something else than it was sent                                                     // outage: every Books request answers 503
+  const state = { down: false, failPost: 0, failDelete: 0, failNth: 0, lostPost: 0, failPath: '', tamperJournal: 0, tamperAccount: '' };   // tamper*: Zoho stores something else than it was sent                                                     // outage: every Books request answers 503
   // the ledger postings of what is in the mock (as Zoho would post them): drafts and void documents post nothing
   const acctOf = type => (T.chartofaccounts.find(a => a.account_type === type) || {}).account_id || type.toUpperCase();
   function postings() {
@@ -155,6 +155,7 @@ function mockZoho() {
       if (u.pathname === '/oauth/v2/token/revoke') { refresh.delete(u.searchParams.get('token')); return out(200, { status: 'success' }); }
       const m = /^\/books\/v3(\/.*)$/.exec(u.pathname);
       if (m && state.down) { calls.push(`${req.method} (down) ${m[1]}`); return out(503, { code: 503, message: 'Service temporarily unavailable' }); }
+      if (m && req.method === 'DELETE' && state.failDelete > 0 && (!state.failPath || m[1].startsWith(state.failPath))) { state.failDelete--; calls.push(`DELETE (failed) ${m[1]}`); return out(503, { code: 503, message: 'Service temporarily unavailable' }); }
       // one request fails: failPost — refused before anything is done; lostPost — done, but the answer is lost (as on a timeout)
       const failing = m && req.method === 'POST' && (!state.failPath || m[1].startsWith(state.failPath));
       if (failing && state.failNth > 0 && --state.failNth === 0) { calls.push(`POST (failed) ${m[1]}`); return out(503, { code: 503, message: 'Service temporarily unavailable' }); }   // failNth: the n-th such POST from now fails
