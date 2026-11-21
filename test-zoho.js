@@ -2,7 +2,9 @@
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-zoho-'));
 process.env.ZOHO_NO_SCHEDULER = '1';
-const { server } = require('./server.js');
+const { server, ctx } = require('./server.js');
+// this suite tests the send engine itself: the READY gate of the account-provisioning workflow is tested in test-zohoacct.js
+ctx.db.prepare("UPDATE zoho_config SET value='0' WHERE key='gate_required'").run();
 
 const mockZoho = require('./tools/zoho-mock.js');
 

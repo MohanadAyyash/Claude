@@ -10,6 +10,10 @@ module.exports = ctx => {
   // ======================= closed period =======================
   const isDate = d => /^\d{4}-\d\d-\d\d$/.test(d || '');
   const lockDate = () => { const d = getSettings().lock_date; return isDate(d) ? d : ''; };
+  // the date the aligned ledger rules apply from (payroll by the attendance allocation, post-dated cheques through 1050 / 2050 until
+  // the cheque date). Empty = the earlier rules everywhere. It must come after the closing date, so a closed period never changes.
+  const rulesFrom = () => { const d = getSettings().ledger_rules_from; return isDate(d) ? d : ''; };
+  ctx.ledgerRulesFrom = rulesFrom;
   const closed = d => { const l = lockDate(); return !!l && isDate(d) && d <= l; };
   const refuse = (what, d) => bad(`The accounting period is closed up to ${lockDate()} — ${what} dated ${d} cannot be added or changed. Use a date after the closing date (for a correction: a credit note or a journal entry in the open period), or ask the administrator to reopen the period in Settings.`);
   const DATED = { invoices: 'date', bills: 'date', payments: 'date', petty_topups: 'date', journal_entries: 'date', sub_certs: 'date', stock_moves: 'date', partner_txns: 'date', partner_allocations: 'date' };   // records that feed the ledger
@@ -95,7 +99,15 @@ module.exports = ctx => {
       if (a === 'cheques' && m === 'GET') return send(res, 200, cheques()), true;
       if (a === 'backup' && b === 'status' && m === 'GET') return send(res, 200, status()), true;
       if (a === 'backup' && b === 'run' && m === 'POST') { const f = runBackup(); audit(req, 'backup', 'database', 0, path.basename(f)); return send(res, 200, status()), true; }
-      if (a === 'period' && m === 'GET') return send(res, 200, { lock_date: lockDate() }), true;
+      if (a === 'period' && m === 'GET') return send(res, 200, { lock_date: lockDate(), ledger_rules_from: rulesFrom() }), true;
+      if (a === 'period' && b === 'rules' && m === 'PUT') {
+        const x = await readBody(req), d = String(x.ledger_rules_from || '').trim(), old = rulesFrom(), lock = lockDate();
+        if (d && (!isDate(d) || isNaN(Date.parse(d)))) bad('The date must be YYYY-MM-DD');
+        if (lock && ((d && d <= lock) || (old && old <= lock))) bad(`The accounting period is closed up to ${lock}: the ledger rules can only start after it (and cannot be changed while their date is in a closed period)`);
+        db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)').run('ledger_rules_from', d);
+        audit(req, 'update', 'ledger_rules', 0, `${old || 'earlier rules'} → ${d || 'earlier rules'}${x.reason ? ' — ' + String(x.reason).slice(0, 200) : ''}`);
+        return send(res, 200, { ledger_rules_from: d }), true;
+      }
       if (a === 'period' && m === 'PUT') {                                    // close up to a date, or reopen with an empty date
         const x = await readBody(req), d = String(x.lock_date || '').trim(), old = lockDate();
         if (d && (!isDate(d) || isNaN(Date.parse(d)))) bad('Closing date must be a date (YYYY-MM-DD)');
