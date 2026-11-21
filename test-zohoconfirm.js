@@ -95,23 +95,72 @@ server.listen(0, async () => {
       assert.equal(JSON.stringify(mapOf('acct:1020')), map1020); assert.equal(mapOf('acct:1010'), undefined); assert.deepEqual(writes(), []); }
     out.push('E. invalid confirmation keys (acct:1010, repair:9999>1010) refused with 400 — nothing applied, zero calls');
 
-    // ---- E. provisioning without ticking the box: the ordinary adoptions only; the repair is not applied
-    { const r = ok(await call('POST', 'zoho-sync/provision', provisionBody(pv, []))).result;
-      assert.ok(!(r.repaired || []).length); assert.equal(r.created.length, 0); assert.equal(r.failed.length, 0);
-      assert.equal(JSON.stringify(mapOf('acct:1020')), map1020, 'unconfirmed: 1020 still on Petty Cash'); assert.equal(mapOf('acct:1010'), undefined); assert.deepEqual(writes(), []);
-      pv = await previewNow(); assert.equal(pv.rows.find(x => x.key === 'acct:1010').repair.state, 'PROPOSED'); }
-    out.push('E. provisioning without the confirmation: the repair is not applied (1020 still on Petty Cash, 1010 unmapped)');
+    // ---- the page itself: zohoSync() in a small DOM. Elements by id; the .zs-confirm boxes are those in the current HTML of #zs-out,
+    //      so replacing that HTML removes them (as in a browser); api() goes to this server; every request the page sends is recorded.
+    const page = (() => {
+      const els = {}, ticked = new Set(), sent = [], toasts = [], last = {};
+      const mk = id => ({ id, disabled: false, onclick: null, onchange: null, _h: '', get innerHTML() { return this._h; },
+        set innerHTML(h) { this._h = String(h); for (const m of this._h.matchAll(/\bid="([^"]+)"/g)) els[m[1]] = mk(m[1]); } });
+      els.zsync = mk('zsync');
+      const boxesNow = () => boxes(els['zs-out'] ? els['zs-out'].innerHTML : '');
+      Object.assign(ui, {
+        $: sel => (sel[0] === '#' ? els[sel.slice(1)] || null : null),
+        document: { querySelectorAll: sel => { assert.equal(sel, '.zs-confirm:checked'); return boxesNow().filter(v => ticked.has(v)).map(value => ({ value, checked: true })); } },
+        api: async (m, u, b) => { if (m !== 'GET') sent.push({ method: m, url: u, body: b === undefined ? undefined : JSON.parse(JSON.stringify(b)) });
+          const r = await call(m, u, b); if (r.s !== 200) throw new Error((r.j && r.j.error) || 'HTTP ' + r.s); last[`${m} ${u}`] = r.j; return r.j; },
+        guard: fn => async (...a) => { try { await fn(...a); } catch (e) { toasts.push(e.message); } },
+        toast: m => toasts.push(m), confirm: () => true, money: v => String(v),
+      });
+      return { els, ticked, sent, toasts, last, boxesNow, click: id => els[id].onclick() };
+    })();
+    await ui.zohoSync(true);
+    assert.ok(page.els['zs-pv'] && page.els['zs-prov'] && page.els['zs-out'], 'the Zoho Accounting Sync card is rendered');
+    const provisions = () => page.sent.filter(x => x.method === 'POST' && x.url === 'zoho-sync/provision');
+    const auditRepairs = () => db.prepare("SELECT COUNT(*) n FROM audit_log WHERE action='legacy_mapping_repair'").get().n;
 
-    // ---- B. the preview as the page renders it: the 1010 box submits repair:1020>1010
-    const html = ui.zsPlanHtml(pv), ticked = boxes(html);
-    assert.deepEqual(ticked, ['repair:1020>1010']); assert.ok(!ticked.includes('acct:1010'));
-    assert.equal(pv.counts.CREATE_APPROVED, 0); assert.deepEqual(pv.mutations, []); assert.match(html, /Nothing to create\./);
-    const body = provisionBody(pv, ticked); assert.deepEqual(body.confirm_adopt, ['repair:1020>1010']);
-    out.push('B. rendered preview (CREATE_APPROVED 0, no mutations): ticking the 1010 box submits confirm_adopt ["repair:1020>1010"]');
+    // ---- 1. the production bug, reproduced in the page: a ticked box disappears with the preview when the busy message replaces it
+    await page.click('zs-pv'); assert.deepEqual(page.boxesNow(), ['repair:1020>1010']);
+    page.ticked.add('repair:1020>1010');
+    assert.deepEqual(ui.document.querySelectorAll('.zs-confirm:checked').map(x => x.value), ['repair:1020>1010'], 'ticked before busy()');
+    page.els['zs-out'].innerHTML = '<p class="muted">Creating, then running the preflight again…</p>';       // what busy() does
+    assert.deepEqual(ui.document.querySelectorAll('.zs-confirm:checked').map(x => x.value), [], 'after busy() the boxes are gone: reading them now gives []');
+    page.ticked.clear();
+    out.push('1. reproduced: the box is ticked before busy(); read after busy() it gives [] (the preview HTML, and its boxes, are replaced)');
 
-    // ---- C. the confirmed repair: Trigon-side only
-    const res = ok(await call('POST', 'zoho-sync/provision', body)), R = res.result;
+    // ---- 3. Provision with the box NOT ticked: confirm_adopt [] — the repair is not applied
+    { await page.click('zs-pv'); const pvw = page.last['GET zoho-sync/preview'];
+      await page.click('zs-prov'); assert.deepEqual(page.toasts, []);
+      const req = provisions().pop(); assert.deepEqual(req.body, { confirm: true, token: pvw.token, confirm_adopt: [] });
+      const r = page.last['POST zoho-sync/provision'].result; assert.ok(!(r.repaired || []).length); assert.equal(r.created.length, 0); assert.equal(r.failed.length, 0);
+      assert.equal(JSON.stringify(mapOf('acct:1020')), map1020, 'unticked: 1020 still on Petty Cash'); assert.equal(mapOf('acct:1010'), undefined); assert.equal(auditRepairs(), 0); assert.deepEqual(writes(), []); }
+    out.push('3. Provision with the box unticked: request confirm_adopt [] — the repair is not applied (explicit confirmation required)');
+
+    // ---- 4. a ticked value the current preview does not offer (stale page): refused in the page, before any request
+    { await page.click('zs-pv'); page.ticked.add('repair:1020>1010');
+      page.els['zs-out']._h += '<input type="checkbox" class="zs-confirm" value="repair:9999&gt;1010" style="width:auto">'; page.ticked.add('repair:9999>1010');
+      const n = page.sent.length, maps = JSON.stringify(db.prepare('SELECT * FROM zoho_map ORDER BY rowid').all());
+      await page.click('zs-prov');
+      assert.equal(page.sent.length, n, 'no provisioning request sent'); assert.match(page.toasts.pop(), /no longer in the current preview — preview again/);
+      assert.equal(JSON.stringify(db.prepare('SELECT * FROM zoho_map ORDER BY rowid').all()), maps, 'no mapping changed'); assert.deepEqual(writes(), [], 'no Zoho call');
+      assert.ok(page.boxesNow().includes('repair:1020>1010'), 'the preview stays on screen'); page.ticked.clear(); }
+    out.push('4. a ticked key not in preview.confirmable: refused before POST — no request, no mapping change, no Zoho call');
+
+    // ---- 2. Provision with the 1010 box ticked: the request carries it, although busy() replaces the preview first
+    await page.click('zs-pv'); const pvw = page.last['GET zoho-sync/preview'];
+    assert.equal(pvw.counts.CREATE_APPROVED, 0); assert.deepEqual(pvw.mutations, []); assert.match(page.els['zs-out'].innerHTML, /Nothing to create\./);
+    assert.equal(page.els['zs-prov'].disabled, false, 'Provision enabled: there is a confirmation to give');
+    page.ticked.add('repair:1020>1010');
+    await page.click('zs-prov'); assert.deepEqual(page.toasts, []);
+    const req = provisions().pop();
+    assert.deepEqual(req.body, { confirm: true, token: pvw.token, confirm_adopt: ['repair:1020>1010'] });
+    assert.ok(req.body.confirm_adopt.length > 0 && !req.body.confirm_adopt.includes('acct:1010'));
+    assert.deepEqual(page.boxesNow(), [], 'the busy message and then the result replaced the preview');
+    out.push('2. Provision with the box ticked (CREATE_APPROVED 0, no mutations): POST {confirm: true, token: <preview token>, confirm_adopt: ["repair:1020>1010"]}');
+
+    // ---- 5. the confirmed repair: Trigon-side only
+    const res = page.last['POST zoho-sync/provision'], R = res.result;
     assert.equal(R.failed.length, 0, JSON.stringify(R.failed)); assert.equal(R.created.length, 0); assert.equal((R.repaired || []).length, 1);
+    assert.match(page.els['zs-out'].innerHTML, /Created 0 · adopted/);
     assert.equal(mapOf('acct:1010').zoho_id, PETTY); assert.equal(mapOf('acct:1020').zoho_id, CASH); assert.notEqual(mapOf('acct:1010').zoho_id, mapOf('acct:1020').zoho_id);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM zoho_map WHERE kind='account' AND zoho_id=?").get(PETTY).n, 1, 'the legacy 1020 → Petty Cash mapping is gone');
     const ids = ['1010', '1020', '1030'].map(c => mapOf('acct:' + c).zoho_id); assert.equal(new Set(ids).size, 3, '1010 / 1020 / 1030 distinct');
@@ -123,22 +172,25 @@ server.listen(0, async () => {
     for (const k of ['invoices', 'bills', 'journals', 'customerpayments', 'vendorpayments', 'creditnotes', 'expenses']) assert.ok(!(T[k] || []).length, 'nothing sent: ' + k);
     assert.equal(sendLog(), sentBefore, 'no transaction queued or sent');
     assert.equal(JSON.stringify(T.bankaccounts.find(a => a.account_id === PETTY)), pettyBefore, 'Petty Cash itself unchanged');
-    assert.equal(JSON.stringify(T), zohoBefore, 'nothing changed in Zoho');
-    out.push(`C. confirmed repair: 1020 → Petty Cash removed; 1010 → ${PETTY}; 1020 → ${CASH}; audit history kept + one legacy_mapping_repair record; zero Zoho calls that modify anything`);
+    assert.equal(JSON.stringify(T), zohoBefore, 'nothing changed in Zoho: no account created');
+    out.push(`5. confirmed repair: 1020 → Petty Cash removed; 1010 → ${PETTY}; 1020 → ${CASH}; audit history kept + one legacy_mapping_repair record; zero Zoho accounts created, zero modifying calls`);
 
-    // ---- D. the gate after the repair
+    // ---- 6. the gate after the repair
     const g = res.gate;
     assert.equal(g.state, 'READY_NON_VAT', JSON.stringify(g.reasons)); assert.deepEqual(g.targets_non_vat, { missing_mappings: 0, wrong_types: 0, ambiguous_matches: 0, blocking_conflicts: 0 });
     assert.equal(g.vat, 'VAT_PENDING'); assert.ok((res.plan.deferred || []).some(d => d.code === '6150'), '6150 ACCOUNTING_CHANGE_PENDING');
     const st = ok(await call('GET', 'zoho-sync')); assert.equal(st.continuous, false, 'continuous sync OFF'); assert.equal(st.gate, 'READY_NON_VAT');
     assert.deepEqual(writes(), []);
-    out.push('D. gate READY_NON_VAT, non-VAT targets 0 / 0 / 0 / 0, VAT_PENDING, 6150 ACCOUNTING_CHANGE_PENDING, continuous OFF');
+    out.push('6. gate READY_NON_VAT, non-VAT targets 0 / 0 / 0 / 0, VAT_PENDING, 6150 ACCOUNTING_CHANGE_PENDING, continuous OFF');
 
-    // the repair is done: no box any more, a second provisioning changes nothing
-    pv = await previewNow(); assert.deepEqual(boxes(ui.zsPlanHtml(pv)), []); assert.deepEqual(pv.confirmable, []);
-    const again = ok(await call('POST', 'zoho-sync/provision', provisionBody(pv, []))).result; assert.ok(!(again.repaired || []).length && !again.created.length);
-    assert.equal(mapOf('acct:1020').zoho_id, CASH); assert.deepEqual(writes(), []);
-    out.push('after the repair: no confirmation box; provisioning again changes nothing');
+    // ---- 7. idempotent: no box any more, Provision disabled; pressing it anyway changes nothing
+    await page.click('zs-pv'); assert.deepEqual(page.boxesNow(), []); assert.deepEqual(page.last['GET zoho-sync/preview'].confirmable, []);
+    assert.equal(page.els['zs-prov'].disabled, true, 'nothing to provision');
+    { const maps = JSON.stringify(db.prepare('SELECT * FROM zoho_map ORDER BY rowid').all());
+      await page.click('zs-prov'); const again = page.last['POST zoho-sync/provision'].result;
+      assert.deepEqual(provisions().pop().body.confirm_adopt, []); assert.ok(!(again.repaired || []).length && !again.created.length && !again.adopted.length);
+      assert.equal(JSON.stringify(db.prepare('SELECT * FROM zoho_map ORDER BY rowid').all()), maps); assert.equal(auditRepairs(), 1, 'no second repair audit record'); assert.deepEqual(writes(), []); }
+    out.push('7. after the repair: no confirmation box, Provision disabled; provisioning again changes nothing, no second audit record, no Zoho call');
 
     for (const o of out) console.log('  ✔ ' + o);
     console.log('ZOHO CONFIRMATION KEY TESTS PASSED');
