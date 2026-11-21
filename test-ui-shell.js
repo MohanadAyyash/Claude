@@ -11,6 +11,7 @@ if (typeof WebSocket !== 'function') { console.log('test-ui-shell: skipped (this
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-ui-'));
 process.env.ZOHO_NO_SCHEDULER = '1'; process.env.SALES_NO_SCHEDULER = '1';
+process.env.COPILOT_ENABLED = '1'; process.env.COPILOT_ALLOWED_ROLES = 'admin';            // the assistant's button and window are part of the screen too
 const { server } = require('./server.js');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -256,6 +257,30 @@ server.listen(0, async () => {
       const odd = (await usedFonts()).filter(f => !/^(Archivo|IBM Plex|Trigon Symbols)/.test(f));
       assert.deepEqual(odd, [], `${lng} ${hash}: text drawn with a non-brand font: ${odd.join(", ")}`);
     }
+
+    // 17. the assistant (Copilot): its button and window in the Trigon look: line icons, not letters or symbols from other fonts
+    await open('admin', 'secret12', 'ar', 'dashboard');
+    await waitFor(`!!document.querySelector('#tc-launcher')`);
+    assert.ok(await ev(`!!document.querySelector('#tc-launcher svg') && document.querySelector('#tc-launcher').textContent.trim() === ''`), 'assistant button is an icon, not a letter');
+    await click('#tc-launcher'); await waitFor(`!!document.querySelector('#tc-window')`);
+    assert.deepEqual(await ev(`[...document.querySelectorAll('#tc-window .tc-icon')].filter(b => !b.querySelector('svg') || b.textContent.trim()).map(b => b.id)`), [], 'window buttons are line icons');
+    assert.equal(await ev(`(() => { const s = document.querySelector('.tc-heading select').getBoundingClientRect(); return [...document.querySelectorAll('.tc-actions .tc-icon')].some(b => { const r = b.getBoundingClientRect(); return r.left < s.right && s.left < r.right && r.top < s.bottom && s.top < r.bottom; }); })()`), false, 'the conversation list does not run under the header buttons');
+    const oddCop = (await usedFonts()).filter(f => !/^(Archivo|IBM Plex|Trigon Symbols)/.test(f));
+    assert.deepEqual(oddCop, [], `assistant window drawn with a non-brand font: ${oddCop.join(', ')}`);
+
+    // 18. the identity of option D: figures not boxed, one rule under the title, focus in the brand colour
+    assert.equal(await cs('#main .kpi', 'boxShadow'), 'none', 'figures in a ruled row, not boxed cards');
+    assert.equal(await ev(`getComputedStyle(document.querySelector('#main h1'), '::after').content`), 'none', 'one rule under the title, not two');
+    await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });         // headless: apply :focus styles as in a focused window
+    await ev(`(() => { const i = document.createElement('input'); i.id = 'fx'; document.querySelector('#main').append(i); i.focus(); return true; })()`); await sleep(400);   // after the colour fade
+    assert.equal(await cs('#fx', 'borderTopColor'), steel, 'a field being typed in is outlined in Steel Blue');
+
+    // 19. phone: the assistant opens full screen above the top bar, so its close button can be reached
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 2, mobile: true });
+    await open('admin', 'secret12', 'ar', 'dashboard');
+    await waitFor(`!!document.querySelector('#tc-launcher')`); await click('#tc-launcher'); await waitFor(`!!document.querySelector('#tc-close')`); await sleep(300);
+    assert.equal(await ev(`(() => { const b = document.querySelector('#tc-close'), r = b.getBoundingClientRect(), t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return !!t && (t === b || b.contains(t)); })()`), true, 'close button not hidden under the top bar');
+    await desktop();
 
     console.log('test-ui-shell: all passed');
   } catch (e) { console.error(e); process.exitCode = 1; }
