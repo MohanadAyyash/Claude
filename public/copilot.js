@@ -3,6 +3,12 @@ const copilotEscape = value => String(value ?? '').replace(/[&<>"']/g, c => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
 
+// line icons in the Trigon style (currentColor), instead of letters or symbols the brand fonts do not have
+const TC_ICO = { assistant: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8.5 9.5h7M8.5 12.5h4"/>', memory: '<path d="M6 3h12v18l-6-4-6 4z"/>',
+  add: '<path d="M12 5v14M5 12h14"/>', del: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>', clear: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
+  min: '<path d="M5 12h14"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>' };
+const tcIco = n => `<svg class="tc-svg" viewBox="0 0 24 24" aria-hidden="true">${TC_ICO[n]}</svg>`;
+
 function copilotRecordCard(row, labels = {}) {
   const safeHref = href => /^#(?:projects|invoices|po|rfq|subcontracts)\/\d+$/.test(href || '') || ['#spend', '#settings'].includes(href);
   let sharePoint = '';
@@ -142,7 +148,7 @@ window.TrigonCopilotWidget = { escapeHtml: copilotEscape, recordCardHtml: copilo
       <form id="tc-memory-form"><textarea id="tc-memory-input" maxlength="300" rows="2" aria-label="${tr('معلومة لتذكرها', 'Memory item to remember')}"></textarea>
         <button class="btn sm" type="submit">${tr('حفظ', 'Save')}</button></form>
       ${memory.items?.length ? memory.items.map(item => `<div class="tc-memory-item"><span>${copilotEscape(item.content)}</span>
-        <button type="button" class="btn sec sm" data-delete-memory="${item.id}" aria-label="${tr('حذف المعلومة', 'Delete memory item')}">×</button></div>`).join('')
+        <button type="button" class="btn sec sm" data-delete-memory="${item.id}" aria-label="${tr('حذف المعلومة', 'Delete memory item')}">${tcIco('close')}</button></div>`).join('')
         : `<p class="muted">${tr('لا توجد ملاحظات محفوظة.', 'No saved notes.')}</p>`}
       <button type="button" class="btn sec sm" id="tc-clear-memory" ${memory.items?.length ? '' : 'disabled'}>${tr('حذف كل الملاحظات', 'Delete all notes')}</button>
       <h3>${tr('التخصيص من الاستخدام', 'Usage-based personalization')}</h3>
@@ -158,7 +164,7 @@ window.TrigonCopilotWidget = { escapeHtml: copilotEscape, recordCardHtml: copilo
     const host = root();
     if (!host) return;
     host.innerHTML = `<button type="button" class="tc-launcher" id="tc-launcher" title="Trigon Assistant / مساعد تريجون"
-      aria-label="Trigon Assistant / مساعد تريجون" aria-expanded="${state.open && !state.minimized}" aria-controls="tc-window">T</button>
+      aria-label="Trigon Assistant / مساعد تريجون" aria-expanded="${state.open && !state.minimized}" aria-controls="tc-window">${tcIco('assistant')}</button>
       ${state.open && !state.minimized ? `<section id="tc-window" class="tc-window" role="dialog" aria-modal="false"
         aria-labelledby="tc-title" dir="${lang === 'ar' ? 'rtl' : 'ltr'}">
         <header class="tc-header"><div class="tc-heading"><h2 id="tc-title">Trigon Assistant</h2>
@@ -166,12 +172,12 @@ window.TrigonCopilotWidget = { escapeHtml: copilotEscape, recordCardHtml: copilo
             ${state.conversations.map(item => `<option value="${copilotEscape(item.id)}" ${item.id === state.conversationId ? 'selected' : ''}>${copilotEscape(item.title)}</option>`).join('')}
             ${!state.conversations.length ? `<option value="">${tr('محادثة جديدة', 'New conversation')}</option>` : ''}
           </select></div>
-          <div class="tc-actions"><button type="button" id="tc-memory" class="tc-icon" aria-label="${tr('ذاكرتي', 'My memory')}" title="${tr('ذاكرتي', 'My memory')}">M</button>
-            <button type="button" id="tc-new" class="tc-icon" aria-label="${tr('محادثة جديدة', 'New conversation')}" title="${tr('محادثة جديدة', 'New conversation')}">＋</button>
-            <button type="button" id="tc-delete" class="tc-icon" aria-label="${tr('حذف المحادثة', 'Delete conversation')}" title="${tr('حذف المحادثة', 'Delete conversation')}" ${state.conversationId ? '' : 'disabled'}>⌫</button>
-            <button type="button" id="tc-clear-all" class="tc-icon" aria-label="${tr('مسح كل المحادثات', 'Clear all conversations')}" title="${tr('مسح كل المحادثات', 'Clear all conversations')}">⌧</button>
-            <button type="button" id="tc-minimize" class="tc-icon" aria-label="${tr('تصغير', 'Minimize')}">−</button>
-            <button type="button" id="tc-close" class="tc-icon" aria-label="${tr('إغلاق', 'Close')}">×</button></div>
+          <div class="tc-actions"><button type="button" id="tc-memory" class="tc-icon" aria-label="${tr('ذاكرتي', 'My memory')}" title="${tr('ذاكرتي', 'My memory')}">${tcIco('memory')}</button>
+            <button type="button" id="tc-new" class="tc-icon" aria-label="${tr('محادثة جديدة', 'New conversation')}" title="${tr('محادثة جديدة', 'New conversation')}">${tcIco('add')}</button>
+            <button type="button" id="tc-delete" class="tc-icon" aria-label="${tr('حذف المحادثة', 'Delete conversation')}" title="${tr('حذف المحادثة', 'Delete conversation')}" ${state.conversationId ? '' : 'disabled'}>${tcIco('del')}</button>
+            <button type="button" id="tc-clear-all" class="tc-icon" aria-label="${tr('مسح كل المحادثات', 'Clear all conversations')}" title="${tr('مسح كل المحادثات', 'Clear all conversations')}">${tcIco('clear')}</button>
+            <button type="button" id="tc-minimize" class="tc-icon" aria-label="${tr('تصغير', 'Minimize')}">${tcIco('min')}</button>
+            <button type="button" id="tc-close" class="tc-icon" aria-label="${tr('إغلاق', 'Close')}">${tcIco('close')}</button></div>
         </header>
         ${state.memoryMode ? memoryHtml() : `<div class="tc-notice" id="tc-first-notice" ${state.memory?.first_use_notice ? '' : 'hidden'}>
           ${tr('يمكنك حفظ ملاحظاتك وتفضيلاتك في «ذاكرتي» وعرضها أو حذفها في أي وقت. لا تغيّر الذاكرة صلاحياتك.', 'You can save notes and preferences in “My memory”, and view or delete them any time. Memory never changes your access.')}

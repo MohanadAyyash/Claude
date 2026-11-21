@@ -65,4 +65,8 @@ for (const f of fs.readdirSync(path.join(__dirname, 'public')).filter(f => f.end
   assert.match(qa, /#qa,\.qa-done\{[^}]*font-family:"Archivo","IBM Plex Sans Arabic"/); assert.match(qa, /#qa button,#qa input,#qa textarea\{font:inherit\}/);
   assert.doesNotMatch(sales, /✔/, 'no heavy check mark (not in the brand fonts) on the client page'); }
 
+// colours in the screens come from the Trigon palette (Steel Blue, Paper, Stone, Warm Grey, the status colours and their tints)
+{ const css = fs.readFileSync(path.join(__dirname, 'public', 'style.css'), 'utf8').toLowerCase();
+  for (const c of ['#466ea0', 'rgba(70,110,160', '#aaa595', '#bfb9a9']) assert.ok(!css.includes(c), `style.css uses ${c}, a colour outside the Trigon palette`); }
+
 console.log('test-nav: all passed');
