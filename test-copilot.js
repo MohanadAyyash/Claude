@@ -563,13 +563,20 @@ const mockServer = http.createServer((req, res) => {
       const siteScopedMemory = await call('POST', 'copilot/memory', { content: 'I manage project P-TEST' }, site);
       assert.equal(siteScopedMemory.status, 201);
       ctx.db.prepare('DELETE FROM user_projects WHERE user_id=(SELECT id FROM users WHERE username=?)').run('site1');
+      const followupProviderCalls = mock.calls.length;
       const accessRemovedFollowup = await call('POST', 'copilot/ask', {
         question: 'show documents for it', conversation_id: siteConversation.json.id,
       }, site);
-      assert.equal(accessRemovedFollowup.json.clarification, true);
       assert.equal(accessRemovedFollowup.json.data.length, 0,
         'project access removal invalidates prior context before any follow-up tool can return records');
+      assert.doesNotMatch(JSON.stringify(accessRemovedFollowup.json), /Sample Build|P-TEST|private-drawing\.pdf/,
+        'follow-up answer and references contain no data from the project after access removal');
+      assert.equal(mock.calls.length, followupProviderCalls,
+        'follow-up after project access removal sends no project data to the provider');
       const invalidatedHistory = await call('GET', `copilot/history?conversation_id=${siteConversation.json.id}`, undefined, site);
+      assert.doesNotMatch(JSON.stringify(invalidatedHistory.json), /Sample Build|P-TEST|private-drawing\.pdf/,
+        'conversation history after re-authorization contains no data or references from the removed project');
+      assert.equal(accessRemovedFollowup.json.clarification, true);
       assert.equal(invalidatedHistory.json.length, 1);
       assert.equal(invalidatedHistory.json[0].question, 'show documents for it',
         'authorization changes clear prior conversation data and preserve only the re-authorized follow-up');
@@ -585,14 +592,28 @@ const mockServer = http.createServer((req, res) => {
       assert.equal(crossUserContext.status, 404, 'conversation identifiers never load another user’s context');
 
       const siteId = ctx.db.prepare("SELECT id FROM users WHERE username='site1'").get().id;
-      ctx.db.prepare(`UPDATE copilot_preferences SET project_counts=? WHERE user_id=?`)
-        .run(JSON.stringify({ [privateProjectId]: 999 }), siteId);
+      ctx.db.prepare('INSERT OR IGNORE INTO user_projects(user_id,project_id) VALUES(?,?)').run(siteId, privateProjectId);
+      const learnedPrivateProject = await call('POST', 'copilot/ask', {
+        question: 'project status for project P-PRIVATE',
+      }, site);
+      assert.deepEqual(learnedPrivateProject.json.data.map(row => row.id), [privateProjectId],
+        'the site engineer can learn a default project while it is assigned');
+      ctx.db.prepare('DELETE FROM user_projects WHERE user_id=?').run(siteId);
+      const memoryProviderCalls = mock.calls.length;
       const memoryScope = await call('POST', 'copilot/ask', { question: 'project status' }, site);
-      assert.ok(memoryScope.json.data.every(row => row.id === projectId),
-        'an inaccessible remembered project cannot expand a site engineer’s allowed project scope');
+      const memoryResponse = JSON.stringify(memoryScope.json);
+      const memoryProviderPayloads = mock.calls.slice(memoryProviderCalls).map(entry => JSON.stringify(entry.body));
+      assert.ok(memoryScope.json.data.length === 0 &&
+        !/Unassigned Build|P-PRIVATE/.test(memoryResponse) &&
+        mock.calls.length === memoryProviderCalls &&
+        memoryProviderPayloads.every(payload => !/Unassigned Build|P-PRIVATE/.test(payload)),
+      'revoked learned project returns no records/text and sends no project data to the provider');
       const siteMemoryView = await call('GET', 'copilot/memory', undefined, site);
       assert.ok(siteMemoryView.json.preferences.projects.every(item => item.id !== privateProjectId),
         'inaccessible project preferences are purged from the owner’s memory view');
+      ctx.db.prepare('INSERT OR IGNORE INTO user_projects(user_id,project_id) VALUES(?,?)').run(siteId, projectId);
+      assert.equal((await call('POST', 'copilot/ask', { question: 'project status' }, site)).status, 200,
+        'the site engineer can query again after project access is restored');
       process.env.COPILOT_USER_LIMIT = '100';
 
       ctx.db.prepare('UPDATE users SET disabled=1 WHERE username=?').run('managerFeature');
