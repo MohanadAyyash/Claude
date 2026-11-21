@@ -24,6 +24,19 @@ async function api(method, url, body) {
   if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { data: j });
   return j;
 }
+// line icons in the brand colour (currentColor) instead of emoji
+const ICO = { search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>', book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5M8 7h7"/>',
+  bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>', print: '<path d="M7 9V3h10v6M7 17H4v-7h16v7h-3"/><rect x="7" y="14" width="10" height="7"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 0 1 4.9.6c0 1.7-2.4 2-2.4 3.6M12 17h.01"/>', menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  doc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>', link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  mail: '<rect x="3" y="5" width="18" height="14"/><path d="M3 6l9 7 9-7"/>', lock: '<rect x="5" y="11" width="14" height="10"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  clip: '<path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L14 7"/>', phone: '<rect x="7" y="2" width="10" height="20"/><path d="M11 18h2"/>',
+  pin: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>', flag: '<path d="M5 21V4h11l-2 4 2 4H5"/>',
+  star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>', clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  play: '<path d="M7 4l13 8-13 8z"/>', stop: '<rect x="6" y="6" width="12" height="12"/>' };
+const ico = n => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICO[n]}</svg>`;
+const MK = { ok: '<i class="mk ok" aria-hidden="true"></i>', warn: '<i class="mk warn" aria-hidden="true"></i>', bad: '<i class="mk bad" aria-hidden="true"></i>' };   // status marks (replace the old emoji)
+const MARK = '<span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>';
 const toast = m => { const d = document.createElement('div'); d.className = 'toast'; d.textContent = m; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); };
 const guard = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message); } };
 const fmtIssues = e => e.message;
@@ -66,7 +79,7 @@ async function boot() {
   shell();
 }
 function authBox(title, extra, btn, onsubmit, after = '') {
-  $('#app').innerHTML = `<form class="login"><img class="logo" src="/api/brand/logo" alt="" onerror="this.remove()"><h2>${title}</h2>
+  $('#app').innerHTML = `<form class="login"><img class="logo" src="/api/brand/logo" alt="" onerror="this.nextElementSibling.hidden=false;this.remove()"><div class="lmark" hidden>${MARK}</div><h2>${title}</h2>
     <div class="f"><label>${tr('اسم المستخدم', 'Username')}</label><input name="username" required autofocus></div>
     <div class="f"><label>${tr('كلمة المرور', 'Password')}</label><input name="password" type="password" required minlength="6"></div>${extra}
     <div class="err" id="err"></div><button class="btn" style="width:100%">${btn}</button>${after}
@@ -82,7 +95,7 @@ function authBox(title, extra, btn, onsubmit, after = '') {
 const msButton = st => st && st.m365_login ? `<a class="btn sec" id="mslogin" href="/auth/microsoft/login" style="width:100%;display:block;text-align:center;margin-top:10px;box-sizing:border-box;text-decoration:none">${tr('تسجيل الدخول باستخدام Microsoft', 'Sign in with Microsoft')}</a>` : '';
 // AUTH_MODE=microsoft-first: Microsoft is the way in, no password form; a plain (not hidden) link for the emergency administrator
 const msFirstScreen = () => {
-  $('#app').innerHTML = `<div class="login" style="text-align:center"><img class="logo" src="/api/brand/logo" alt="" onerror="this.remove()"><h2>${tr('تسجيل الدخول', 'Sign in')}</h2>
+  $('#app').innerHTML = `<div class="login" style="text-align:center"><img class="logo" src="/api/brand/logo" alt="" onerror="this.nextElementSibling.hidden=false;this.remove()"><div class="lmark" hidden>${MARK}</div><h2>${tr('تسجيل الدخول', 'Sign in')}</h2>
     <a class="btn" id="mslogin" href="/auth/microsoft/login" style="width:100%;display:block;text-align:center;box-sizing:border-box;text-decoration:none">${tr('تسجيل الدخول باستخدام Microsoft', 'Sign in with Microsoft')}</a>
     <p style="margin-top:28px"><a href="/auth/emergency" id="emlink" class="muted" style="font-size:12px">${tr('دخول المسؤول للطوارئ', 'Emergency administrator sign-in')}</a></p>
     <p><a href="#" id="lg" class="muted">${lang === 'ar' ? 'English' : 'عربي'}</a></p></div>`;
@@ -112,29 +125,88 @@ const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
 const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role) &&
   (n[0] !== 'myaccount' || ME.employee_id) && (n[0] !== 'copilot' || COPILOT_AVAILABLE));   // my account: only for a user linked to an employee
 const landing = () => ({ employee: 'portal', hr: 'hrdash', foreman: 'attendance', site_engineer: 'sitediary', qs: 'projects', procurement: 'po', storekeeper: 'stock' }[ME.role] || 'dashboard');
+let NAVT = [];                                                            // menu sections for this user (nav.js navTree)
+const navLink = n => `<a data-r="${n[0]}">${tr(n[1], n[2])}</a>`;
+// open one group of the side menu and close the others (null: close all); remembered for the next visit
+function navOpen(key) {
+  document.querySelectorAll('.side .g').forEach(g => { const on = g.dataset.g === key; g.classList.toggle('open', on); g.querySelector('.gh').setAttribute('aria-expanded', on); });
+  try { if (key) localStorage.navOpen = key; else delete localStorage.navOpen; } catch { /* private window */ }
+}
+// mark the current page in the menu and open its group; the menu itself is not redrawn, so it keeps its scroll position
+function markRoute() {
+  const r = route.split('/')[0];
+  document.querySelectorAll('.side a[data-r]').forEach(a => a.classList.toggle('on', a.dataset.r === r));
+  const key = navGroupOf(NAVT, r); if (key) navOpen(key);
+  const a = $(`.side a[data-r="${r}"]`); if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest' });
+}
+// company logo / name at the top of the menu and in the phone top bar (redrawn after the settings are saved)
+const topBrand = () => BR.has('logo') ? `<img src="/api/brand/logo" alt="">` : `<b>${esc(S.company_name || '')}</b>`;
+const sideBrand = () => `${BR.has('logo') ? `<img src="/api/brand/logo" alt="${esc(S.company_name || '')}">` : `<div class="wm"><span class="mark"><i></i><i></i><i></i></span>${esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}</div>`}<div class="who">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div>`;
+function paintBrand() { const b = $('.side .brand'), t = $('.topbar .tb'); if (b) b.innerHTML = sideBrand(); if (t) t.innerHTML = topBrand(); }
 function shell() {
   const ok = allowedNav(), okSet = new Set(ok.map(n => n[0]));
-  let links = '', pending = '';
-  for (const n of NAV) {
-    if (n[0] === '#') { pending = `<div class="grp">${tr(n[1], n[2])}</div>`; continue; }
-    if (!okSet.has(n[0])) continue;
-    links += pending + `<a data-r="${n[0]}" class="${route.split('/')[0] === n[0] ? 'on' : ''}">${tr(n[1], n[2])}</a>`; pending = '';
-  }
-  $('#app').innerHTML = `<div class="topbar"><button type="button" id="menu" aria-label="menu">☰</button>${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="">` : `<b>${esc(S.company_name || '')}</b>`}</div><div class="scrim" id="scrim"></div><div class="shell"><nav class="side"><div class="brand">${BR.has('logo_white') ? `<img src="/api/brand/logo_white" alt="${esc(S.company_name || '')}">` : esc(lang === 'ar' && S.company_name_ar ? S.company_name_ar : (S.company_name || tr('نظام المقاولات', 'Contractor ERP')))}<div style="font-size:11px;font-weight:400;color:#9fb3c6">${esc(ME.username)} · ${esc(ROLE[ME.role] ? tr(...ROLE[ME.role]) : ME.role)}</div></div>
+  NAVT = navTree(NAV, okSet);
+  const links = NAVT.map(s => s.key === null ? s.items.map(navLink).join('')
+    : `<div class="g" data-g="${esc(s.key)}"><button type="button" class="gh" aria-expanded="false"><span class="gbar"></span><span class="t">${tr(s.ar, s.en)}</span><span class="cnt">${s.items.length}</span></button><div class="items">${s.items.map(navLink).join('')}</div></div>`).join('');
+  $('#app').innerHTML = `<div class="topbar"><button type="button" id="menu" aria-label="menu">${ico('menu')}</button><span class="tb">${topBrand()}</span></div><div class="scrim" id="scrim"></div><div class="shell"><nav class="side"><div class="brand">${sideBrand()}</div>
+    <button type="button" class="gotob" id="goto">${ico('search')}<span>${tr('انتقل إلى…', 'Go to…')}</span><kbd>Ctrl K</kbd></button>
     ${links}
-    <a class="guide" href="${guideUrl()}" target="_blank" rel="noopener">📘 ${tr('دليل الاستخدام', 'User guide')}</a><div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
+    <a class="guide" href="${guideUrl()}" target="_blank" rel="noopener">${ico('book')} ${tr('دليل الاستخدام', 'User guide')}</a><div class="foot"><button class="btn" id="lang">${lang === 'ar' ? 'English' : 'عربي'}</button><button class="btn" id="out">${tr('خروج', 'Logout')}</button></div></nav>
     <main class="main" id="main"></main></div>`;
   const drawer = open => { $('.side').classList.toggle('open', open); $('#scrim').classList.toggle('on', open); };
   $('#menu').onclick = () => drawer(!$('.side').classList.contains('open')); $('#scrim').onclick = () => drawer(false);
   document.querySelectorAll('.side a[data-r]').forEach(a => a.onclick = () => { drawer(false); go(a.dataset.r); });
+  document.querySelectorAll('.side .g .gh').forEach(b => b.onclick = () => { const g = b.parentElement; navOpen(g.classList.contains('open') ? null : g.dataset.g); });
+  $('#goto').onclick = () => openGoto();
   $('#lang').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('#out').onclick = async () => { await api('POST', 'logout'); boot(); };
+  let saved = null; try { saved = localStorage.navOpen; } catch { /* private window */ }
+  if (saved && NAVT.some(s => s.key === saved)) navOpen(saved);           // the current page's group (markRoute) wins over the remembered one
+  markRoute();
   render();
   window.mountCopilotWidget?.();
   if (window.onShell) onShell();                                          // mobile.js: bell, install button
 }
 const go = r => { location.hash = r; };
-window.onhashchange = () => { route = location.hash.slice(1) || landing(); if ($('#main')) shell(); };
+// moving between pages redraws only the page, never the menu (it used to jump back to the top on every click)
+window.onhashchange = () => {
+  route = location.hash.slice(1) || landing();
+  if (!$('#main')) return;
+  $('.side').classList.remove('open'); $('#scrim').classList.remove('on');   // phone drawer: closed however the page was reached (Go to, notification)
+  markRoute(); render(); if (window.onShell) onShell();
+};
+// "Go to" (Ctrl+K / ⌘K): type part of a page name, Arabic or English, to open it. Only the pages of this user's menu are searched.
+function openGoto() {
+  if ($('.goto')) return $('#gotoq').focus();
+  const box = document.createElement('div'); box.className = 'goto'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', tr('انتقل إلى', 'Go to'));
+  box.innerHTML = `<div class="gotobox"><input id="gotoq" autocomplete="off" placeholder="${tr('اكتب اسم الصفحة…', 'Type a page name…')}"><div id="gotores"></div></div>`;
+  document.body.appendChild(box);
+  const q = $('#gotoq'), res = $('#gotores'); let hits = [], sel = 0;
+  const close = () => { box.remove(); const b = $('#goto'); if (b) b.focus(); };
+  const pick = h => { close(); go(h.row[0]); };
+  const draw = () => {
+    hits = navSearch(NAVT, q.value); sel = 0;
+    res.innerHTML = hits.length ? hits.map((h, i) => `<button type="button" data-r="${h.row[0]}" class="${i === sel ? 'sel' : ''}">${esc(tr(h.row[1], h.row[2]))}${h.section.key === null ? '' : `<span class="muted">${esc(tr(h.section.ar, h.section.en))}</span>`}</button>`).join('')
+      : `<div class="muted gotoempty">${tr('لا توجد صفحة بهذا الاسم', 'No page with that name')}</div>`;
+  };
+  q.oninput = draw;
+  q.onkeydown = e => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (hits[sel]) pick(hits[sel]); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); sel = Math.max(0, Math.min(hits.length - 1, sel + (e.key === 'ArrowDown' ? 1 : -1)));
+      res.querySelectorAll('button').forEach((b, i) => b.classList.toggle('sel', i === sel));
+    }
+  };
+  res.onclick = e => { const b = e.target.closest('button[data-r]'); if (b) pick(hits[[...res.children].indexOf(b)]); };
+  box.onclick = e => { if (e.target === box) close(); };
+  draw(); q.focus();
+}
+document.addEventListener('keydown', e => {                               // registered once; e.code so it also works on an Arabic keyboard
+  if (!(e.ctrlKey || e.metaKey) || e.code !== 'KeyK') return;
+  if (!$('.side') || $('#modal-root .overlay')) return;                    // not signed in, or a form is open: leave the key alone
+  e.preventDefault(); openGoto();
+});
 // user guide (public/guide, built from docs/USER-GUIDE-*.md by tools/build-guide.js): the section that explains each page
 const GUIDE = { hired: 43, cheques: 35, cashflow: 36, guarantees: 37, spend: 38, equipment: 41, schedule: 42, dashboard: 1, settings: 2, parties: 4, tenders: 5, quotes: 6, projects: 7, invoices: 8, payments: 9, aging: 10, sitediary: 11, rfq: 12, po: 12, bills: 13, subcontracts: 14, stock: 15, assets: 16, petty: 17,
   employees: 18, attendance: 19, leave: 20, hrrequests: 21, approvals: 22, letters: 23, payroll: 24, hrdash: 26, portal: 27, financials: 28, ledger: 28, journal: 28, coa: 28, bank: 28, zoho: 29, vat: 30, ctax: 30, compliance: 30, documents: 30, tasks: 31, notifications: 31, partners: 45, myaccount: 46, claims: 46, staffaccounts: 46 };
@@ -144,8 +216,10 @@ const render = async () => {
   const [p, id] = route.split('/'); $('#main').innerHTML = '';
   try {
     await (PAGES[p] || PAGES[landing()])(id);
-    if (ME.role !== 'employee' && $('#main').children.length) { let bar = $('#main .bar'); if (!bar) { const h = $('#main h1'); bar = document.createElement('div'); bar.className = 'bar'; if (h) { h.replaceWith(bar); bar.append(h); bar.insertAdjacentHTML('beforeend', '<span class="sp"></span>'); } else $('#main').prepend(bar); } bar.insertAdjacentHTML('beforeend', `<button class="btn sec sm noprint" id="prt">🖨 ${tr('طباعة بالترويسة', 'Print on letterhead')}</button>`); $('#prt').onclick = printReport; }
-    if (GUIDE[p] && $('#main .bar') && !$('#hlp')) $('#main .bar').insertAdjacentHTML('beforeend', `<a class="btn sec sm noprint" id="hlp" target="_blank" rel="noopener" href="${guideUrl(p)}" title="${tr('شرح هذه الصفحة في دليل الاستخدام', 'How to use this page (user guide)')}">❓ ${tr('مساعدة', 'Help')}</a>`);
+    if (ME.role !== 'employee' && $('#main').children.length) { let bar = $('#main .bar'); if (!bar) { const h = $('#main h1'); bar = document.createElement('div'); bar.className = 'bar'; if (h) { h.replaceWith(bar); bar.append(h); bar.insertAdjacentHTML('beforeend', '<span class="sp"></span>'); } else $('#main').prepend(bar); } bar.insertAdjacentHTML('beforeend', `<button class="btn sec sm noprint" id="prt">${ico('print')} ${tr('طباعة بالترويسة', 'Print on letterhead')}</button>`); $('#prt').onclick = printReport; }
+    const h1 = $('#main .bar > h1'), sec = NAVT.find(x => x.key !== null && x.key === navGroupOf(NAVT, p));   // section name above the page title
+    if (h1 && sec) { const t = document.createElement('div'); t.className = 'ttl'; h1.replaceWith(t); t.innerHTML = `<div class="crumb">${esc(tr(sec.ar, sec.en))}</div>`; t.append(h1); }
+    if (GUIDE[p] && $('#main .bar') && !$('#hlp')) $('#main .bar').insertAdjacentHTML('beforeend', `<a class="btn sec sm noprint" id="hlp" target="_blank" rel="noopener" href="${guideUrl(p)}" title="${tr('شرح هذه الصفحة في دليل الاستخدام', 'How to use this page (user guide)')}">${ico('help')} ${tr('مساعدة', 'Help')}</a>`);
   }
   catch (e) {
     if (e.message === 'unauthorized') return;
@@ -154,6 +228,9 @@ const render = async () => {
       ${stale ? `<p>${tr('غالباً الخادم يعمل بنسخة قديمة. أغلق نافذة PowerShell (Ctrl+C) ثم شغّل npm.cmd start من جديد، وبعدها حدّث الصفحة (Ctrl+F5).', 'The server is probably running an old version. Stop it in PowerShell (Ctrl+C), start it again with npm.cmd start, then hard-refresh the page (Ctrl+F5).')}</p>` : ''}</div>`;
   }
 };
+const REF = /^[A-Z]{2,5}\d{0,2}[-/](?=[A-Z0-9/-]*\d)[A-Z0-9][A-Z0-9/-]*$/;      // upper case and at least one digit: not «Al-Ain»
+const markRefs = root => root.querySelectorAll('td:not(.ref)').forEach(td => { if (!td.children.length && REF.test(td.textContent.trim())) td.classList.add('ref'); });
+new MutationObserver(() => { const m = document.getElementById('main'); if (m) markRefs(m); }).observe(document.getElementById('app'), { childList: true, subtree: true });
 const main = html => { $('#main').innerHTML = html; };
 
 // ---- printing any page on the company letterhead ------------------------------------
@@ -167,7 +244,7 @@ async function reportPdf(el) {
   try {
     const r = await api('POST', 'report-pdf', { title, html: el.innerHTML, lang });
     m.querySelector('.modal').innerHTML = `<h2>${tr('ملف PDF جاهز', 'The PDF is ready')}</h2><p class="muted">${tr('افتحه، ثم اضغط زر المشاركة لطباعته أو حفظه أو إرساله. الرابط صالح 10 دقائق.', 'Open it, then use the share button to print, save or send it. The link works for 10 minutes.')}</p>
-      <div class="acts"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener" style="text-decoration:none">📄 ${tr('فتح PDF', 'Open PDF')}</a><button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`;
+      <div class="acts"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener" style="text-decoration:none">${ico('doc')} ${tr('فتح PDF', 'Open PDF')}</a><button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button></div>`;
     $('#cancel', m).onclick = closeModal;
     return true;
   } catch (e) { closeModal(); toast(e.message); return false; }
@@ -261,14 +338,21 @@ PAGES.dashboard = async () => {
    ${kpi(tr('إجمالي الفواتير (بدون ضريبة)', 'Invoiced (ex VAT)'), d.invoiced)}${kpi(tr('إجمالي المصروفات (بدون ضريبة)', 'Expenses (ex VAT)'), d.expenses)}
    ${kpi(tr('الربح التشغيلي', 'Operating profit'), d.invoiced - d.expenses, d.invoiced - d.expenses >= 0 ? 'ok' : 'bad')}
    ${kpi(tr('الرصيد النقدي', 'Cash balance'), d.cash, d.cash >= 0 ? 'ok' : 'bad')}
-   ${kpi(tr('مستحقات على العملاء', 'Receivables'), d.receivable, 'warn')}${kpi(tr('محتجزات لدى العملاء', 'Retention held by clients'), d.retention_held)}
-   ${kpi(tr('مستحقات للموردين', 'Payables'), d.payable, 'bad')}</div>
-  <div class="card"><h2>${tr('التدفق النقدي — آخر ٦ أشهر', 'Cash flow — last 6 months')} <span class="muted" style="font-weight:400">(<span class="pos">■</span> ${tr('مقبوضات', 'In')} <span class="neg">■</span> ${tr('مدفوعات', 'Out')})</span></h2>
-   <div class="bars">${d.months.map(m => `<div class="m"><div class="pair"><div class="b in" style="height:${m.in / mx * 100}%" title="${money(m.in)}"></div><div class="b out" style="height:${m.out / mx * 100}%" title="${money(m.out)}"></div></div>${m.month}</div>`).join('')}</div></div>
+   ${kpi(tr('مستحقات على العملاء', 'Receivables'), d.receivable)}${kpi(tr('محتجزات لدى العملاء', 'Retention held by clients'), d.retention_held)}
+   ${kpi(tr('مستحقات للموردين', 'Payables'), d.payable)}</div>
+  <div class="duo">${markChart(d)}<div class="card"><h2>${tr('التدفق النقدي — آخر ٦ أشهر', 'Cash flow — last 6 months')} <span class="muted" style="font-weight:400">(<span class="sw in"></span> ${tr('مقبوضات', 'In')} <span class="sw out"></span> ${tr('مدفوعات', 'Out')})</span></h2>
+   <div class="bars">${d.months.map(m => `<div class="m"><div class="pair"><div class="b in" style="height:${m.in / mx * 100}%" title="${money(m.in)}"></div><div class="b out" style="height:${m.out / mx * 100}%" title="${money(m.out)}"></div></div>${m.month}</div>`).join('')}</div></div></div>
   ${d.alerts.length ? `<div class="card"><h2>${tr('تنبيهات الامتثال', 'Compliance alerts')} <a href="#compliance" style="font-size:12px">${tr('عرض الكل', 'view all')}</a></h2>${alertList(d.alerts.slice(0, 5))}</div>` : ''}
   ${d.overdue.length ? `<div class="card"><h2 class="neg">${tr('فواتير متأخرة', 'Overdue invoices')}</h2><div class="tw"><table><tbody>${d.overdue.map(i => `<tr class="click" onclick="go('invoices')"><td>${esc(i.number)}</td><td>${esc(i.client_name || '')}</td><td>${esc(i.due_date)}</td><td class="n neg">${money(i.balance)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
   <h2>${tr('ربحية المشاريع', 'Project profitability')}</h2>${projTable(d.projects)}`);
 };
+// client balances as the three bars of the Trigon mark, all to one scale: overdue, not yet due, all open balances (from the dashboard figures)
+function markChart(d) {
+  const r2 = x => Math.round(x * 100) / 100, overdue = r2(d.overdue.reduce((t, i) => t + i.balance, 0)), total = r2(d.receivable), rows = [
+    [tr('متأخرة السداد', 'Overdue'), overdue, 'late'], [tr('لم يحن موعدها', 'Not yet due'), r2(total - overdue), ''], [tr('كل الأرصدة المفتوحة', 'All open balances'), total, '']];
+  return `<div class="card markchart"><h2>${tr('ذمم العملاء', 'Client balances')}</h2>${rows.map(([l, v, c]) => `<div class="mrow ${c}" data-v="${v}"><div class="ml"><span>${l}</span><b>${money(v)}</b></div><div class="track"><div class="fill" style="width:${total > 0 ? Math.max(0, Math.min(100, v / total * 100)).toFixed(2) : 0}%"></div></div></div>`).join('')}
+    <div class="muted cap">${tr('أرصدة فواتير العملاء المفتوحة، بنفس المقياس.', 'Open client invoice balances, drawn to one scale.')} <a href="#aging">${tr('أعمار الديون', 'Ageing')}</a></div></div>`;
+}
 const projTable = rows => `<div class="tw"><table><thead><tr><th>${tr('المشروع', 'Project')}</th><th class="n">${tr('قيمة العقد', 'Contract')}</th><th class="n">${tr('المفوتر', 'Invoiced')}</th><th class="n">${tr('التكلفة', 'Cost')}</th><th class="n">${tr('الربح', 'Profit')}</th><th class="n">%</th><th class="n">${tr('مستحق التحصيل', 'Receivable')}</th></tr></thead><tbody>
   ${rows.map(p => `<tr class="click" onclick="go('projects/${p.id}')"><td>${esc(p.code || '')} ${esc(p.name)}</td><td class="n">${money(p.contract_value)}</td><td class="n">${money(p.invoiced)}</td><td class="n">${money(p.cost)}</td><td class="n ${p.profit >= 0 ? 'pos' : 'neg'}">${money(p.profit)}</td><td class="n">${p.margin}%</td><td class="n">${money(p.receivable)}</td></tr>`).join('') || `<tr><td colspan="7" class="muted">${tr('لا توجد مشاريع', 'No projects yet')}</td></tr>`}</tbody></table></div>`;
 
@@ -357,7 +441,7 @@ async function siteProjectDetail(id) {
     ${boq.map(i => `<tr><td>${esc(i.section ? i.section + ' — ' : '')}${esc(i.description)}</td><td>${esc(i.unit)}</td><td class="n">${money(i.qty)}</td><td class="n">${edit ? `<input type="number" min="0" max="100" step="any" style="width:80px" data-done="${i.id}" value="${i.done_pct}">` : i.done_pct + '%'}</td></tr>`).join('') || `<tr><td colspan="4" class="muted">—</td></tr>`}</tbody></table></div>
     <h2 style="margin-top:16px">${tr('يومية الموقع', 'Site diary')}</h2><div class="tw"><table><tbody>${reps.slice(0, 10).map(r => `<tr><td>${esc(r.date)}</td><td class="n">${r.labour_count}</td><td>${esc(r.work_done || '')}</td><td class="neg">${esc(r.issues || '')}</td></tr>`).join('') || `<tr><td class="muted">—</td></tr>`}</tbody></table></div>
     <div class="card" id="pdocs" style="margin-top:16px"></div>`);
-  document.querySelectorAll('[data-done]').forEach(x => x.onchange = guard(async () => { await api('PUT', 'boq_items/' + x.dataset.done, { done_pct: +x.value }); x.style.background = '#eefaf1'; }));
+  document.querySelectorAll('[data-done]').forEach(x => x.onchange = guard(async () => { await api('PUT', 'boq_items/' + x.dataset.done, { done_pct: +x.value }); x.style.background = '#E9E7E1'; }));
   if (window.docsPanel) docsPanel($('#pdocs'), 'project', id, edit);
 }
 async function projectDetail(id) {
@@ -434,15 +518,15 @@ async function docModal(kind, row, preset = {}) {
     customer_address_missing: tr('عنوان العميل غير مسجّل — مطلوب في الفاتورة الضريبية', 'Client address missing — required on tax invoices') };
   const m = modal(`<h2>${isQ ? tr('عرض سعر', 'Quotation') : isCN ? tr('إشعار دائن', 'Credit note') : S.vat_registered === '0' ? tr('فاتورة', 'Invoice') : tr('فاتورة ضريبية', 'Tax invoice')} ${esc(r.number || '')} ${dead ? tag('void') : ''}</h2>
     ${dead ? `<p class="err">${tr('ملغاة', 'Voided')}: ${esc(r.void_reason || '')}</p>` : ''}
-    ${isQ && r.accepted_at ? `<p class="ok">✔ ${tr('قبله العميل إلكترونياً', 'Accepted online by the client')}: <b>${esc(r.accepted_by)}</b> — ${esc(r.accepted_at)}${/^data:image\/png;base64,/.test(r.signature || '') ? `<br><img src="${r.signature}" alt="" style="height:60px;background:#fff;border:1px solid #ddd">` : ''}</p>` : ''}
-    ${isQ && r.rejected_at ? `<p class="err">${tr('رفضه العميل', 'Declined by the client')} — ${esc(r.rejected_at)}${r.client_comment ? `: ${esc(r.client_comment)}` : ''}</p>` : ''}${(r.warnings || []).map(w => `<p class="err" style="color:var(--warn)">⚠ ${W[w] || w}</p>`).join('')}<div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>
+    ${isQ && r.accepted_at ? `<p class="ok">${MK.ok}${tr('قبله العميل إلكترونياً', 'Accepted online by the client')}: <b>${esc(r.accepted_by)}</b> — ${esc(r.accepted_at)}${/^data:image\/png;base64,/.test(r.signature || '') ? `<br><img src="${r.signature}" alt="" style="height:60px;background:#fff;border:1px solid #ddd">` : ''}</p>` : ''}
+    ${isQ && r.rejected_at ? `<p class="err">${tr('رفضه العميل', 'Declined by the client')} — ${esc(r.rejected_at)}${r.client_comment ? `: ${esc(r.client_comment)}` : ''}</p>` : ''}${(r.warnings || []).map(w => `<p class="err" style="color:var(--warn)">${MK.warn}${W[w] || w}</p>`).join('')}<div class="f2">${head.map(f => field(f, r[f.k])).join('')}</div>
     ${e.html}<div class="totals" id="tot"></div>
     <div class="f2" style="margin-top:10px">${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, r.notes)}${isQ ? field({ k: 'terms', ar: 'الشروط', en: 'Terms', type: 'textarea' }, r.terms) + field({ k: 'payment_terms', ar: 'شروط الدفع في الغلاف — دفعة في كل سطر، مثل: 25% - Upon signing of the agreement', en: 'Payment terms on the cover — one stage per line, e.g. 25% - Upon signing of the agreement', type: 'textarea' }, r.payment_terms) : ''}</div>
     <div class="acts">${dead ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}
     ${row && !dead ? `<button class="btn sec" id="print">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}${row && !dead && row.ipc ? `<button class="btn sec" id="ipc">${tr('شهادة الدفع (المستخلص)', 'Payment certificate')}</button><button class="btn sec" id="ipcpdf">${tr('المستخلص PDF', 'Certificate PDF')}</button>` : ''}
     ${row && !dead ? `<button class="btn sec" id="mail">${tr('إرسال بالإيميل', 'Email')}</button>` : ''}${row && !isQ && !isCN && !dead && row.balance > 0 && row.status === 'overdue' ? `<button class="btn sec" id="remind">${tr('تذكير بالسداد', 'Payment reminder')}</button>` : ''}
     ${row && !isQ && !isCN && !dead ? `<button class="btn sec" id="pay">${tr('تسجيل دفعة', 'Record payment')}</button><button class="btn sec" id="cn">${tr('إصدار إشعار دائن', 'Issue credit note')}</button>` : ''}
-    ${row && isQ && !row.project_id ? `<button class="btn sec" id="conv">${tr('تحويل إلى مشروع', 'Convert to project')}</button>` : ''}${row && isQ && !row.accepted_at && !row.rejected_at && !window.STANDALONE ? `<button class="btn sec" id="share">🔗 ${tr('رابط القبول للعميل', 'Client acceptance link')}</button>` : ''}
+    ${row && isQ && !row.project_id ? `<button class="btn sec" id="conv">${tr('تحويل إلى مشروع', 'Convert to project')}</button>` : ''}${row && isQ && !row.accepted_at && !row.rejected_at && !window.STANDALONE ? `<button class="btn sec" id="share">${ico('link')} ${tr('رابط القبول للعميل', 'Client acceptance link')}</button>` : ''}
     <button class="btn sec" id="cancel">${tr('إغلاق', 'Close')}</button><span class="sp"></span>${row && isQ ? `<button class="btn bad" id="del">${tr('حذف', 'Delete')}</button>` : ''}${row && !isQ && !dead && ME.role === 'admin' ? `<button class="btn bad" id="void">${tr('إلغاء الفاتورة', 'Void')}</button>` : ''}</div>`, true);
   if (dead) m.querySelectorAll('input,select,textarea').forEach(x => x.disabled = true);
   bindDoc(m, e.row, 1, !isQ);
@@ -488,7 +572,7 @@ async function docModal(kind, row, preset = {}) {
     if ($('#share', m)) $('#share', m).onclick = guard(async () => {
       const s = await api('POST', `quotes/${row.id}/share`, {}), link = location.origin + s.path;
       const m2 = modal(`<h2>${tr('رابط القبول للعميل', 'Client acceptance link')}</h2><p class="muted">${tr('يفتح العميل الرابط دون تسجيل دخول، يراجع العرض، ثم يقبله بالاسم والتوقيع أو يرفضه بملاحظة. يصلك تنبيه فوراً.', 'The client opens the link without signing in, reviews the quotation, then accepts with name and signature or declines with a comment. You are notified right away.')}</p>
-        <input id="lnk" dir="ltr" readonly value="${esc(link)}" onclick="this.select()"><div class="acts"><button class="btn" id="cp">${tr('نسخ', 'Copy')}</button><button class="btn sec" id="em">✉ ${tr('إرسال بالبريد مع العرض', 'Email with the quotation')}</button><a class="btn sec" target="_blank" href="${esc(link)}">${tr('معاينة', 'Preview')}</a><button class="btn sec" id="cl">${tr('إغلاق', 'Close')}</button></div>`);
+        <input id="lnk" dir="ltr" readonly value="${esc(link)}" onclick="this.select()"><div class="acts"><button class="btn" id="cp">${tr('نسخ', 'Copy')}</button><button class="btn sec" id="em">${ico('mail')} ${tr('إرسال بالبريد مع العرض', 'Email with the quotation')}</button><a class="btn sec" target="_blank" href="${esc(link)}">${tr('معاينة', 'Preview')}</a><button class="btn sec" id="cl">${tr('إغلاق', 'Close')}</button></div>`);
       $('#cp', m2).onclick = guard(async () => { await navigator.clipboard.writeText(link); toast(tr('تم النسخ', 'Copied')); });
       $('#em', m2).onclick = guard(async () => { const to = prompt(tr('أرسل إلى البريد:', 'Send to email:'), row.client_email || ''); if (!to) return; await api('POST', `quotes/${row.id}/email`, { to, message: `To accept this quotation online, open: ${link}\nلقبول العرض إلكترونياً افتح الرابط أعلاه.` }); toast(tr('تم الإرسال', 'Email sent')); });
       $('#cl', m2).onclick = closeModal;
@@ -610,7 +694,7 @@ PAGES.vat = async () => {
       ${k(tr('المشتريات (بدون ضريبة)', 'Purchases (ex VAT)'), r.purchases_total)}${k(tr('ضريبة المدخلات القابلة للاسترداد', 'Recoverable input VAT'), r.input_vat)}
       ${k(r.net_vat >= 0 ? tr('صافي الضريبة المستحقة للهيئة', 'Net VAT payable to FTA') : tr('صافي الضريبة المستردة', 'Net VAT refundable'), Math.abs(r.net_vat), r.net_vat >= 0 ? 'bad' : 'ok')}</div>
       <h2>${tr('المبيعات الخاضعة للضريبة حسب الإمارة (البند ١)', 'Standard-rated sales by emirate (Box 1)')}</h2><div class="tw"><table><thead><tr><th>${tr('الإمارة', 'Emirate')}</th><th class="n">${tr('المبلغ', 'Amount')}</th><th class="n">${tr('الضريبة', 'VAT')}</th></tr></thead><tbody>${Object.entries(r.by_emirate).map(([e, v]) => `<tr><td>${tr(...EMIRATES[e])}</td><td class="n">${money(v.amount)}</td><td class="n">${money(v.vat)}</td></tr>`).join('')}</tbody></table></div>
-      ${r.warnings.length ? `<div class="card" style="margin-top:14px"><h2 class="neg">${tr('تنبيهات', 'Warnings')}</h2>${r.warnings.map(w => `<div>⚠ ${tr('ضريبة مدخلات بدون رقم ضريبي للمورد (قد لا تكون قابلة للاسترداد)', 'Input VAT without supplier TRN (may not be recoverable)')}: ${esc(w.label)}</div>`).join('')}</div>` : ''}`;
+      ${r.warnings.length ? `<div class="card" style="margin-top:14px"><h2 class="neg">${tr('تنبيهات', 'Warnings')}</h2>${r.warnings.map(w => `<div>${MK.warn}${tr('ضريبة مدخلات بدون رقم ضريبي للمورد (قد لا تكون قابلة للاسترداد)', 'Input VAT without supplier TRN (may not be recoverable)')}: ${esc(w.label)}</div>`).join('')}</div>` : ''}`;
   });
   $('#go').onclick = run; run();
 };
@@ -719,11 +803,11 @@ const ALERT = {
   backup_copy: a => `${tr('تعذّر نسخ النسخة الاحتياطية إلى المجلد الثاني', 'The backup could not be copied to the second folder')}: ${a.who}`,
   customer_trn: a => `${tr('عملاء بدون رقم ضريبي', 'Clients missing TRN')}: ${a.who}`,
 };
-const alertList = al => al.map(a => `<div style="color:var(--${a.level === 'bad' ? 'bad' : 'warn'})">${a.level === 'bad' ? '⛔' : '⚠'} ${esc((ALERT[a.key] || (() => a.key))(a))}</div>`).join('');
+const alertList = al => al.map(a => `<div class="alert ${a.level === 'bad' ? 'bad' : 'warn'}">${esc((ALERT[a.key] || (() => a.key))(a))}</div>`).join('');
 PAGES.compliance = async () => {
   const [al, audit, ei] = await Promise.all([api('GET', 'compliance'), api('GET', 'audit').catch(() => []), api('GET', 'einvoice').catch(() => null)]);
   main(`<h1>${tr('الامتثال والتدقيق', 'Compliance & audit')}</h1>
-  <div class="card"><h2>${tr('تنبيهات', 'Alerts')}</h2>${al.length ? alertList(al) : `<span class="pos">✔ ${tr('لا توجد تنبيهات', 'No alerts')}</span>`}</div>
+  <div class="card"><h2>${tr('تنبيهات', 'Alerts')}</h2>${al.length ? alertList(al) : `<span class="pos">${MK.ok}${tr('لا توجد تنبيهات', 'No alerts')}</span>`}</div>
   <div class="card"><h2>${tr('المواعيد الأساسية', 'Key deadlines')}</h2><ul>
    <li>${tr('إقرار ضريبة القيمة المضافة (VAT 201): خلال ٢٨ يوماً من نهاية الفترة (ربع سنوي غالباً) — عبر EmaraTax', 'VAT return (VAT 201): within 28 days of period end (usually quarterly) — via EmaraTax')}</li>
    <li>${tr('ضريبة الشركات: إقرار خلال ٩ أشهر من نهاية السنة المالية', 'Corporate tax return: within 9 months of financial year-end')}</li>
@@ -735,7 +819,7 @@ PAGES.compliance = async () => {
    <li>${tr('سجل تدقيق لكل إنشاء/تعديل/حذف، واعتماد الرواتب يقفلها.', 'Audit log of every create/update/delete; finalizing payroll locks it.')}</li></ul>
    <p class="muted"><b>${tr('إخلاء مسؤولية', 'Disclaimer')}:</b> ${tr('النظام مبني ليتوافق مع الأنظمة المعمول بها وقت إعداده، لكنه ليس معتمداً رسمياً من الهيئة الاتحادية للضرائب أو وزارة الموارد البشرية أو المصرف المركزي. القوانين والنسب وصيغ ملفات البنوك تتغيّر؛ راجع محاسبك القانوني ومستشارك الضريبي وبنكك قبل تقديم أي إقرار أو رفع ملف رواتب. الفوترة الإلكترونية (E-Invoicing) الإلزامية قيد التطبيق تدريجياً في الإمارات وغير مدعومة بعد في هذا الإصدار.', 'Built to align with the rules in force when it was written, but it is not certified by the FTA, MOHRE or the Central Bank. Laws, rates and bank file formats change — confirm with your accountant, tax adviser and bank before filing a return or uploading a payroll file. UAE mandatory e-invoicing (Peppol) is being phased in and is not yet supported in this version.')}</p></div>
   ${ei ? `<div class="card"><h2>${tr('جاهزية الفوترة الإلكترونية (E-Invoicing)', 'E-invoicing readiness')}</h2><p class="muted">${tr('الفوترة الإلكترونية في الإمارات تتم عبر مزوّد خدمة معتمد (شبكة Peppol) ولا يرسل هذا النظام الفواتير إليها بعد. هذا الفحص يتأكد من اكتمال البيانات التي سيحتاجها المزوّد.', 'UAE e-invoicing is transmitted through an accredited service provider (Peppol network); this system does not transmit invoices yet. This check verifies the data a provider will need is complete.')}</p>
-    <div>${ei.company_trn ? '✔' : '⛔'} ${tr('الرقم الضريبي للشركة', 'Company TRN')} · ${ei.invoices} ${tr('فاتورة', 'invoices')} · <b class="${ei.with_issues ? 'neg' : 'pos'}">${ei.with_issues}</b> ${tr('ببيانات ناقصة', 'with missing data')}</div>
+    <div>${ei.company_trn ? MK.ok : MK.bad} ${tr('الرقم الضريبي للشركة', 'Company TRN')} · ${ei.invoices} ${tr('فاتورة', 'invoices')} · <b class="${ei.with_issues ? 'neg' : 'pos'}">${ei.with_issues}</b> ${tr('ببيانات ناقصة', 'with missing data')}</div>
     ${ei.issues.slice(0, 15).map(i => `<div class="muted">• ${esc(i.number)}: ${esc(i.missing.join(', '))}</div>`).join('')}</div>` : ''}
   <div class="card"><h2>${tr('سجل التدقيق (آخر ٣٠٠)', 'Audit log (latest 300)')}</h2><div class="tw"><table><thead><tr><th>${tr('الوقت', 'Time')}</th><th>${tr('المستخدم', 'User')}</th><th>${tr('الإجراء', 'Action')}</th><th>${tr('السجل', 'Record')}</th><th>${tr('تفاصيل', 'Detail')}</th></tr></thead><tbody>${audit.map(a => `<tr><td>${esc(a.ts.replace('T', ' ').slice(0, 19))}</td><td>${esc(a.user)}</td><td>${esc(a.action)}</td><td>${esc(a.tbl)} ${a.rec || ''}</td><td>${esc(a.detail)}</td></tr>`).join('')}</tbody></table></div></div>`);
 };
@@ -774,7 +858,7 @@ PAGES.settings = async () => {
     ${s.smtp_pass_set ? `<p class="muted">${tr('كلمة المرور محفوظة — اتركها فارغة للإبقاء عليها.', 'Password saved — leave blank to keep it.')}</p>` : ''}</div>
     <button class="btn" id="saveE">${tr('حفظ', 'Save')}</button> <input id="testTo" placeholder="${tr('بريد لإرسال رسالة تجريبية', 'Email for a test message')}" style="width:260px;margin-inline-start:10px"> <button class="btn sec" id="test">${tr('إرسال تجربة', 'Send test')}</button></div>`}
   <div class="card"><div class="bar"><h2 style="margin:0">${tr('المستخدمون والصلاحيات', 'Users & roles')}</h2><span class="sp"></span><button class="btn sm" id="addU">+ ${tr('مستخدم', 'User')}</button></div>
-    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}${u.employee_name ? ` <span class="muted">(${esc(u.employee_name)})</span>` : ''}${u.m365_linked ? ` <span class="muted" title="${tr('مربوط بحساب Microsoft 365', 'Linked to a Microsoft 365 account')}">· Microsoft</span>` : ''}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${u.role !== 'employee' ? `<button class="btn sec sm" data-ulink="${u.id}" title="${tr('ربط الحساب بملف الموظف (كشف حسابه ومطالباته)', 'Link the account to its employee record (own statement and claims)')}">${tr('الموظف', 'Employee')}</button> ` : ''}${u.two_step ? `<button class="btn sec sm" data-u2fa="${u.id}" title="${tr('المستخدم فقد هاتفه: أوقف التحقق بخطوتين عن حسابه', 'The user lost the phone: switch two-step sign-in off for this account')}">🔐 ${tr('إيقاف التحقق بخطوتين', 'Reset two-step')}</button> ` : ''}${['site_engineer', 'foreman'].includes(u.role) ? `<button class="btn sec sm" data-uproj="${u.id}">${tr('مشاريعه', 'Projects')} (${u.projects.length})</button> ` : ''}${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
+    <div class="tw"><table><thead><tr><th>${tr('المستخدم', 'User')}</th><th>${tr('الدور', 'Role')}</th><th></th></tr></thead><tbody>${users.map(u => `<tr><td>${esc(u.username)}${u.employee_name ? ` <span class="muted">(${esc(u.employee_name)})</span>` : ''}${u.m365_linked ? ` <span class="muted" title="${tr('مربوط بحساب Microsoft 365', 'Linked to a Microsoft 365 account')}">· Microsoft</span>` : ''}</td><td>${tr(...ROLE[u.role])}</td><td><button class="btn sec sm" data-pw="${u.id}">${tr('كلمة مرور', 'Reset password')}</button> <button class="btn sec sm" data-urole="${u.id}">${tr('تغيير الدور', 'Change role')}</button> ${u.role !== 'employee' ? `<button class="btn sec sm" data-ulink="${u.id}" title="${tr('ربط الحساب بملف الموظف (كشف حسابه ومطالباته)', 'Link the account to its employee record (own statement and claims)')}">${tr('الموظف', 'Employee')}</button> ` : ''}${u.two_step ? `<button class="btn sec sm" data-u2fa="${u.id}" title="${tr('المستخدم فقد هاتفه: أوقف التحقق بخطوتين عن حسابه', 'The user lost the phone: switch two-step sign-in off for this account')}">${ico('lock')} ${tr('إيقاف التحقق بخطوتين', 'Reset two-step')}</button> ` : ''}${['site_engineer', 'foreman'].includes(u.role) ? `<button class="btn sec sm" data-uproj="${u.id}">${tr('مشاريعه', 'Projects')} (${u.projects.length})</button> ` : ''}${u.username === ME.username ? '' : `<button class="btn sec sm" data-du="${u.id}">×</button>`}</td></tr>`).join('')}</tbody></table></div>
     <p class="muted">${tr('مدير النظام: كل شيء • محاسب: المالية والمحاسبة دون المستخدمين والإعدادات • مدير مشاريع: المشاريع والمشتريات والحضور دون الرواتب والضرائب • موارد بشرية: الموظفون والإجازات والطلبات والرواتب والخطابات دون الحسابات • عرض فقط: قراءة فقط • موظف: بوابته الخاصة فقط.', 'Admin: everything • Accountant: finance & accounting, no users/settings • Project manager: projects, purchasing, attendance — no payroll or tax • HR: employees, leave, requests, payroll, letters — no finance • Viewer: read-only • Employee: own portal only.')}</p></div>` : ''}
     ${ME.role !== 'employee' ? `<div class="card" id="pf"><h2>${tr('ملفي الشخصي (يظهر في توقيع الإيميل)', 'My profile (shown in my e-mail signature)')}</h2><div class="f2">${field({ k: 'display_name', ar: 'الاسم الكامل', en: 'Full name' }, prof.display_name)}${field({ k: 'job_title', ar: 'المسمى الوظيفي', en: 'Job title' }, prof.job_title)}${field({ k: 'mobile', ar: 'الجوال', en: 'Mobile' }, prof.mobile)}</div><button class="btn sec" id="savepf">${tr('حفظ', 'Save')}</button></div>` : ''}
     <div class="card"><h2>${tr('تغيير كلمة المرور', 'Change password')}</h2><div class="f"><input type="password" id="op" autocomplete="current-password" placeholder="${tr('كلمة المرور الحالية', 'Current password')}"></div><div class="f"><input type="password" id="np" minlength="6" autocomplete="new-password" placeholder="${tr('كلمة مرور جديدة', 'New password')}"></div><button class="btn sec" id="cp">${tr('تغيير', 'Change')}</button></div><div id="tfacard"></div>
@@ -787,7 +871,7 @@ PAGES.settings = async () => {
   if ($('#savepf')) $('#savepf').onclick = guard(async () => { const b = {}; ['display_name', 'job_title', 'mobile'].forEach(k => b[k] = val($('#pf'), k)); await api('PUT', 'profile', b); toast(tr('تم الحفظ', 'Saved')); });
   if (!admin) return;
   $('#pack').onclick = guard(async () => { if (!confirm(tr('سيُركَّب الشعار والختم وتُحدَّث بيانات الشركة القانونية (الاسم، الرخصة، العنوان، ص.ب). متابعة؟', 'This installs the logos and stamp and sets the legal company details (name, licence, address, P.O. Box). Continue?'))) return; await api('POST', 'brand/pack'); S = { ...S, ...(await api('GET', 'settings')) }; toast(tr('تم تركيب الهوية', 'Brand pack installed')); boot(); });
-  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'print_arabic', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; toast(tr('تم الحفظ', 'Saved')); });
+  $('#save').onclick = guard(async () => { const b = {}; [...F.map(f => f[0]), 'vat_registered', 'print_arabic', 'bank_details', 'terms', 'po_notes', 'po_conditions', 'sc_template'].forEach(k => b[k] = val($('#sf'), k)); S = { ...S, ...(await api('PUT', 'settings', b)) }; paintBrand(); toast(tr('تم الحفظ', 'Saved')); });
   if ($('#saveE')) $('#saveE').onclick = guard(async () => { const b = {}; [...E.map(f => f[0]), 'smtp_secure', 'mail_method', 'graph_tenant', 'graph_client', 'graph_secret'].forEach(k => b[k] = val($('#ef'), k)); if (!b.graph_secret) delete b.graph_secret; if (!b.smtp_pass) delete b.smtp_pass; await api('PUT', 'settings', b); toast(tr('تم الحفظ', 'Saved')); render(); });
   if ($('#ef')) { const mm = $('#ef [name=mail_method]'), sync = () => $('#ef').querySelectorAll('[data-mm]').forEach(d => { d.style.display = d.dataset.mm === mm.value ? '' : 'none'; }); mm.onchange = sync; sync(); }
   if ($('#test')) $('#test').onclick = guard(async () => { await api('POST', 'settings/test-email', { to: $('#testTo').value }); toast(tr('تم إرسال رسالة التجربة', 'Test email sent')); });
