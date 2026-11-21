@@ -248,10 +248,14 @@ async function zohoSync(admin) {
   $('#zs-pv').onclick = guard(async () => { busy(tr('جارٍ القراءة من Zoho…', 'Reading Zoho…')); preview = await api('GET', 'zoho-sync/preview'); out.innerHTML = planHtml(preview); if ($('#zs-prov')) $('#zs-prov').disabled = !(preview.mutations.length || preview.adopts.length || preview.confirmable.length); });
   if ($('#zs-prov')) $('#zs-prov').onclick = guard(async () => {
     if (!preview) return;
+    // the ticked confirmations are read first: busy() below replaces the preview — and its checkboxes — with a message.
+    // Each must still be one the current preview offers (an unticked one is simply not applied).
+    const confirmed = [...document.querySelectorAll('.zs-confirm:checked')].map(x => x.value), confirmable = new Set((preview.confirmable || []).map(x => x.key));
+    if (confirmed.some(k => !confirmable.has(k))) throw new Error(tr('التأكيد المحدد لم يعد في المعاينة الحالية — أعد المعاينة.', 'The selected account confirmation is no longer in the current preview — preview again.'));
     const n = preview.mutations.length, a = preview.adopts.length;
     if (!confirm(tr(`سيُنشأ ${n} حساباً في Zoho ويُعتمد ${a} حساباً موجوداً، كما في المعاينة بالضبط. لن يُعاد تسمية أو تغيير أو حذف أي حساب. متابعة؟`, `This creates ${n} account(s) in Zoho and adopts ${a} existing account(s), exactly as in the preview. No account is renamed, changed or deleted. Continue?`))) return;
     busy(tr('جارٍ الإنشاء ثم الفحص مرة ثانية…', 'Creating, then running the preflight again…'));
-    const r = await api('POST', 'zoho-sync/provision', { confirm: true, token: preview.token, confirm_adopt: [...document.querySelectorAll('.zs-confirm:checked')].map(x => x.value) });
+    const r = await api('POST', 'zoho-sync/provision', { confirm: true, token: preview.token, confirm_adopt: confirmed });
     out.innerHTML = `<p>${tr('أُنشئ', 'Created')} ${r.result.created.length} · ${tr('اعتُمد', 'adopted')} ${r.result.adopted.length} · ${tr('تعارضات متروكة', 'conflicts left')} ${r.result.conflicts.length} · ${tr('فشل', 'failed')} ${r.result.failed.length}</p>
       ${r.result.failed.length ? `<ul class="err">${r.result.failed.map(f => `<li>${esc(f.name)}: ${esc(f.error)}</li>`).join('')}</ul>` : ''}${gateHtml(r.gate)}${r.plan && r.plan.rows ? planHtml(r.plan) : ''}`;
     preview = null; $('#zs-prov').disabled = true;
