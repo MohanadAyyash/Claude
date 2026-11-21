@@ -61,6 +61,7 @@
 45. [Partners: capital, loans and current accounts](#45-partners-capital-loans-and-current-accounts)
 46. [Expense claims and employee statements](#46-expense-claims-and-employee-statements)
 47. [Petty cash held by employees](#47-petty-cash-held-by-employees)
+48. [Trigon Copilot (read-only assistant)](#48-trigon-copilot-read-only-assistant)
 
 ---
 
@@ -93,6 +94,8 @@
 ### 1.3 The screen
 - **Side menu** (on the right in Arabic, on the left in English) grouped as: Projects & sales, Procurement & stock, Accounting, Human resources, Tax & compliance.
 - You only see the pages your role allows (see section 3).
+- Each group of the menu is collapsed: click its title to open it, and the group that was open closes. The group of the page you are on opens by itself, and the menu stays where it is when you move between pages.
+- **🔍 Go to…** at the top of the menu (or **Ctrl+K**, **⌘K** on a Mac): type part of a page name in English or Arabic (e.g. payroll, cheque, VAT) and press **Enter** to open it. The arrow keys move between results and **Esc** closes it. It only searches the pages your role allows.
 - On a phone the menu opens from the **☰** button at the top.
 - Most lists work the same way: **+ Add** (or **+ New**) opens a form; click any row to open and edit it; **Save** stores it; **Delete** removes it (when allowed).
 - Every page has a **🖨 Print on letterhead** button, and most lists have an **Excel** button.
@@ -104,8 +107,8 @@
 
 ![The dashboard after signing in](../public/guide/img/en/03-dashboard.jpg)
 
-1. The side menu: every section of the system grouped by area; you only see what your role allows. Language and Logout buttons are at its bottom.
-2. Company KPIs: active projects, contract value, invoiced, expenses, profit, cash, receivables and retention. Below: cash flow, compliance alerts, overdue invoices and profit per project.
+1. The side menu: every section of the system in collapsible groups (click a title to open it), with **Go to…** above them; you only see what your role allows. Language and Logout buttons are at its bottom.
+2. Company KPIs: active projects, contract value, invoiced, expenses, profit, cash, receivables and retention. Below: **Client balances** as three bars to one scale (overdue, not yet due, all open balances), cash flow, compliance alerts, overdue invoices and profit per project.
 3. Prints the current page on the company letterhead with stamp and signature. It is on every page.
 
 <!--/img-->
@@ -1604,6 +1607,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 4. **Send to Zoho now**, or tick **Enable the link** and **Send automatically every day**.
 5. **Send history** → **Retry failed**. The **Daily transactions report** lists what was invoiced, billed, received and paid each day.
 6. Standalone edition: use the **Zoho Books import files** instead.
+7. **Zoho Accounting Sync** (card at the top): **Run read-only preflight** → **Preview missing accounts** (exact changes, nothing sent) → **Provision approved accounts** (administrator, after confirming the preview; the preflight then runs again). Nothing is sent to Zoho until the **Gate** is **READY**. Then tick **Continuous sync**: every change is sent within a minute, retried if Zoho is down, and read back. **Run reconciliation** / **View differences** compare every record and the Trial Balance of Trigon and Zoho at the same date. Conflicts are never fixed automatically. Details: ZOHO.md.
 
 <!--img-->
 
@@ -1612,7 +1616,11 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 ![Zoho Books link](../public/guide/img/en/64-zoho.jpg)
 
 1. Dry run: shows what would be created or updated in Zoho without writing anything. Once connected, Send to Zoho now appears next to it.
+   - Once connected, the dry run is also a **preflight** of the real organisation (read-only: any request other than a read is refused before it is sent, and the send log is not changed). It shows the organisation name and id, the data centre, the saved mappings, what was already sent, and per type how many records would be created, updated, left unchanged (already sent), linked to a document already in Zoho, removed, skipped or in conflict.
+   - **Conflicts and possible duplicates** are listed first: a document edited here after it was paid in Zoho, and a document whose number already exists in Zoho without being in the send log.
+   - The account table lists every Trigon account the send uses and the Zoho account it goes to (mapped, automatic, or **not mapped** — map those before sending).
 2. Daily transactions report: what was invoiced, billed, received and paid each day.
+3. **New types sent from** (administrator): from this date the send also covers office petty cash and employees' petty cash, expense claims and their reimbursement, partner movements (each partner on his own Zoho accounts), depreciation and assets, salaries paid by payment date, and payments through the same account as Trigon's ledger. Nothing dated before it is sent, and what was already sent stays as it was. Empty = not sent. Map the accounts the preflight lists as missing first.
 
 <!--/img-->
 
@@ -1869,6 +1877,7 @@ The administrator acts directly, and that action is recorded as the approval in 
 3. Corrections go into the open period: a **credit note** for an invoice, or a journal entry with a new date.
 4. Still possible: recording a new payment with an open date against an old invoice, and changing a pending cheque from a closed period to cleared or bounced.
 5. To reopen: clear the date and save. Every closing and reopening is written to the audit log.
+6. **Ledger rules aligned with Zoho** (same card): from the date you set, site and head-office salaries (5200 / 6200) follow the attendance allocation (the same as the project costs and the Zoho journal), and a post-dated cheque stays in 1050 (received) / 2050 (issued) until its cheque date, moving to the bank only then and only once cleared. Earlier periods do not change. The date must come after the closing date, and cannot be moved while it is inside a closed period. The daily check confirms that project allocations + head office = payroll expense exactly.
 
 <!--img-->
 
@@ -2128,3 +2137,13 @@ Every employee who carries petty cash has a balance in their own name, separate 
 **The employee statement** shows "Petty cash held" in brackets (owed by the employee until spent with receipts or returned). It must be zero when the employee leaves.
 
 **Notes:** the office float at the top of the page is not affected by employees' petty cash. A hand-over that was already spent, or that expenses waiting for approval rely on, cannot be deleted. An expense or a return cannot be dated before the employee held that cash. A hand-over above the payment approval limit (Spend approvals) is recorded by the administrator only. For the accountant's limit, all of an employee's petty cash requests of the same day count together. An employee with petty cash records cannot be deleted (mark them as left). A closed period blocks hand-overs and returns dated inside it. Petty cash held by employees is booked on its own account, 1030 (Employee cash custody), with a statement per employee; the office petty cash stays on 1010. Only the Petty cash pages post to 1030 (a manual journal on it is refused), and the daily check confirms that 1030 equals the petty cash all employees hold.
+
+## 48. Trigon Copilot (read-only assistant)
+
+The floating **Trigon Assistant** button appears only when the administrator has enabled Copilot and allowlisted your ERP user ID or role. Open it to continue your own server-stored conversations across pages and sessions, start a new conversation, or ask a short follow-up such as “and which are overdue?” Ask in Arabic or English about project status and financial summaries, outstanding/current-month invoices and totals by project, POs waiting for approval or overdue/above a value, monthly supplier PO counts, open quotations, contracts expiring within a period, approved subcontract certificates, project drawings/RFIs/submittals, or SharePoint sync status and failures.
+
+Copilot is read-only. The server selects the tool and checks your current ERP permissions before returning any result; the AI provider only phrases the authorized result. Follow-ups are checked again against your current role and project access. ERP links open existing pages that check permissions again. Validated SharePoint links may be shown for documents already mapped to an ERP record; document contents and links are not sent to the AI provider. Attachments, filenames, supplier contact information, employee/HR and payroll data, tax returns, and general-ledger details are not supplied. The UI labels generated explanation separately from authorized ERP references. You can rate an answer with **👍/👎**, open **My memory**, delete one conversation or clear your own history.
+
+In **My memory**, you can say “remember that …” or “تذكّر أن …” to save up to 50 notes of 300 characters each, view/delete individual notes, or ask “What do you remember about me?”. Copilot also learns private aggregate preferences such as language and frequently used topics/projects. You can switch usage-based personalization off or reset those preferences. A learned project or filter is disclosed when applied and never grants ERP access; inaccessible project preferences are ignored and removed. Sensitive payroll, identity, bank, credential, and secret details and instructions to bypass policy cannot be saved. Raw memory text is never sent to the AI provider. Your history is retained for 90 days by default and can be exported or deleted at any time. A first-use notice explains these controls.
+
+If Copilot is missing from the menu, it is disabled or your user/role is not on the administrator's allowlist. Do not send sensitive information in a question. The feature must not be enabled with a production provider until Trigon approves the Azure region, residency, provider data-handling terms, and rollout allowlists. See [COPILOT.md](COPILOT.md).

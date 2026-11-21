@@ -14,7 +14,7 @@ const CHECK_TXT = {
   retention_down: ['المحتجزات أقل من الشهادة السابقة — سجّل الفرق كإفراج عن محتجزات', 'Retention is lower than on the last PC — record the difference as a release'],
   release_exceeds: ['الإفراج أكبر من المحتجزات المسجلة في النظام — أدخل رصيد المحتجزات الافتتاحي بقيد يومية على حساب 1150', 'The release is larger than the retention held in the system — enter the opening retention with a journal to account 1150'],
 };
-const checkList = cs => (cs || []).map(c => `<p class="err" style="color:var(--warn)">⚠ ${tr(...(CHECK_TXT[c.code] || [c.code, c.code]))}: ${tr('المتوقع', 'expected')} ${money(c.expected)} — ${tr('المدخل', 'entered')} ${money(c.actual)}</p>`).join('');
+const checkList = cs => (cs || []).map(c => `<p class="err" style="color:var(--warn)">${MK.warn}${tr(...(CHECK_TXT[c.code] || [c.code, c.code]))}: ${tr('المتوقع', 'expected')} ${money(c.expected)} — ${tr('المدخل', 'entered')} ${money(c.actual)}</p>`).join('');
 const sumTable = rows => `<table class="claimsum" style="width:100%;max-width:520px;margin-inline-start:auto"><tbody>${rows.filter(Boolean).map(([l, v, b]) => `<tr${b ? ' style="font-weight:700;border-top:1px solid var(--stone)"' : ''}><td>${l}</td><td class="n">${typeof v === 'number' ? money(v) : v}</td></tr>`).join('')}</tbody></table>`;
 
 // ---- payment application -------------------------------------------------------------------------------------------------------
@@ -129,7 +129,7 @@ projectDetail = async id => {
     <div class="tw"><table><thead><tr><th>${tr('البروفورما', 'Proforma')}</th><th>${tr('للأعمال حتى', 'Works up to')}</th><th class="n">${tr('صافي المطلوب', 'Net claimed')}</th><th>${tr('الحالة', 'Status')}</th><th>PC</th><th class="n">${tr('صافي المعتمد', 'Net certified')}</th><th class="n">${tr('الفرق', 'Difference')}</th><th class="n">${tr('الفاتورة شامل الضريبة', 'Invoice incl. VAT')}</th><th>${tr('الفاتورة', 'Invoice')}</th></tr></thead><tbody>
     ${rows.map(({ a, p }) => `<tr>
       <td>${a ? `<a href="#" data-app="${a.id}">${tr('بروفورما', 'Proforma')} ${a.seq} <span class="muted mono">${esc(a.number)}</span></a>` : '—'}</td><td>${esc((a && a.period_to) || (p && p.period_to) || '')}</td>
-      <td class="n">${a ? money(a.net) : ''}</td><td>${tag((p && p.status) || (a && a.status))}</td><td>${p ? `<a href="#" data-pc="${p.id}">PC ${esc(p.number)}</a>${p.checks.length ? ' <span title="check" class="neg">⚠</span>' : ''}` : ''}</td>
+      <td class="n">${a ? money(a.net) : ''}</td><td>${tag((p && p.status) || (a && a.status))}</td><td>${p ? `<a href="#" data-pc="${p.id}">PC ${esc(p.number)}</a>${p.checks.length ? ' <span title="check" class="neg">${MK.warn}</span>' : ''}` : ''}</td>
       <td class="n">${p ? money(p.net) : ''}</td><td class="n ${a && p && p.net - a.net < -0.004 ? 'neg' : ''}">${a && p ? money(p.net - a.net) : ''}</td><td class="n">${p ? money(p.total) : ''}</td>
       <td>${p && p.invoice_id ? `<a href="#" data-inv="${p.invoice_id}">${esc(p.invoice_number || '')}</a>` : ''}</td></tr>`).join('') || `<tr><td colspan="9" class="muted">${tr('لا توجد طلبات بعد', 'Nothing yet')}</td></tr>`}</tbody></table></div>`;
   const before = [...$('#main').children].find(e => e.tagName === 'H2' && /الفواتير|Invoices/.test(e.textContent));
