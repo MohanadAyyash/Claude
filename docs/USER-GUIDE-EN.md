@@ -1613,6 +1613,9 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 ![Zoho Books link](../public/guide/img/en/64-zoho.jpg)
 
 1. Dry run: shows what would be created or updated in Zoho without writing anything. Once connected, Send to Zoho now appears next to it.
+   - Once connected, the dry run is also a **preflight** of the real organisation (read-only: any request other than a read is refused before it is sent, and the send log is not changed). It shows the organisation name and id, the data centre, the saved mappings, what was already sent, and per type how many records would be created, updated, left unchanged (already sent), linked to a document already in Zoho, removed, skipped or in conflict.
+   - **Conflicts and possible duplicates** are listed first: a document edited here after it was paid in Zoho, and a document whose number already exists in Zoho without being in the send log.
+   - The account table lists every Trigon account the send uses and the Zoho account it goes to (mapped, automatic, or **not mapped** — map those before sending).
 2. Daily transactions report: what was invoiced, billed, received and paid each day.
 
 <!--/img-->

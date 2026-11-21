@@ -28,6 +28,7 @@ module.exports = ctx => {
   const mainBank = () => banks()[0];
   const codeOf = id => ((id && db.prepare('SELECT ledger_code FROM bank_accounts WHERE id=?').get(+id)) || mainBank()).ledger_code;
   ctx.bankAccounts = banks; ctx.bankCode = codeOf;
+  ctx.expenseCode = cat => CAT[cat] || '5700';                                         // the ledger account of a bill category (also shown by the Zoho preflight)
   const acct = () => Object.fromEntries(db.prepare('SELECT * FROM accounts ORDER BY code').all().map(a => [a.code, a]));
 
   const mk = (acc, dr = 0, cr = 0) => { dr = round(dr); cr = round(cr); if (dr < 0) { cr = round(cr - dr); dr = 0; } if (cr < 0) { dr = round(dr - cr); cr = 0; } return { account: acc, debit: dr, credit: cr }; };
