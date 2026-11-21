@@ -1607,6 +1607,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
 4. **Send to Zoho now**, or tick **Enable the link** and **Send automatically every day**.
 5. **Send history** → **Retry failed**. The **Daily transactions report** lists what was invoiced, billed, received and paid each day.
 6. Standalone edition: use the **Zoho Books import files** instead.
+7. **Zoho Accounting Sync** (card at the top): **Run read-only preflight** → **Preview missing accounts** (exact changes, nothing sent) → **Provision approved accounts** (administrator, after confirming the preview; the preflight then runs again). Nothing is sent to Zoho until the **Gate** is **READY**. Then tick **Continuous sync**: every change is sent within a minute, retried if Zoho is down, and read back. **Run reconciliation** / **View differences** compare every record and the Trial Balance of Trigon and Zoho at the same date. Conflicts are never fixed automatically. Details: ZOHO.md.
 
 <!--img-->
 
@@ -1619,6 +1620,7 @@ Menu: **Zoho Books link** (administrator / accountant). Full details in [ZOHO.md
    - **Conflicts and possible duplicates** are listed first: a document edited here after it was paid in Zoho, and a document whose number already exists in Zoho without being in the send log.
    - The account table lists every Trigon account the send uses and the Zoho account it goes to (mapped, automatic, or **not mapped** — map those before sending).
 2. Daily transactions report: what was invoiced, billed, received and paid each day.
+3. **New types sent from** (administrator): from this date the send also covers office petty cash and employees' petty cash, expense claims and their reimbursement, partner movements (each partner on his own Zoho accounts), depreciation and assets, salaries paid by payment date, and payments through the same account as Trigon's ledger. Nothing dated before it is sent, and what was already sent stays as it was. Empty = not sent. Map the accounts the preflight lists as missing first.
 
 <!--/img-->
 
@@ -1875,6 +1877,7 @@ The administrator acts directly, and that action is recorded as the approval in 
 3. Corrections go into the open period: a **credit note** for an invoice, or a journal entry with a new date.
 4. Still possible: recording a new payment with an open date against an old invoice, and changing a pending cheque from a closed period to cleared or bounced.
 5. To reopen: clear the date and save. Every closing and reopening is written to the audit log.
+6. **Ledger rules aligned with Zoho** (same card): from the date you set, site and head-office salaries (5200 / 6200) follow the attendance allocation (the same as the project costs and the Zoho journal), and a post-dated cheque stays in 1050 (received) / 2050 (issued) until its cheque date, moving to the bank only then and only once cleared. Earlier periods do not change. The date must come after the closing date, and cannot be moved while it is inside a closed period. The daily check confirms that project allocations + head office = payroll expense exactly.
 
 <!--img-->
 

@@ -28,11 +28,15 @@ module.exports = ctx => {
   const mainBank = () => banks()[0];
   const codeOf = id => ((id && db.prepare('SELECT ledger_code FROM bank_accounts WHERE id=?').get(+id)) || mainBank()).ledger_code;
   ctx.bankAccounts = banks; ctx.bankCode = codeOf;
+  ctx.payAccount = (p, kind) => bankAcct(p, kind || p.kind);                           // the ledger account a payment moves (the Zoho bridge pays through the same account)
   ctx.expenseCode = cat => CAT[cat] || '5700';                                         // the ledger account of a bill category (also shown by the Zoho preflight)
   const acct = () => Object.fromEntries(db.prepare('SELECT * FROM accounts ORDER BY code').all().map(a => [a.code, a]));
 
   const mk = (acc, dr = 0, cr = 0) => { dr = round(dr); cr = round(cr); if (dr < 0) { cr = round(cr - dr); dr = 0; } if (cr < 0) { dr = round(dr - cr); cr = 0; } return { account: acc, debit: dr, credit: cr }; };
   const monthEnd = ym => `${ym}-${String(C.daysInMonth(ym)).padStart(2, '0')}`;
+  const rulesOn = d => { const f = ctx.ledgerRulesFrom ? ctx.ledgerRulesFrom() : ''; return !!(f && d && d >= f); };
+  const pdcTwoStep = p => p.method === 'cheque' && p.cheque_date && p.cheque_date > p.date && p.cheque_status !== 'bounced' && rulesOn(p.date);
+  ctx.pdcTwoStep = pdcTwoStep;
   const bankAcct = (p, kind) => p.method === 'cash' ? '1020' : p.method === 'petty' ? (p.employee_id ? '1030' : '1010') : p.method === 'partner' ? '3110' : p.method === 'employee' ? '2260' : p.method === 'offset' ? '1400' : p.method === 'cheque' && p.cheque_status === 'pending' ? (kind === 'in' ? '1050' : '2050') : codeOf(p.bank_account_id);
 
   function entries() {
@@ -44,6 +48,15 @@ module.exports = ctx => {
     for (const b of e.bills) add(b.date, b.reference || `BILL-${b.id}`, `${b.party_name || 'Expense'} — ${b.description || ''}`, 'bill', [mk(CAT[b.category] || '5700', b.amount), mk('1200', b.vat_amount), mk('2000', 0, b.total)]);
     for (const p of e.payments) {
       if (p.cheque_status === 'bounced') continue;
+      // a post-dated cheque (from the ledger rules date): received / issued into 1050 / 2050 on its date, and into the bank only on
+      // the cheque date once it has cleared
+      if (pdcTwoStep(p)) {
+        const pdc = p.kind === 'in' ? '1050' : '2050', bank = bankAcct({ ...p, cheque_status: 'cleared' }, p.kind), cleared = p.cheque_status === 'cleared';
+        if (p.kind === 'in') add(p.date, p.ref_label, `Cheque received — ${p.party_name || ''}${p.is_retention ? ' (retention)' : ''}`, 'receipt', [mk(pdc, p.amount), mk(p.is_retention ? '1150' : '1100', 0, p.amount)]);
+        else add(p.date, p.reference || p.ref_label || `PAY-${p.id}`, `Cheque issued — ${p.party_name || ''}`, 'payment', [mk(p.employee_id && !p.bill_id ? '2260' : '2000', p.amount), mk(pdc, 0, p.amount)]);
+        if (cleared) add(p.cheque_date, `CHQ-${p.id}`, `Cheque ${p.kind === 'in' ? 'received' : 'issued'} cleared — ${p.party_name || ''}`, p.kind === 'in' ? 'receipt' : 'payment', p.kind === 'in' ? [mk(bank, p.amount), mk(pdc, 0, p.amount)] : [mk(pdc, p.amount), mk(bank, 0, p.amount)]);
+        continue;
+      }
       if (p.kind === 'in') add(p.date, p.ref_label, `Receipt — ${p.party_name || ''}${p.is_retention ? ' (retention)' : ''}`, 'receipt', [mk(bankAcct(p, 'in'), p.amount), mk(p.is_retention ? '1150' : '1100', 0, p.amount)]);
       else if (p.employee_id && !p.bill_id) add(p.date, p.reference || `PAY-${p.id}`, 'Expense claims reimbursed to an employee', 'payment', [mk('2260', p.amount), mk(bankAcct(p, 'out'), 0, p.amount)]);   // modules/staffaccounts.js
       else add(p.date, p.ref_label, `Payment — ${p.party_name || ''}`, 'payment', [mk('2000', p.amount), mk(bankAcct(p, 'out'), 0, p.amount)]);
@@ -59,7 +72,11 @@ module.exports = ctx => {
     for (const x of ctx.eosEntries ? ctx.eosEntries() : []) add(x.date, x.ref, x.memo, 'payroll', x.lines.map(l => mk(...l)));
     for (const x of ctx.partnerEntries ? ctx.partnerEntries() : []) add(x.date, x.ref, x.memo, 'partner', x.lines.map(l => mk(...l)));   // modules/partners.js
     for (const r of db.prepare("SELECT * FROM payroll WHERE status='final'").all()) {
-      add(monthEnd(r.month), `PAY-${r.month}`, `Payroll ${r.month}`, 'payroll', [mk(r.project_id ? '5200' : '6200', r.gross),   // site staff → direct labour; no project → head-office overhead
+      // from the ledger rules date: site labour (5200) and head-office salaries (6200) by the attendance allocation (ctx.payrollSplit),
+      // the same engine as the project costs and the Zoho journal; before it, by the employee's own project
+      const split = rulesOn(monthEnd(r.month)) && ctx.payrollSplit ? ctx.payrollSplit(r) : [{ project_id: r.project_id || null, amount: r.gross }];
+      const site = round(split.filter(s => s.project_id).reduce((t, s) => t + s.amount, 0)), office = round(r.gross - site);
+      add(monthEnd(r.month), `PAY-${r.month}`, `Payroll ${r.month}`, 'payroll', [mk('5200', site), mk('6200', office),   // site staff → direct labour; head office → overhead
          mk('2200', 0, r.net), mk('2250', 0, round(r.deductions - (rep[r.id] || 0))), mk('1300', 0, rep[r.id] || 0)]);   // advance instalments reduce the advance
       if (r.paid_date) add(r.paid_date, `PAY-${r.month}`, `Salaries paid ${r.month}`, 'payroll', [mk('2200', r.net), mk('1000', 0, r.net)]);
     }
@@ -95,6 +112,7 @@ module.exports = ctx => {
   }
 
   ctx.financials = financials;
+  ctx.ledgerEntries = entries;                                                          // the derived ledger, entry by entry (the Zoho bridge sends assets and depreciation from it)
 
   // ---- bank reconciliation ----
   const sameBank = (a, b) => codeOf(a) === codeOf(b);                                   // null = the main account

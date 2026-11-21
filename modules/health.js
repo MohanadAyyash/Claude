@@ -80,6 +80,15 @@ module.exports = ctx => {
         .map(r => `payroll #${r.id} (${r.month})`);
       return bad.length ? warn(`${bad.length} row(s) to review`, bad.slice(0, 50)) : ok();
     }],
+    ['payroll_allocation', 'Payroll: project allocations + head office = payroll expense, exactly', () => {
+      if (!ctx.payrollSplit) return ok('module not loaded');
+      const rows = db.prepare("SELECT id, month, gross FROM payroll WHERE status='final'").all();
+      const off = rows.filter(r => Math.abs(ctx.payrollSplit(r).reduce((s, a) => s + a.amount, 0) - r.gross) > 0.005).map(r => `payroll #${r.id} (${r.month})`);
+      // and in the ledger: what the payroll entries put on 5200 + 6200 equals the payroll expense
+      let gl = 0; if (ctx.ledgerEntries) for (const x of ctx.ledgerEntries()) if (x.source === 'payroll' && /^PAY-/.test(x.ref)) for (const l of x.lines) if (l.account === '5200' || l.account === '6200') gl += l.debit - l.credit;
+      const total = rows.reduce((s, r) => s + r.gross, 0), glOff = Math.abs(gl - total) > 0.01;
+      return off.length || glOff ? fail(`${off.length} payroll row(s) whose allocation differs from the salary${glOff ? '; site + head-office salaries in the ledger differ from the payroll' : ''}`, off.slice(0, 50)) : ok(rows.length ? `${rows.length} payroll row(s) fully allocated` : 'no final payroll');
+    }],
     ['partner_accounts', 'Partner accounts (capital, loans, current accounts) equal the general ledger', () => {
       if (!ctx.partnerChecks) return ok('partners module not loaded');
       const r = ctx.partnerChecks(); if (!r.length) return ok('no partners recorded');

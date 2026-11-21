@@ -116,6 +116,7 @@ Object.assign(process.env, { DATA_DIR: dataDir, ZOHO_NO_SCHEDULER: '1', SALES_NO
 const ask = q => arg('yes') ? (console.log(q + ' YES (--yes)'), Promise.resolve(true)) : new Promise(res => { const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); rl.question(q + ' Type YES to continue: ', a => { rl.close(); res(a.trim() === 'YES'); }); });
 const writeLog = () => { fs.mkdirSync(outDir, { recursive: true }); fs.writeFileSync(path.join(outDir, 'request-log.csv'), 'time,method,host,path,decision,outcome,organization_id,authorization,connection,connect_tls_ms,first_response_ms,total_ms\n'
   + requests.map(x => [x.time, x.method, x.host, x.path, x.decision, x.outcome || '', x.organization_id || '', x.authorization || '', ...(x.timing ? [x.timing.connection, x.timing.connect_tls_ms ?? '', x.timing.first_response_ms ?? '', x.timing.total_ms ?? ''] : ['', '', '', ''])].join(',')).join('\n') + '\n'); };
+const parentText = m => /^\(the new /.test(m.body.parent_account_id) ? `${m.parent_name} (created first, in the same run)` : `${m.parent_name} (id ${m.body.parent_account_id})`;
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 (async () => {
@@ -212,6 +213,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 
   // ---------- 5. the preflight ----------
   let r; try { r = await ctx.zohoPreflight(from || undefined, to || undefined); } catch (e) { die('The preflight could not run: ' + e.message); }
+  // the account-provisioning preview (read only, under the same guard): what "Provision approved accounts" would create / adopt / stop
+  let accountsPlan = null, accountsError = ''; if (ctx.zohoAcct) try { accountsPlan = await ctx.zohoAcct.plan(); } catch (e) { accountsError = e.message; }
   const pf = r.preflight, after = snap();
   const books = requests.filter(x => x.decision === 'read' || (x.decision === 'BLOCKED' && /zohoapis|localhost|127\.0\.0\.1/.test(x.host)));
   const proof = {
@@ -229,7 +232,10 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 
   // ---------- 6. the report ----------
   fs.mkdirSync(outDir, { recursive: true });
-  const report = { generated: new Date().toISOString(), data_copy: dataDir, organization: org, sign_in: signIn, ...pf, verdict, blockers, proof, errors: r.errors, ops: r.ops };
+  proof.books_reads = requests.filter(x => x.decision === 'read').length; proof.requests = requests.length; proof.blocked_attempts = requests.filter(x => x.decision === 'BLOCKED');   // (the preview's reads included)
+  proof.modifying_calls_sent = requests.filter(x => x.decision !== 'BLOCKED' && x.method !== 'GET' && x.decision !== 'access token').length; proof.local_copy_unchanged = snap() === before;
+  if (proof.modifying_calls_sent && !blockers.some(b => /modifying call/.test(b))) blockers.unshift(`${proof.modifying_calls_sent} modifying call(s) were sent`), verdict = 'BLOCKED';
+  const report = { generated: new Date().toISOString(), data_copy: dataDir, organization: org, sign_in: signIn, ...pf, verdict, blockers, proof, errors: r.errors, ops: r.ops, account_provisioning_preview: accountsPlan || { error: accountsError } };
   fs.writeFileSync(path.join(outDir, 'preflight-report.json'), JSON.stringify(report, null, 2));
   writeLog();
   const zcell = z => z ? `${esc(z.name)}<br><small>${esc(z.id)} · ${esc(z.type)}${z.code ? ' · code ' + esc(z.code) : ''}${z.parent ? ' · under ' + esc(z.parent) : ''}</small>` : '—';
@@ -250,6 +256,15 @@ ${pf.to_configure.length ? `<h2>To configure in Zoho before the new sync (#24) c
 ${tbl(['Trigon', 'Account', 'Needed by', 'Expected Zoho type', 'Status', 'Zoho account', 'Note'], pf.required_accounts.map(row))}
 <h2>Partner accounts (proposed hierarchy — not created)</h2>${pf.partner_accounts.length ? pf.partner_accounts.map(p => `<h3>${esc(p.partner)}</h3>${tbl(['Trigon', 'Proposed Zoho account', 'Parent', 'Expected type', 'Status', 'Zoho account', 'Note'], p.accounts.map(a => `<tr class="${a.status}"><td>${esc(a.code)}</td><td>${esc(a.proposed)}</td><td>${esc(a.parent)}</td><td>${esc(a.expected)}</td><td><b>${esc(a.status.replace('_', ' '))}</b></td><td>${zcell(a.zoho)}</td><td>${esc(a.note || '')}</td></tr>`))}`).join('')
     + `<pre>${['Partner Capital', 'Partner Loans', 'Partner Current Accounts'].map((parent, i) => parent + '\n' + pf.partner_accounts.map(p => `└── ${p.partner} ${['Capital', 'Loan', 'Current'][i]}`).join('\n')).map(esc).join('\n\n')}</pre>` : '<p>No partners recorded in Trigon.</p>'}
+<h2>Account provisioning preview (read only — nothing was created)</h2>${accountsPlan ? `<p>State: <b>${esc(accountsPlan.state)}</b> · ${esc(Object.entries(accountsPlan.counts).map(([k, v]) => `${k}: ${v}`).join(' · '))}</p>
+<p>Targets before synchronisation (each must be 0): ${esc(Object.entries(accountsPlan.targets).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · '))}</p>
+<p>Non-VAT targets (READY_NON_VAT, each must be 0): ${esc(Object.entries(accountsPlan.targets_non_vat).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · '))} · VAT: <b>${esc(accountsPlan.vat_state)}</b></p>
+${(accountsPlan.deferred || []).map(d => `<p>Deferred by accounting decision (not counted; its transactions are held): <b>${esc(d.code)}</b> — ${esc(d.why)}</p>`).join('')}
+${tbl(['Trigon', 'Account', 'Expected type', 'Classification', 'Zoho account', 'Proposed creation payload (not sent)', 'Note / recommended resolution / review'], [...accountsPlan.rows, ...accountsPlan.vat].map(a => `<tr class="${['ACCOUNT_CONFLICT', 'BLOCKED', 'AMBIGUOUS', 'VAT_CONFIGURATION_REQUIRED'].includes(a.classification) ? 'type_mismatch' : a.classification === 'CREATE_APPROVED' ? 'missing' : 'mapped'}"><td>${esc(a.code)}</td><td>${esc(a.name)}</td><td>${esc(a.type || (a.types || []).join(' / '))}</td><td><b>${esc(a.classification)}</b>${a.reason ? '<br><small>' + esc(a.reason) + '</small>' : ''}</td><td>${zcell(a.zoho && { ...a.zoho, parent: a.zoho.parent_id || '' })}${(a.candidates || []).length ? '<br><small>candidates: ' + a.candidates.map(c => esc(`${c.name} (${c.id}, ${c.type}${c.code ? ', ' + c.code : ''})`)).join('; ') + '</small>' : ''}</td><td>${a.payload ? '<code>' + esc(JSON.stringify(a.payload)) + '</code>' : ''}</td><td>${esc(a.resolution || a.note || '')}${a.review ? '<br><b>Review:</b> ' + esc(a.review) : ''}</td></tr>`))}
+<h3>CREATE_APPROVED — exact account-creation payloads (${accountsPlan.mutations.length}) — not sent</h3>${tbl(['account_code', 'account_name', 'account_type', 'parent account', 'request'], accountsPlan.mutations.map(m => `<tr><td>${esc(m.body.account_code)}</td><td>${esc(m.body.account_name)}</td><td>${esc(m.body.account_type)}</td><td>${m.body.parent_account_id ? esc(parentText(m)) : '—'}</td><td><code>${esc(`${m.method} ${m.path} ${JSON.stringify(m.body)}`)}</code></td></tr>`))}
+<h3>Accounting decisions</h3>${tbl(['Account', 'Decision', 'Classification', 'Treatment'], (accountsPlan.decisions || []).map(d => `<tr><td>${esc(d.code)}</td><td>${esc(d.title)}</td><td><b>${esc(d.classification)}</b></td><td>${esc(d.treatment)}</td></tr>`))}
+${accountsPlan.rows.filter(x => x.name_match && x.name_match.account_id).map(r => `<h3>${esc(r.code)} ${esc(r.name)} — existing Zoho account with that name (${esc(r.classification)})</h3>${tbl(['Field', 'Value'], [...['account_id', 'account_name', 'account_code', 'account_type', 'parent_account', 'is_system_account', 'active', 'involved_in_transaction'].map(k => `<tr><td>${k}</td><td>${esc(r.name_match[k] === '' ? '(none)' : r.name_match[k])}</td></tr>`), ...(r.name_match.checks ? [`<tr><td>safety checks</td><td>${esc(Object.entries(r.name_match.checks).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v ? 'yes' : 'NO'}`).join(' · '))}</td></tr>`] : []), ...(r.name_match.owned_by || []).map(o => `<tr><td>already owned by</td><td>${esc(`${o.trigon_code} (${o.trigon_key}) · ${o.mapping_source} · mapped ${o.mapped_at} · Zoho ${o.zoho_id} ${o.zoho_name} (${o.zoho_type}${o.zoho_code ? ', code ' + o.zoho_code : ''})`)}${o.legacy_audit.length ? '<br><small>' + esc(o.legacy_audit.join(' | ')) + '</small>' : ''}</td></tr>`), `<tr><td>verdict</td><td><b>${esc(r.classification === 'ADOPT_EXISTING_AFTER_CONFIRMATION' ? 'safe to adopt with an explicit administrator confirmation' : 'not safe to adopt')}</b> — ${esc(r.note || r.resolution || '')}</td></tr>`])}`).join('')}
+${accountsPlan.vat_diagnostic ? `<h3>VAT diagnostic (read only — Zoho's tax configuration is not changed)</h3>${tbl(['Item', 'Value'], [['UAE VAT enabled', accountsPlan.vat_diagnostic.uae_vat_enabled], ['Organisation tax registration', Object.entries(accountsPlan.vat_diagnostic.organization).map(([k, x]) => `${k}=${x}`).join(' · ')], ['Taxes', accountsPlan.vat_diagnostic.taxes.map(t => `${t.tax_name} ${t.tax_percentage}% [${t.tax_type}${t.active ? '' : ', inactive'}] id ${t.tax_id}`).join(' · ') || 'none'], ['Active Standard 5%', accountsPlan.vat_diagnostic.standard_5_active ? (typeof accountsPlan.vat_diagnostic.standard_5_active === 'string' ? accountsPlan.vat_diagnostic.standard_5_active : `${accountsPlan.vat_diagnostic.standard_5_active.tax_name} (id ${accountsPlan.vat_diagnostic.standard_5_active.tax_id})`) : 'NONE'], ['Input VAT control', accountsPlan.vat_diagnostic.input_vat_control.map(a => `${a.name} (id ${a.id}, ${a.type}${a.system ? ', system' : ''})`).join(' · ') || 'none'], ['Output VAT control', accountsPlan.vat_diagnostic.output_vat_control.map(a => `${a.name} (id ${a.id}, ${a.type}${a.system ? ', system' : ''})`).join(' · ') || 'none'], ['Other system tax accounts (diagnostic only)', accountsPlan.vat_diagnostic.other_system_tax_accounts.map(a => `${a.name} (id ${a.id}, ${a.type})`).join(' · ') || 'none']].map(([k, x]) => `<tr><td>${esc(k)}</td><td>${esc(x)}</td></tr>`))}` : ''}` : `<p>Not available: ${esc(accountsError)}</p>`}
 <h2>Saved Trigon → Zoho mappings</h2>${tbl(['Kind', 'Trigon', 'Zoho'], pf.mappings.map(m => `<tr><td>${esc(m.kind)}</td><td>${esc(m.local_key)}</td><td>${esc(m.label || m.zoho_id)} <small>${esc(m.zoho_id)}</small></td></tr>`))}
 <h2>Conflicts and possible duplicates</h2>${pf.conflicts.length ? tbl(['Type', 'Document', 'Action', 'Why'], pf.conflicts.map(i => `<tr><td>${esc(i.kind)}</td><td>${esc(i.ref)}</td><td>${esc(i.action)}</td><td>${esc(i.why)}</td></tr>`)) : '<p>None.</p>'}
 <h2>Plan per type</h2>${tbl(['Type', 'Actions'], Object.entries(pf.plan).map(([k, a]) => `<tr><td>${esc(k)}</td><td>${esc(Object.entries(a).map(([x, n]) => `${x}: ${n}`).join(' · '))}</td></tr>`))}
@@ -260,6 +275,52 @@ ${(r.errors || []).length ? `<h2>Errors while reading</h2><ul>${r.errors.map(e =
   console.log(`\nProof: ${proof.books_reads} Zoho Books read(s) (GET), ${proof.access_token_requests} access-token request(s), ${proof.modifying_calls_sent} modifying call(s) sent, ${proof.blocked_attempts.length} refused by the guard; Trigon copy unchanged: ${proof.local_copy_unchanged ? 'yes' : 'NO'}`);
   console.log(`Would create ${pf.summary.would_create} · update ${pf.summary.would_update} · delete ${pf.summary.would_delete} · already synced ${pf.summary.unchanged_already_synced} · possible duplicates ${pf.summary.possible_duplicates} · conflicts ${pf.summary.conflicts}`);
   console.log(`Required accounts: ${pf.required_accounts.filter(a => ['mapped', 'automatic'].includes(a.status)).length} ok, ${pf.required_accounts.filter(a => ['missing', 'ambiguous'].includes(a.status)).length} to map, ${pf.required_accounts.filter(a => ['type_mismatch', 'not_found'].includes(a.status)).length} wrong`);
+  if (accountsPlan) {
+    console.log(`Account provisioning preview (nothing created): ${accountsPlan.state} — ${Object.entries(accountsPlan.counts).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
+    const tg = accountsPlan.targets; console.log(`  Targets before synchronisation: missing mappings ${tg.missing_mappings} · wrong types ${tg.wrong_types} · ambiguous matches ${tg.ambiguous_matches} · blocking conflicts ${tg.blocking_conflicts} (each must be 0)`);
+    const tn = accountsPlan.targets_non_vat; console.log(`  Non-VAT targets (READY_NON_VAT): missing mappings ${tn.missing_mappings} · wrong types ${tn.wrong_types} · ambiguous matches ${tn.ambiguous_matches} · blocking conflicts ${tn.blocking_conflicts} (each must be 0) · VAT: ${accountsPlan.vat_state}`);
+    const ex = accountsPlan.expected_non_vat; if (ex) console.log(`  Expected after provisioning (with the proposed confirmations / repairs): non-VAT missing mappings ${ex.missing_mappings} · wrong types ${ex.wrong_types} · ambiguous matches ${ex.ambiguous_matches} · blocking conflicts ${ex.blocking_conflicts}`);
+    const r1020 = accountsPlan.rows.find(x => x.key === 'acct:1020'); if (r1020) console.log(`  1020 ${r1020.name}: ${r1020.classification}${r1020.reason ? ' (' + r1020.reason + ')' : ''}${r1020.zoho ? ' → ' + r1020.zoho.name + ' (id ' + r1020.zoho.id + ', ' + r1020.zoho.type + (r1020.zoho.code ? ', code ' + r1020.zoho.code : '') + ')' : ''}${r1020.proposed_payload ? ' proposed ' + JSON.stringify(r1020.proposed_payload) : ''}${r1020.pending_repair ? ' — after the repair' : ''}`);
+    for (const d of accountsPlan.deferred || []) console.log(`  Deferred by accounting decision (not counted; its transactions are held): ${d.code} — ${d.why}`);
+    for (const r of [...accountsPlan.rows, ...accountsPlan.vat].filter(r => !['ADOPT_EXISTING', 'SYSTEM_ACCOUNT_ADOPT', 'CREATE_APPROVED'].includes(r.classification))) console.log(`  ✖ ${r.code} ${r.name}: ${r.classification}${r.reason ? ' — ' + r.reason : ''}`);
+    // the accounts that would actually be created: every one, with its exact fields (not sent)
+    console.log(`\n  CREATE_APPROVED — exact account-creation payloads (${accountsPlan.mutations.length}, NOT sent):`);
+    for (const m of accountsPlan.mutations) console.log(`    ${m.body.account_code.padEnd(10)} ${m.body.account_name.padEnd(34)} type ${m.body.account_type.padEnd(24)} parent ${m.body.parent_account_id ? parentText(m) : '(none)'}`);
+    // an exact-name match: what the administrator would confirm
+    for (const r of accountsPlan.rows.filter(x => x.name_match && x.name_match.account_id)) {
+      const n = r.name_match; console.log(`\n  ${r.code} ${r.name}: ${r.classification} — the existing Zoho account with that name:`);
+      for (const k of ['account_id', 'account_name', 'account_code', 'account_type', 'parent_account', 'is_system_account', 'active', 'involved_in_transaction']) console.log(`    ${k.padEnd(24)} ${n[k] === '' ? '(none)' : n[k]}`);
+      if (n.checks) console.log(`    safety checks           ${Object.entries(n.checks).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v ? 'yes' : 'NO'}`).join(' · ')}`);
+      for (const o of n.owned_by || []) {
+        console.log(`    already owned by Trigon mapping (read only — not changed):`);
+        for (const k of ['trigon_code', 'trigon_key', 'mapping_source', 'mapped_at', 'label', 'zoho_id', 'zoho_name', 'zoho_type', 'zoho_code']) console.log(`      ${k.padEnd(16)} ${o[k] === '' ? '(none)' : o[k]}`);
+        console.log(`      ${'mapping history'.padEnd(16)} ${o.legacy_audit.length ? o.legacy_audit.join(' | ') : '(no audit entry)'}`);
+      }
+      if (r.repair) {
+        const rp = r.repair; console.log(`\n    LEGACY MAPPING REPAIR (preview — nothing changed): ${rp.state}`);
+        for (const [k, v] of Object.entries(rp.checks)) console.log(`      ${v ? '✔' : '✖'} ${k.replace(/_/g, ' ')}`);
+        for (const o of rp.operations) console.log(`      ${o.op.padEnd(22)} ${o.trigon_key.padEnd(10)} → ${o.zoho_id || '(none)'} ${o.zoho_name ? '"' + o.zoho_name + '"' : ''}${o.payload ? ' ' + JSON.stringify(o.payload) : ''}`);
+        console.log(`      previous mapping: ${rp.previous.trigon_key}, ${rp.previous.source}, ${rp.previous.mapped_at} (its audit history is kept)`);
+        console.log(`      Zoho: ${rp.zoho_changes}. Applied only after explicit administrator confirmation, as one Trigon transaction.`);
+        if (rp.next_for_old_code) console.log(`      ${rp.operations[0].trigon_key} on its own: ${rp.next_for_old_code.classification}${rp.next_for_old_code.reason ? ' (' + rp.next_for_old_code.reason + ')' : ''}${rp.next_for_old_code.zoho ? ' → ' + rp.next_for_old_code.zoho.name : ''}${rp.next_for_old_code.payload ? ' ' + JSON.stringify(rp.next_for_old_code.payload) : ''}`);
+      }
+      console.log(`    → ${r.classification === 'ADOPT_EXISTING_AFTER_CONFIRMATION' ? 'safe to adopt with an explicit administrator confirmation (nothing changes in Zoho; its id is remembered)' : 'NOT safe to adopt: ' + (r.resolution || '')}`);
+    }
+    // VAT as configured in Zoho
+    const v = accountsPlan.vat_diagnostic;
+    if (v) {
+      console.log(`\n  VAT diagnostic (read only): UAE VAT enabled: ${v.uae_vat_enabled}`);
+      console.log(`    organisation: ${Object.entries(v.organization).map(([k, x]) => `${k}=${x}`).join(' · ')}`);
+      console.log(`    taxes (${v.taxes.length}): ${v.taxes.map(t => `${t.tax_name} ${t.tax_percentage}% [${t.tax_type}${t.specific_type ? '/' + t.specific_type : ''}${t.active ? '' : ', INACTIVE'}] id ${t.tax_id}`).join(' · ') || 'none'}`);
+      console.log(`    active Standard 5%: ${v.standard_5_active ? (typeof v.standard_5_active === 'string' ? v.standard_5_active : `${v.standard_5_active.tax_name} (id ${v.standard_5_active.tax_id})`) : 'NONE'}`);
+      for (const [lbl, list] of [['input VAT control', v.input_vat_control], ['output VAT control', v.output_vat_control], ['other system tax accounts (diagnostic only)', v.other_system_tax_accounts]])
+        console.log(`    ${lbl}: ${list.length ? list.map(a => `${a.name} (id ${a.id}, ${a.type}${a.system ? ', system' : ''}${a.active ? '' : ', inactive'})`).join(' · ') : 'none'}`);
+    }
+    // the three accounting decisions
+    console.log('\n  Accounting decisions:');
+    for (const d of accountsPlan.decisions || []) console.log(`    ${d.code} ${d.title} [${d.classification}]\n      ${d.treatment}`);
+  }
+  else if (accountsError) console.log(`Account provisioning preview: not available — ${accountsError}`);
   console.log(`\nVERDICT: ${verdict}`);
   for (const b of blockers) console.log('  ✖ ' + b);
   for (const t of pf.to_configure) console.log('  • ' + t);

@@ -25,7 +25,11 @@ window.controlsCards = async el => {
     <p class="muted">${tr('بعد تقديم الإقرار الضريبي أو اعتماد حسابات شهر، أقفل الفترة حتى تاريخ نهايتها: لا يمكن بعدها إضافة أو تعديل أو حذف أي فاتورة أو مصروف أو دفعة أو قيد أو رواتب بتاريخ يقع داخل الفترة المقفلة. التصحيح يكون بإشعار دائن أو قيد في الفترة المفتوحة. اترك التاريخ فارغاً لإعادة الفتح.', 'After filing the VAT return or approving a month, close the period up to its last day: no invoice, expense, payment, journal or payroll dated inside the closed period can then be added, changed or deleted. Corrections go through a credit note or a journal in the open period. Leave the date empty to reopen.')}</p>
     <p>${p.lock_date ? `${ico('lock')} ${tr('مقفلة حتى', 'Closed up to')} <b>${esc(p.lock_date)}</b>` : `<span class="muted">${tr('لا توجد فترة مقفلة', 'No period is closed')}</span>`}</p>
     <div class="f"><label>${tr('الإقفال حتى تاريخ', 'Close up to')}</label><input type="date" id="lockd" value="${esc(p.lock_date || '')}" max="${today()}"></div>
-    <button class="btn sec" id="locksave">${tr('حفظ', 'Save')}</button></div>
+    <button class="btn sec" id="locksave">${tr('حفظ', 'Save')}</button>
+    <h3 style="margin-top:18px">${tr('قواعد الدفتر الموحّدة مع Zoho', 'Ledger rules aligned with Zoho')}</h3>
+    <p class="muted">${tr('من هذا التاريخ: رواتب المشاريع والمكتب (5200 / 6200) حسب توزيع الحضور، والشيك المؤجل في 1050 / 2050 حتى تاريخ الشيك. ما قبله يبقى كما هو. يجب أن يكون بعد تاريخ الإقفال.', 'From this date: site and head-office salaries (5200 / 6200) by the attendance allocation, and post-dated cheques in 1050 / 2050 until the cheque date. Earlier periods stay as they are. It must come after the closing date.')}</p>
+    <div class="f"><label>${tr('تُطبّق من تاريخ', 'Apply from')}</label><input type="date" id="rulesd" value="${esc(p.ledger_rules_from || '')}"></div>
+    <button class="btn sec" id="rulessave">${tr('حفظ', 'Save')}</button></div>
   <div class="card"><h2>${tr('النسخ الاحتياطي التلقائي', 'Automatic backups')}</h2>
     <p class="${b.stale ? 'neg' : 'ok'}">${b.latest ? `${b.stale ? MK.bad : MK.ok} ${tr('آخر نسخة', 'Last backup')}: <b>${esc(b.latest.at)}</b> (${kb(b.latest.size)})${b.stale ? ` — ${tr('قديمة، تحقق من جهاز الخادم', 'old — check the server')}` : ''}` : `${MK.bad}${tr('لا توجد نسخ احتياطية بعد', 'No backups yet')}`}</p>
     <p class="muted">${tr('يأخذ النظام نسخة كل يوم تلقائياً ويحتفظ بآخر', 'The system writes a backup every day and keeps the last')} ${b.keep_days} ${tr('يوماً في المجلد', 'days in')} <span dir="ltr">${esc(b.folder)}</span>. ${tr('نسخة على نفس الجهاز لا تحميك من تلف القرص أو السرقة: حدّد مجلداً ثانياً خارج الجهاز (قرص خارجي، مجلد OneDrive، مشاركة شبكة) لتُنسخ إليه كل نسخة.', 'A copy on the same PC does not protect you from a failed disk or theft: set a second folder off the machine (external disk, OneDrive folder, network share) and every backup is copied there too.')}</p>
@@ -38,6 +42,11 @@ window.controlsCards = async el => {
     const d = $('#lockd', el).value;
     if (!confirm(d ? tr(`إقفال كل الحركات حتى ${d}؟`, `Close everything up to ${d}?`) : tr('إعادة فتح كل الفترات؟', 'Reopen all periods?'))) return;
     await api('PUT', 'period', { lock_date: d }); toast(tr('تم الحفظ', 'Saved')); controlsCards(el);
+  });
+  $('#rulessave', el).onclick = guard(async () => {
+    const d = $('#rulesd', el).value;
+    if (!confirm(d ? tr(`تطبيق قواعد الدفتر الموحّدة من ${d}؟ تتغير القيود المشتقة من هذا التاريخ.`, `Apply the aligned ledger rules from ${d}? The derived entries from that date change.`) : tr('الرجوع إلى القواعد السابقة؟', 'Go back to the earlier rules?'))) return;
+    await api('PUT', 'period/rules', { ledger_rules_from: d }); toast(tr('تم الحفظ', 'Saved')); controlsCards(el);
   });
   $('#bksave', el).onclick = guard(async () => { await api('PUT', 'settings', { backup_copy_dir: $('#bkdir', el).value.trim() }); toast(tr('تم الحفظ', 'Saved')); controlsCards(el); });
   $('#bknow', el).onclick = guard(async () => { await api('PUT', 'settings', { backup_copy_dir: $('#bkdir', el).value.trim() }); await api('POST', 'backup/run'); toast(tr('تم أخذ النسخة', 'Backup written')); controlsCards(el); });

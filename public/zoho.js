@@ -16,6 +16,7 @@ PAGES.zoho = async () => {
   <p class="muted">${tr('يرسل النظام معاملات كل يوم إلى Zoho Books: جهات الاتصال، الفواتير الضريبية والإشعارات الدائنة بنفس أرقامها، فواتير الموردين والمصروفات، والمقبوضات والمدفوعات مربوطة بفاتورتها. كل معاملة تُرسل مرة واحدة فلا تتكرر.', 'Every day the system sends its transactions to Zoho Books: contacts, tax invoices and credit notes under our own numbers, vendor bills and expenses, and receipts and payments applied to their invoice or bill. Each record is sent once, so nothing is duplicated.')}</p>
   <div class="grid">${k(tr('الحالة', 'Status'), on && connected ? tr('مفعّل', 'On') : tr('غير مفعّل', 'Off'), on && connected ? 'ok' : 'warn')}${k(tr('أُرسل', 'Sent'), d.counts.ok || 0)}${k(tr('أخطاء / تحتاج مراجعة', 'Errors / need review'), (d.counts.error || 0) + (d.counts.changed || 0), (d.counts.error || d.counts.changed) ? 'warn' : '')}${k(tr('آخر إرسال', 'Last run'), d.runs[0] ? esc(d.runs[0].finished.slice(0, 16)) : '—')}</div>
 
+  ${live ? '<div id="zsync"></div>' : ''}
   <div class="card"><div class="bar"><h2>${tr('تقرير المعاملات اليومي', 'Daily transactions report')}</h2><span class="sp"></span><input type="date" id="day" value="${esc(day)}" style="max-width:170px"></div>
     <div class="grid">${k(tr('المفوتر', 'Invoiced'), money(t.invoiced))}${k(tr('ضريبة المخرجات', 'Output VAT'), money(t.output_vat))}${k(tr('المصروفات والفواتير', 'Bills & expenses'), money(t.bills))}${k(tr('ضريبة المدخلات', 'Input VAT'), money(t.input_vat))}${k(tr('المقبوض', 'Received'), money(t.received))}${k(tr('المدفوع', 'Paid'), money(t.paid))}</div>
     <div class="tw"><table><thead><tr><th>${tr('النوع', 'Type')}</th><th>${tr('المرجع', 'Reference')}</th><th>${tr('الجهة', 'Party')}</th><th>${tr('المشروع', 'Project')}</th><th class="n">${tr('الصافي', 'Net')}</th><th class="n">${tr('الضريبة', 'VAT')}</th><th class="n">${tr('الإجمالي', 'Total')}</th><th>Zoho</th></tr></thead><tbody>
@@ -37,7 +38,7 @@ PAGES.zoho = async () => {
     <div class="f" style="align-self:end"><button class="btn" id="z-connect">${connected ? tr('إعادة الربط', 'Reconnect') : tr('ربط', 'Connect')}</button></div></div>
     ${connected ? `<p class="ok">${MK.ok}${tr('مرتبط', 'Connected')}${c.org_name ? ` — ${esc(c.org_name)}` : ''} <button class="btn sec sm" id="z-disc">${tr('فصل الربط', 'Disconnect')}</button></p>
       ${c.orgs.length > 1 || !c.org ? `<div class="f"><label>${tr('مؤسسة Zoho Books', 'Zoho Books organisation')}</label><select id="z-org"><option value="">—</option>${c.orgs.map(o => `<option value="${esc(o.id)}"${o.id === c.org ? ' selected' : ''}>${esc(o.name)} (${esc(o.id)})</option>`).join('')}</select></div>` : ''}` : ''}
-    <div class="f2" style="margin-top:12px"><div class="f"><label>${tr('إرسال المعاملات المؤرخة من', 'Send transactions dated from')}</label><input id="z-start" type="date" value="${esc(c.start || today())}"></div>
+    <div class="f2" style="margin-top:12px"><div class="f"><label>${tr('إرسال المعاملات المؤرخة من', 'Send transactions dated from')}</label><input id="z-start" type="date" value="${esc(c.start || today())}"></div><div class="f"><label>${tr('الأنواع الجديدة (العهد، المطالبات، الشركاء، الأصول، الرواتب حسب التاريخ) تُرسل من', 'New types (petty cash, claims, partners, assets, salaries by date) sent from')}</label><input id="z-start2" type="date" value="${esc(c.start_v2 || '')}"${admin ? '' : ' disabled'}><small class="muted">${tr('فارغ = لا تُرسل. ما قبل هذا التاريخ لا يُرسل أبداً (لا إعادة إرسال للقديم).', 'Empty = not sent. Nothing dated before it is ever sent (history is not resent).')}</small></div>
     <div class="f"><label>${tr('الإرسال التلقائي اليومي الساعة', 'Automatic daily send at hour')}</label><input id="z-hour" type="number" min="0" max="23" value="${esc(c.hour || '23')}"></div></div>
     ${chk('z-en', on, tr('تفعيل الربط', 'Enable the link'))}${chk('z-auto', c.auto === '1', tr('إرسال تلقائي كل يوم', 'Send automatically every day'))}
     ${chk('z-post', c.post === '1', tr('اعتماد الفواتير (Sent) وفواتير الموردين (Open) في Zoho مباشرة — بدون ذلك تصل كمسودات يراجعها المحاسب', 'Mark invoices as Sent and bills as Open in Zoho right away — otherwise they arrive as drafts for the accountant to review'))}
@@ -76,6 +77,7 @@ PAGES.zoho = async () => {
       ${r.ops.map(o => { const base = o.path.replace(/\/(:id|DRY-\d+).*$/, ''); return `<tr><td>${o.method === 'DELETE' ? tr('حذف', 'Delete') : o.method === 'POST' && !/status/.test(o.path) ? tr('إنشاء', 'Create') : o.method === 'PUT' ? tr('تحديث', 'Update') : tr('تغيير حالة', 'Status')}</td><td>${tr(...(OPN[base] || [base, base]))}</td><td>${esc(String(o.what || ''))}</td><td class="n">${o.amount === '' ? '' : money(o.amount)}</td></tr>`; }).join('') || `<tr><td colspan="4" class="muted">${tr('لا شيء للإرسال', 'Nothing to send')}</td></tr>`}</tbody></table></div></div>`;
   });
   if ($('#retry')) $('#retry').onclick = guard(async () => { await api('POST', 'zoho/retry'); toast(tr('ستُعاد محاولة الأخطاء في الإرسال القادم', 'Failed records will be retried on the next send')); render(); });
+  if (live) zohoSync(admin);
   if (live && connected) zohoMapping(admin);
   if (!$('#z-save')) return;
   const clientBody = () => ({ dc: $('#z-dc').value, client_id: $('#z-id').value.trim(), client_secret: $('#z-secret').value.trim() || undefined });
@@ -87,7 +89,7 @@ PAGES.zoho = async () => {
   });
   if ($('#z-disc')) $('#z-disc').onclick = guard(async () => { if (!confirm(tr('فصل الربط مع Zoho؟ سيتوقف الإرسال حتى تربط من جديد.', 'Disconnect from Zoho? Sending stops until you connect again.'))) return; await api('POST', 'zoho/disconnect'); render(); });
   $('#z-save').onclick = guard(async () => {
-    await api('PUT', 'zoho/config', { start: $('#z-start').value, hour: $('#z-hour').value, enabled: $('#z-en').checked ? '1' : '0', auto: $('#z-auto').checked ? '1' : '0', post: $('#z-post').checked ? '1' : '0', ...($('#z-org') ? { org: $('#z-org').value } : {}) });
+    await api('PUT', 'zoho/config', { start: $('#z-start').value, start_v2: $('#z-start2') ? $('#z-start2').value : undefined, hour: $('#z-hour').value, enabled: $('#z-en').checked ? '1' : '0', auto: $('#z-auto').checked ? '1' : '0', post: $('#z-post').checked ? '1' : '0', ...($('#z-org') ? { org: $('#z-org').value } : {}) });
     toast(tr('تم الحفظ', 'Saved')); render();
   });
   if ($('#z-test')) $('#z-test').onclick = guard(async () => {
@@ -127,7 +129,8 @@ async function zohoMapping(admin) {
 function zohoPreflight(pf) {
   const KIND = { contact: ['جهات الاتصال', 'Contacts'], invoice: ['الفواتير والإشعارات الدائنة', 'Invoices & credit notes'], bill: ['فواتير الموردين والمصروفات', 'Bills & expenses'], payment: ['المقبوضات والمدفوعات', 'Receipts & payments'],
     jv_payroll: ['قيود الرواتب', 'Payroll journals'], jv_paypaid: ['قيود صرف الرواتب', 'Salaries paid journals'], jv_eos: ['قيود مخصص نهاية الخدمة', 'End-of-service provision journals'], jv_eos_set: ['قيود تسوية نهاية الخدمة', 'End-of-service settlement journals'],
-    jv_retention: ['قيود المحتجزات', 'Retention journals'], jv_ret_release: ['قيود الإفراج عن المحتجزات', 'Retention release journals'], jv_advance: ['قيود السلف', 'Salary advance journals'] };
+    jv_retention: ['قيود المحتجزات', 'Retention journals'], jv_paypaid_d: ['قيود صرف الرواتب حسب التاريخ', 'Salaries paid (by date)'], jv_petty: ['قيود العهد وصندوق المكتب', 'Petty cash & custody journals'], jv_reimb: ['قيود تعويض المطالبات', 'Claim reimbursement journals'],
+    jv_partner: ['قيود الشركاء', 'Partner journals'], jv_palloc: ['قيود توزيع الأرباح', 'Profit allocation journals'], jv_dep: ['قيود الإهلاك', 'Depreciation journals'], jv_asset: ['قيود الأصول', 'Asset journals'], jv_ret_release: ['قيود الإفراج عن المحتجزات', 'Retention release journals'], jv_advance: ['قيود السلف', 'Salary advance journals'] };
   const ACT = { create: ['إنشاء', 'Create'], update: ['تحديث', 'Update'], unchanged: ['موجود ولم يتغير', 'Already synced, unchanged'], link: ['موجود في Zoho — سيُربط', 'Exists in Zoho — would be linked'], conflict: ['تعارض', 'Conflict'], remove: ['حذف من Zoho', 'Remove from Zoho'], void: ['إلغاء في Zoho', 'Void in Zoho'], skip: ['متروك', 'Skipped'], error: ['خطأ', 'Error'] };
   const ORDER = ['create', 'update', 'unchanged', 'link', 'conflict', 'remove', 'void', 'skip', 'error'];
   const k = x => tr(...(KIND[x] || [x, x])), act = x => tr(...(ACT[x] || [x, x]));
@@ -169,3 +172,96 @@ function zohoPreflight(pf) {
       ${pf.items.map(i => `<tr><td>${k(i.kind)}</td><td>${esc(i.ref)}</td><td>${act(i.action)}</td><td class="muted">${esc(i.why)}</td></tr>`).join('')}</tbody></table></div></details>`;
 }
 
+
+// ---------- Zoho accounting sync: account provisioning, the READY gate, continuous sending, reconciliation ----------
+const ZS_CL = { ADOPT_EXISTING: ['يُعتمد حساب موجود (بالرمز والنوع)', 'Adopt existing (code + type)'], ADOPT_EXISTING_AFTER_CONFIRMATION: ['يُعتمد بعد تأكيد صريح من المدير', 'Adopt existing after explicit confirmation'], SYSTEM_ACCOUNT_ADOPT: ['يُعتمد حساب Zoho النظامي', 'Adopt Zoho system account'], CREATE_APPROVED: ['يُنشأ (معتمد)', 'Create (approved)'],
+  VAT_CONFIGURATION_REQUIRED: ['يلزم إعداد الضريبة في Zoho', 'VAT configuration required'], ACCOUNT_CONFLICT: ['تعارض', 'Account conflict'], AMBIGUOUS: ['غير محدد — أكثر من مرشح', 'Ambiguous'], BLOCKED: ['متوقف', 'Blocked'] };
+const ZS_ACT = { ok: ['جاهز', 'Ready'], adopt: ['يُعتمد حساب Zoho الموجود', 'Adopt the existing Zoho account'], create: ['يُنشأ في Zoho', 'Create in Zoho'], conflict: ['تعارض — يحتاج قراراً', 'Conflict — needs a decision'],
+  blocked: ['متوقف (الحساب الأب فيه تعارض)', 'Blocked (its parent has a conflict)'], missing: ['يُربط مرة واحدة يدوياً', 'Map it once by hand'], vat_required: ['يلزم إعداد الضريبة في Zoho', 'VAT configuration required in Zoho'] };
+const ZS_ST = { MATCH: ['مطابق', 'Match'], DIFFERENCE: ['فرق', 'Difference'], PENDING_SYNC: ['بانتظار الإرسال', 'Pending sync'], RETRYING: ['إعادة محاولة', 'Retrying'], MISSING_MAPPING: ['ربط ناقص', 'Missing mapping'],
+  ZOHO_ONLY: ['في Zoho فقط', 'Zoho only'], TRIGON_ONLY: ['في تريجون فقط', 'Trigon only'], AMOUNT_MISMATCH: ['اختلاف المبلغ', 'Amount mismatch'], ACCOUNT_MISMATCH: ['اختلاف الحساب', 'Account mismatch'], DATE_MISMATCH: ['اختلاف التاريخ', 'Date mismatch'], BLOCKED: ['متوقف', 'Blocked'] };
+const zsAct = a => tr(...(ZS_ACT[a] || [a, a])), zsSt = x => { const l = ZS_ST[x] || [x, x]; return `<span class="tag ${x === 'MATCH' ? 'paid' : ['DIFFERENCE', 'AMOUNT_MISMATCH', 'ACCOUNT_MISMATCH', 'DATE_MISMATCH', 'BLOCKED', 'TRIGON_ONLY'].includes(x) ? 'overdue' : ''}">${tr(l[0], l[1])}</span>`; };
+// the key a confirmation checkbox submits: the one the preview lists in p.confirmable — a legacy mapping repair is confirmed by its
+// own key (e.g. repair:1020>1010), an ordinary name match by the row's key; anything not confirmable gets no checkbox
+function zsConfirmKey(r, p) {
+  const k = r.repair && r.repair.key ? r.repair.key : r.key;
+  return ((p && p.confirmable) || []).some(c => c.key === k) ? k : '';
+}
+function zsPlanHtml(p) {
+  return `<h3>${tr('الحسابات — المعاينة (لم يُرسل شيء)', 'Accounts — preview (nothing was sent)')}: ${esc(p.state)}</h3>
+    <p class="muted">${tr('يُطابق بالرمز والنوع فقط، لا بالاسم. لا يُعاد تسمية أي حساب في Zoho ولا يُغيَّر نوعه ولا يُحذف ولا يُدمج.', 'Matched by code and type only, never by name. No Zoho account is renamed, re-typed, deleted or merged.')}</p>
+    <div class="tw"><table><thead><tr><th>${tr('الرمز', 'Code')}</th><th>${tr('الاسم في Zoho', 'Name in Zoho')}</th><th>${tr('النوع', 'Type')}</th><th>${tr('الإجراء', 'Action')}</th><th>${tr('حساب Zoho', 'Zoho account')}</th><th>${tr('ملاحظة / الحل المقترح', 'Note / recommended resolution')}</th></tr></thead><tbody>
+    ${[...p.rows, ...p.vat].map(r => `<tr${['ACCOUNT_CONFLICT', 'BLOCKED', 'AMBIGUOUS', 'VAT_CONFIGURATION_REQUIRED'].includes(r.classification) ? ' class="err"' : ''}><td>${esc(r.code)}</td><td>${esc(r.name)}${r.partner ? ` <small class="muted">${esc(r.partner)}</small>` : ''}</td><td>${esc(r.type || (r.types || []).join(' / '))}</td>
+      <td><b>${tr(...(ZS_CL[r.classification] || [r.classification, r.classification]))}</b><br><small dir="ltr">${esc(r.classification)}${r.reason ? ' · ' + esc(r.reason) : ''}</small></td><td>${r.zoho ? `${esc(r.zoho.name)} <small class="muted">${esc(r.zoho.id)} · ${esc(r.zoho.type)}${r.zoho.code ? ' · ' + esc(r.zoho.code) : ''}</small>` : '—'}${r.payload ? `<br><code dir="ltr" style="font-size:11px">${esc(JSON.stringify(r.payload))}</code>` : ''}</td>
+      <td>${esc(r.resolution || r.note || '')}${r.review ? `<br><b>${tr('للمراجعة', 'Review')}:</b> ${esc(r.review)}` : ''}${r.name_match && r.name_match.account_id ? `<br><small dir="ltr">${esc(['account_id', 'account_code', 'account_type', 'parent_account', 'is_system_account', 'active', 'involved_in_transaction'].map(k => `${k}: ${r.name_match[k] === '' ? '(none)' : r.name_match[k]}`).join(' · '))}</small>` : ''}
+      ${r.classification === 'ADOPT_EXISTING_AFTER_CONFIRMATION' && zsConfirmKey(r, p) ? `<br><label><input type="checkbox" class="zs-confirm" value="${esc(zsConfirmKey(r, p))}" style="width:auto"> ${tr('أؤكد أن هذا هو الحساب نفسه — اعتمده', 'I confirm this is the same account — adopt it')}</label>` : ''}</td></tr>`).join('')}</tbody></table></div>
+    ${(p.decisions || []).length ? `<h3>${tr('قرارات محاسبية', 'Accounting decisions')}</h3><ul>${p.decisions.map(d => `<li><b>${esc(d.code)} ${esc(d.title)}</b> [${esc(d.classification)}] — ${esc(d.treatment)}</li>`).join('')}</ul>` : ''}
+    ${p.vat_diagnostic ? `<h3>${tr('تشخيص الضريبة (قراءة فقط)', 'VAT diagnostic (read only)')}</h3><ul dir="ltr"><li>UAE VAT: ${esc(p.vat_diagnostic.uae_vat_enabled)}</li><li>${esc(Object.entries(p.vat_diagnostic.organization).map(([k, x]) => `${k}=${x}`).join(' · '))}</li>
+      <li>Taxes: ${esc(p.vat_diagnostic.taxes.map(t => `${t.tax_name} ${t.tax_percentage}% [${t.tax_type}${t.active ? '' : ', inactive'}]`).join(' · ') || 'none')}</li><li>Input VAT control: ${esc(p.vat_diagnostic.input_vat_control.map(a => `${a.name} (${a.id}, ${a.type})`).join(' · ') || 'none')}</li><li>Output VAT control: ${esc(p.vat_diagnostic.output_vat_control.map(a => `${a.name} (${a.id}, ${a.type})`).join(' · ') || 'none')}</li></ul>` : ''}
+    <p>${Object.entries(p.counts).map(([k2, v]) => `${tr(...(ZS_CL[k2] || [k2, k2]))}: <b>${v}</b>`).join(' · ')}</p>
+    <p>${tr('قبل تفعيل المزامنة يجب أن تكون كلها صفراً', 'Before synchronisation each must be 0')}: ${tr('ربط ناقص', 'missing mappings')} <b>${p.targets.missing_mappings}</b> · ${tr('نوع خاطئ', 'wrong types')} <b>${p.targets.wrong_types}</b> · ${tr('مطابقات غير محددة', 'ambiguous matches')} <b>${p.targets.ambiguous_matches}</b> · ${tr('تعارضات مانعة', 'blocking conflicts')} <b>${p.targets.blocking_conflicts}</b></p>
+    <h3>${tr('التغييرات المقترحة بالضبط', 'Exact proposed changes')} (${p.mutations.length})</h3>
+    ${p.mutations.length ? `<pre dir="ltr" style="white-space:pre-wrap;font-size:12px">${p.mutations.map(m => `${m.method} ${m.path} ${esc(JSON.stringify(m.body))}`).join('\n')}</pre>` : `<p>${tr('لا شيء يُنشأ.', 'Nothing to create.')}</p>`}
+    ${p.adopts.length ? `<p>${tr('يُعتمد ويُحفظ رقمه فقط (بدون تغيير في Zoho)', 'Adopted, only its id is saved (no change in Zoho)')}: ${p.adopts.map(a => `<b>${esc(a.key.slice(5))}</b> → ${esc(a.zoho_id)} (${esc(a.how)})`).join(' · ')}</p>` : ''}`;
+}
+async function zohoSync(admin) {
+  const box = $('#zsync'); if (!box) return;
+  let d; try { d = await api('GET', 'zoho-sync'); } catch (e) { box.innerHTML = `<div class="card"><p class="err">${esc(e.message)}</p></div>`; return; }
+  const k = (l, v, cls = '') => `<div class="kpi"><div class="l">${l}</div><div class="v ${cls}" style="font-size:16px">${v}</div></div>`, q = d.queue, g = d.gate_info || {};
+  const recon = d.last_reconciliation;
+  box.innerHTML = `<div class="card"><div class="bar"><h2>${tr('مزامنة المحاسبة مع Zoho', 'Zoho Accounting Sync')}</h2><span class="sp"></span>
+      ${admin ? `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="zs-cont" style="width:auto"${d.continuous ? ' checked' : ''}> ${tr('مزامنة مستمرة', 'Continuous sync')}</label>` : ''}</div>
+    <p class="muted">${tr('تريجون هو مصدر الحقيقة لهيكل الحسابات والقيود اليومية، وZoho هو النظام المحاسبي الرسمي الخارجي. لا يُرسل أي قيد قبل أن يصل الفحص (قراءة فقط) إلى READY: لا ربط ناقص، لا نوع حساب خاطئ، لا تعارض.', 'Trigon is the source of truth for the accounting structure and the daily books; Zoho is the official external books. Nothing is sent before the read-only preflight reaches READY: no missing mapping, no wrong account type, no conflict.')}</p>
+    <div class="grid">${k(tr('الاتصال', 'Connection'), d.connection.connected ? tr('مرتبط', 'Connected') : tr('غير مرتبط', 'Not connected'), d.connection.connected ? 'ok' : 'warn')}
+      ${k(tr('المؤسسة', 'Organization'), esc(d.connection.organization || '—'))}${k(tr('مركز البيانات', 'Data center'), esc(d.connection.data_centre || '—'))}
+      ${k(tr('الحسابات', 'Account provisioning'), esc(d.account_provisioning), d.account_provisioning === 'Ready' ? 'ok' : 'warn')}
+      ${k(tr('بوابة الإرسال', 'Gate'), `${esc(d.gate)}${d.vat && d.vat !== 'unknown' ? ' · ' + esc(d.vat) : ''}`, d.gate === 'READY' ? 'ok' : 'warn')}
+      ${k(tr('طابور الإرسال', 'Transaction queue'), `${q.retrying + q.error} ${tr('بانتظار إعادة المحاولة', 'waiting to retry')} · ${q.blocked} ${tr('متوقف', 'blocked')} · ${q.held || 0} ${tr('محجوز (ضريبة / قرار محاسبي)', 'held (VAT / accounting decision)')}${q.unsent_changes ? ' · ' + tr('تغييرات لم تُرسل', 'unsent changes') : ''}`, q.blocked ? 'warn' : '')}
+      ${k(tr('آخر مزامنة ناجحة', 'Last successful sync'), esc(d.last_successful_sync || '—'))}
+      ${k(tr('آخر مطابقة', 'Last reconciliation'), recon ? `${esc(recon.finished || '')} · ${zsSt(recon.status === 'MATCH' ? 'MATCH' : 'DIFFERENCE')}` : '—')}
+      ${k(tr('ميزان المراجعة', 'Trial balance'), d.trial_balance === 'Match' ? tr('مطابق', 'Match') : d.trial_balance === 'Difference' ? tr('فرق', 'Difference') : tr('لم تُجرَ مطابقة', 'Not reconciled yet'), d.trial_balance === 'Match' ? 'ok' : d.trial_balance === 'Difference' ? 'warn' : '')}</div>
+    ${q.backoff_until ? `<p class="err">${tr('Zoho غير متاح — المحاولة التالية بعد', 'Zoho unreachable — next attempt after')} ${esc(q.backoff_until.slice(0, 16).replace('T', ' '))}: ${esc(q.last_error)}</p>` : ''}
+    ${!g.ready && (g.reasons || []).length ? `<details><summary>${tr('لماذا البوابة غير جاهزة', 'Why the gate is not ready')} (${g.reasons.length})</summary><ul>${g.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}
+    <div class="bar" style="flex-wrap:wrap;margin-top:10px">
+      <button class="btn sec" id="zs-pf">${tr('تشغيل الفحص (قراءة فقط)', 'Run read-only preflight')}</button>
+      <button class="btn sec" id="zs-pv">${tr('معاينة الحسابات الناقصة', 'Preview missing accounts')}</button>
+      ${admin ? `<button class="btn" id="zs-prov" disabled>${tr('إنشاء الحسابات المعتمدة', 'Provision approved accounts')}</button><button class="btn sec" id="zs-retry">${tr('إعادة محاولة الإرسال المتعثر', 'Retry failed sync')}</button>` : ''}
+      <button class="btn sec" id="zs-rec">${tr('تشغيل المطابقة', 'Run reconciliation')}</button>
+      <button class="btn sec" id="zs-diff"${recon ? '' : ' disabled'}>${tr('عرض الفروقات', 'View differences')}</button></div>
+    <div id="zs-out"></div></div>`;
+  const out = $('#zs-out'); let preview = null;
+  const busy = t => { out.innerHTML = `<p class="muted">${t}</p>`; };
+  const planHtml = zsPlanHtml;
+  const gateHtml = gt => `<div class="card" style="border:2px solid ${gt.ready ? '#2a7' : '#d90'}"><b>${tr('البوابة', 'Gate')}: ${gt.ready ? 'READY' : 'NOT READY'}</b> · ${tr('الفحص', 'Preflight')}: ${esc(gt.verdict)}
+    · ${tr('ربط ناقص', 'missing mappings')} ${gt.missing_mappings} · ${tr('نوع خاطئ', 'wrong types')} ${gt.wrong_types} · ${tr('تعارضات', 'blocking conflicts')} ${gt.blocking_conflicts}
+    · ${tr('مطابقات غير محددة', 'ambiguous')} ${gt.ambiguous_matches || 0}
+    ${gt.reasons.length ? `<ul>${gt.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>`;
+  const reconHtml = r => `<h3>${tr('المطابقة', 'Reconciliation')} — ${esc(r.basis === 'movement' ? tr('حركة الفترة', 'period movement') : tr('الأرصدة', 'balances'))} ${tr('حتى', 'to')} ${esc(r.cutoff)}: ${zsSt(r.status === 'MATCH' ? 'MATCH' : 'DIFFERENCE')}</h3>
+    <p>${Object.entries((r.summary || {}).items || {}).map(([st, n]) => `${zsSt(st)} ${n}`).join(' · ')}</p>
+    <h3>${tr('القوائم المالية', 'Financial statements')}</h3><div class="tw"><table><thead><tr><th></th><th class="n">${tr('تريجون', 'Trigon')}</th><th class="n">Zoho</th><th class="n">${tr('الفرق', 'Difference')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
+    ${(r.statements || []).map(x => `<tr><td>${esc(x.name)}</td><td class="n">${money(x.trigon)}</td><td class="n">${money(x.zoho)}</td><td class="n">${money(x.difference)}</td><td>${zsSt(x.status)}</td></tr>`).join('')}</tbody></table></div>
+    <h3>${tr('ميزان المراجعة: تريجون ↔ Zoho', 'Trial balance: Trigon ↔ Zoho')}</h3><div class="tw"><table><thead><tr><th>${tr('حساب تريجون', 'Trigon account')}</th><th>${tr('حساب Zoho', 'Zoho account')}</th><th class="n">${tr('تريجون', 'Trigon')}</th><th class="n">Zoho</th><th class="n">${tr('منها في Zoho فقط', 'of which Zoho only')}</th><th class="n">${tr('الفرق', 'Difference')}</th><th>${tr('الحالة', 'Status')}</th></tr></thead><tbody>
+    ${(r.tb || []).filter(x => x.status !== 'MATCH' || x.trigon || x.zoho).map(x => `<tr${x.status !== 'MATCH' ? ' class="err"' : ''}><td>${esc(x.codes.join(' + '))}${x.partners.length ? ` <small>(${tr('شريك', 'partner')} ${esc(x.partners.join(', '))})</small>` : ''}</td><td>${esc(x.zoho_name || '—')}</td><td class="n">${money(x.trigon)}</td><td class="n">${money(x.zoho)}</td><td class="n">${x.zoho_only ? money(x.zoho_only) : ''}</td><td class="n">${money(x.difference)}</td><td>${zsSt(x.status)}</td></tr>`).join('')}</tbody></table></div>
+    ${(r.items || []).filter(x => x.status !== 'MATCH').length ? `<h3>${tr('سجلات بحاجة لمراجعة', 'Records to review')}</h3><div class="tw"><table><tbody>${r.items.filter(x => x.status !== 'MATCH').map(x => `<tr><td>${esc(x.kind)}</td><td>${esc(x.ref || '#' + x.local_id)}</td><td>${zsSt(x.status)}</td><td class="muted">${esc(x.note)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${(r.zoho_only || []).length ? `<h3>${tr('قيود في Zoho فقط (ليست من تريجون — لا تُستورد)', 'Entries in Zoho only (not from Trigon — never imported)')}</h3><div class="tw"><table><tbody>${r.zoho_only.slice(0, 300).map(x => `<tr><td>${esc(x.date || '')}</td><td>${esc(x.type || '')}</td><td>${esc(x.ref || x.id)}</td><td class="n">${money(x.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+  $('#zs-pf').onclick = guard(async () => { busy(tr('جارٍ الفحص (قراءة فقط)…', 'Running the read-only preflight…')); const r = await api('POST', 'zoho-sync/preflight'); out.innerHTML = gateHtml(r.gate) + (r.plan && r.plan.rows ? planHtml(r.plan) : ''); });
+  $('#zs-pv').onclick = guard(async () => { busy(tr('جارٍ القراءة من Zoho…', 'Reading Zoho…')); preview = await api('GET', 'zoho-sync/preview'); out.innerHTML = planHtml(preview); if ($('#zs-prov')) $('#zs-prov').disabled = !(preview.mutations.length || preview.adopts.length || preview.confirmable.length); });
+  if ($('#zs-prov')) $('#zs-prov').onclick = guard(async () => {
+    if (!preview) return;
+    // the ticked confirmations are read first: busy() below replaces the preview — and its checkboxes — with a message.
+    // Each must still be one the current preview offers (an unticked one is simply not applied).
+    const confirmed = [...document.querySelectorAll('.zs-confirm:checked')].map(x => x.value), confirmable = new Set((preview.confirmable || []).map(x => x.key));
+    if (confirmed.some(k => !confirmable.has(k))) throw new Error(tr('التأكيد المحدد لم يعد في المعاينة الحالية — أعد المعاينة.', 'The selected account confirmation is no longer in the current preview — preview again.'));
+    const n = preview.mutations.length, a = preview.adopts.length;
+    if (!confirm(tr(`سيُنشأ ${n} حساباً في Zoho ويُعتمد ${a} حساباً موجوداً، كما في المعاينة بالضبط. لن يُعاد تسمية أو تغيير أو حذف أي حساب. متابعة؟`, `This creates ${n} account(s) in Zoho and adopts ${a} existing account(s), exactly as in the preview. No account is renamed, changed or deleted. Continue?`))) return;
+    busy(tr('جارٍ الإنشاء ثم الفحص مرة ثانية…', 'Creating, then running the preflight again…'));
+    const r = await api('POST', 'zoho-sync/provision', { confirm: true, token: preview.token, confirm_adopt: confirmed });
+    out.innerHTML = `<p>${tr('أُنشئ', 'Created')} ${r.result.created.length} · ${tr('اعتُمد', 'adopted')} ${r.result.adopted.length} · ${tr('تعارضات متروكة', 'conflicts left')} ${r.result.conflicts.length} · ${tr('فشل', 'failed')} ${r.result.failed.length}</p>
+      ${r.result.failed.length ? `<ul class="err">${r.result.failed.map(f => `<li>${esc(f.name)}: ${esc(f.error)}</li>`).join('')}</ul>` : ''}${gateHtml(r.gate)}${r.plan && r.plan.rows ? planHtml(r.plan) : ''}`;
+    preview = null; $('#zs-prov').disabled = true;
+  });
+  if ($('#zs-retry')) $('#zs-retry').onclick = guard(async () => { const r = await api('POST', 'zoho-sync/retry'); toast(`${r.released} ${tr('سجل سيُعاد إرساله في الدقيقة القادمة', 'record(s) will be retried within a minute')}`); zohoSync(admin); });
+  $('#zs-rec').onclick = guard(async () => { busy(tr('جارٍ المطابقة (قراءة فقط) — قد تستغرق دقائق…', 'Reconciling (read only) — this can take a few minutes…')); out.innerHTML = reconHtml(await api('POST', 'zoho-sync/reconcile', {})); });
+  $('#zs-diff').onclick = guard(async () => { out.innerHTML = reconHtml(await api('GET', 'zoho-sync/recon')); });
+  if ($('#zs-cont')) $('#zs-cont').onchange = guard(async e => { await api('PUT', 'zoho-sync/settings', { continuous: e.target.checked ? '1' : '0' }); toast(tr('تم الحفظ', 'Saved')); });
+}
