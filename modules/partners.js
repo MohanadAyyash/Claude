@@ -98,20 +98,21 @@ module.exports = ctx => {
     const out = [], names = Object.fromEntries(partnersList().map(p => [p.id, p.name]));
     for (const t of db.prepare('SELECT * FROM partner_txns ORDER BY date, id').all()) {
       const who = names[t.partner_id] || `#${t.partner_id}`, ref = `PTR-${t.id}`, memo = `${desc(t)} — ${who}${t.note ? ' — ' + t.note : ''}`;
-      if (t.type === 'transfer') { out.push({ date: t.date, ref, memo, lines: [mk(SECTIONS[t.from_section], t.amount), mk(SECTIONS[t.to_section], 0, t.amount)] }); continue; }
+      const who_ = { partner_id: t.partner_id, txn_id: t.id };                     // which partner and movement (the Zoho bridge maps each partner's own accounts)
+      if (t.type === 'transfer') { out.push({ date: t.date, ref, memo, lines: [mk(SECTIONS[t.from_section], t.amount), mk(SECTIONS[t.to_section], 0, t.amount)], ...who_ }); continue; }
       const [sec, sign] = TYPES[t.type], acc = SECTIONS[sec];
       if (t.method === 'books') {
         if (sec === 'capital') continue;                            // capital already credited to 3000 by an earlier journal: only assigned to the partner
         const lines = sign > 0 ? [mk('3100', t.amount), mk(acc, 0, t.amount)] : [mk(acc, t.amount), mk('3100', 0, t.amount)];   // owner movements kept in 3100 move to the partner's current account
-        out.push({ date: t.date, ref, memo, lines }); continue;
+        out.push({ date: t.date, ref, memo, lines, ...who_ }); continue;
       }
       const cash = cashAcct(t);
-      out.push({ date: t.date, ref, memo, lines: sign > 0 ? [mk(cash, t.amount), mk(acc, 0, t.amount)] : [mk(acc, t.amount), mk(cash, 0, t.amount)] });
+      out.push({ date: t.date, ref, memo, lines: sign > 0 ? [mk(cash, t.amount), mk(acc, 0, t.amount)] : [mk(acc, t.amount), mk(cash, 0, t.amount)], ...who_ });
     }
     for (const a of allocations()) for (const l of a.lines) {
       if (!l.amount) continue;
       const who = names[l.partner_id] || `#${l.partner_id}`, memo = `${l.amount >= 0 ? 'Profit' : 'Loss'} ${a.year} allocated — ${who} (${l.pct}%)`;
-      out.push({ date: a.date, ref: `PALLOC-${a.year}`, memo, lines: l.amount > 0 ? [mk('3100', l.amount), mk('3110', 0, l.amount)] : [mk('3110', -l.amount), mk('3100', 0, -l.amount)] });
+      out.push({ date: a.date, ref: `PALLOC-${a.year}`, memo, lines: l.amount > 0 ? [mk('3100', l.amount), mk('3110', 0, l.amount)] : [mk('3110', -l.amount), mk('3100', 0, -l.amount)], partner_id: l.partner_id, year: a.year });
     }
     return out;
   };

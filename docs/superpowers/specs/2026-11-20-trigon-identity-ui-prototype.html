@@ -1,0 +1,491 @@
+<title>Trigon واجهة جديدة</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: page = intro + option tabs; each option is a live mini-app in a framed window (same content, different navigation) */
+:root{
+  --page:#ECEFF4; --surface:#FFFFFF; --sunk:#F5F7FA; --ink:#15253A; --mute:#66738A; --line:#DCE2EA;
+  --side:#1F3A5F; --side-2:#18304F; --side-ink:#C5D1E0; --side-on:#FFFFFF;
+  --accent:#2C6BC9; --accent-soft:#E5EEFB;
+  --ok:#17804A; --ok-soft:#DDF3E6; --warn:#9A5B00; --warn-soft:#FCEFD3; --bad:#B23A3A; --bad-soft:#FBE3E3;
+  --f:"IBM Plex Sans Arabic","Segoe UI",Tahoma,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --page:#0D141E; --surface:#141E2C; --sunk:#101925; --ink:#E3E9F1; --mute:#8D9AAD; --line:#243246;
+  --side:#0A121C; --side-2:#111D2C; --side-ink:#AFBDD0; --side-on:#FFFFFF;
+  --accent:#6EA3F2; --accent-soft:#1B2D47;
+  --ok:#5BC98B; --ok-soft:#163325; --warn:#E3A84B; --warn-soft:#33270F; --bad:#EE7B7B; --bad-soft:#3A1A1C; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --page:#0D141E; --surface:#141E2C; --sunk:#101925; --ink:#E3E9F1; --mute:#8D9AAD; --line:#243246;
+  --side:#0A121C; --side-2:#111D2C; --side-ink:#AFBDD0; --side-on:#FFFFFF;
+  --accent:#6EA3F2; --accent-soft:#1B2D47;
+  --ok:#5BC98B; --ok-soft:#163325; --warn:#E3A84B; --warn-soft:#33270F; --bad:#EE7B7B; --bad-soft:#3A1A1C; color-scheme:dark}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{background:var(--page);color:var(--ink);font-family:var(--f);font-size:14px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 48px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+h1{font-size:26px;margin:0;text-wrap:balance}
+.lead{color:var(--mute);margin:6px 0 0;max-width:68ch}
+.note{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 16px;display:flex;gap:12px;align-items:flex-start}
+.note b{color:var(--ok)}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tab{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:8px 16px;cursor:pointer;font:inherit;font-weight:600}
+.tab[aria-selected="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.tab:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.opt{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.opt h2{margin:0;font-size:19px}
+.why{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.why div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.why h3{margin:0 0 4px;font-size:13px;color:var(--mute);font-weight:600;letter-spacing:.2px}
+.why ul{margin:0;padding-inline-start:18px}
+.hint{color:var(--mute);font-size:13px}
+.scroller{overflow-x:auto;border-radius:14px}
+.frame{min-width:960px;height:620px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--sunk);display:flex;box-shadow:0 10px 30px -18px rgba(10,25,45,.45)}
+svg.i{width:18px;height:18px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------- shared main area ---------- */
+.mainA{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.topb{height:56px;flex-shrink:0;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 20px}
+.topb .sp{flex:1}
+.gsearch{display:flex;align-items:center;gap:8px;background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:6px 10px;width:300px;color:var(--mute);font-size:13px}
+.ibtn{width:34px;height:34px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;position:relative}
+.ibtn .dot{position:absolute;top:6px;inset-inline-end:7px;width:7px;height:7px;border-radius:50%;background:var(--bad)}
+.av{width:34px;height:34px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;font-size:13px}
+.content{flex:1;overflow:auto;padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+.crumb{font-size:12px;color:var(--mute)}
+.phead{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.phead h3{margin:2px 0 0;font-size:21px}
+.phead .sp{flex:1}
+.b{border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer;background:var(--accent);color:#fff}
+.b.ghost{background:var(--surface);color:var(--ink);border:1px solid var(--line)}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.kpi .l{font-size:12px;color:var(--mute)}
+.kpi .v{font-size:21px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi .v small{font-size:12px;color:var(--mute);font-weight:500;margin-inline-start:4px}
+.kpi .d{font-size:12px;margin-top:2px}.up{color:var(--ok)}.dn{color:var(--bad)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.panel .ph{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.panel .ph b{flex:1}
+.chips{display:flex;gap:6px}
+.chip{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--mute);background:var(--surface)}
+.chip.on{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 16px;text-align:start;border-bottom:1px solid var(--line)}
+th{font-size:12px;color:var(--mute);font-weight:600;background:var(--sunk)}
+tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--sunk)}
+td.n,th.n{text-align:end;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mono{font-variant-numeric:tabular-nums;color:var(--mute);font-size:13px}
+.pill{display:inline-block;font-size:12px;padding:2px 10px;border-radius:999px;font-weight:600}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.warn{background:var(--warn-soft);color:var(--warn)}.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.demo{font-size:11px;color:var(--mute);background:var(--sunk);border:1px dashed var(--line);border-radius:6px;padding:2px 8px}
+
+/* ---------- Option A: collapsible sidebar ---------- */
+.sa{width:252px;flex-shrink:0;background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;transition:width .2s}
+.sa .logo{height:56px;display:flex;align-items:center;gap:10px;padding:0 16px;color:var(--side-on);font-weight:700;border-bottom:1px solid rgba(255,255,255,.08)}
+.sa .logo .mk{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.14);display:grid;place-items:center;font-size:14px}
+.sa .logo span{flex:1;white-space:nowrap;overflow:hidden}
+.sa .tog{background:none;border:0;color:var(--side-ink);cursor:pointer;padding:4px;border-radius:6px}
+.sa .srch{margin:12px;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.08);border-radius:8px;padding:0 10px}
+.sa .srch input{background:none;border:0;color:var(--side-on);font:inherit;padding:8px 0;width:100%;outline:none}
+.sa .srch input::placeholder{color:var(--side-ink);opacity:.8}
+.sa .list{flex:1;overflow:auto;padding:0 8px 12px}
+.sa .fav{font-size:11px;letter-spacing:.4px;padding:8px 10px 4px;opacity:.7}
+.sa .g{margin-bottom:2px}
+.sa .gh{width:100%;display:flex;align-items:center;gap:10px;background:none;border:0;color:inherit;font:inherit;font-weight:600;padding:9px 10px;border-radius:8px;cursor:pointer;text-align:start}
+.sa .gh:hover{background:rgba(255,255,255,.07)}
+.sa .gh .t{flex:1;white-space:nowrap;overflow:hidden}
+.sa .gh .cnt{font-size:11px;opacity:.6;font-weight:500}
+.sa .gh .chev{transition:transform .2s;opacity:.7}
+.sa .g.open .gh .chev{transform:rotate(180deg)}
+.sa .g.has .gh{color:var(--side-on)}
+.sa .items{display:none;padding:2px 0 6px}
+.sa .g.open .items{display:block}
+.sa .it{display:block;width:100%;text-align:start;background:none;border:0;color:inherit;font:inherit;font-size:13px;padding:7px 10px;padding-inline-start:38px;border-radius:8px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sa .it:hover{background:rgba(255,255,255,.07);color:var(--side-on)}
+.sa .it.on{background:rgba(255,255,255,.14);color:var(--side-on);font-weight:600}
+.sa .foot{border-top:1px solid rgba(255,255,255,.08);padding:10px 12px;display:flex;align-items:center;gap:10px;font-size:12px}
+.sa .foot .av{background:rgba(255,255,255,.14);color:var(--side-on)}
+.sa .foot .who{flex:1;white-space:nowrap;overflow:hidden}
+.sa.mini{width:68px}
+.sa.mini .logo span,.sa.mini .srch,.sa.mini .gh .t,.sa.mini .gh .cnt,.sa.mini .gh .chev,.sa.mini .items,.sa.mini .fav,.sa.mini .foot .who{display:none}
+.sa.mini .gh{justify-content:center}
+.sa.mini .logo{justify-content:center;padding:0}.sa.mini .logo .mk{display:none}
+
+/* ---------- Option B: Odoo-style app switcher + top menu ---------- */
+.ob{flex:1;display:flex;flex-direction:column;min-width:0}
+.ob .nav{height:52px;background:var(--side);color:var(--side-ink);display:flex;align-items:center;gap:4px;padding:0 12px;flex-shrink:0}
+.ob .nav .appbtn{background:none;border:0;color:var(--side-on);cursor:pointer;width:38px;height:38px;border-radius:8px;display:grid;place-items:center}
+.ob .nav .appbtn:hover{background:rgba(255,255,255,.1)}
+.ob .nav .mod{color:var(--side-on);font-weight:700;padding:0 10px 0 14px;white-space:nowrap}
+.ob .nav .mi{position:relative}
+.ob .nav .mi>button{background:none;border:0;color:inherit;font:inherit;padding:8px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.ob .nav .mi>button:hover,.ob .nav .mi>button.on{background:rgba(255,255,255,.12);color:var(--side-on)}
+.ob .dd{position:absolute;top:44px;inset-inline-start:0;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 30px -12px rgba(0,0,0,.35);padding:6px;min-width:220px;z-index:5}
+.ob .dd button{display:block;width:100%;text-align:start;background:none;border:0;font:inherit;color:inherit;padding:8px 10px;border-radius:6px;cursor:pointer}
+.ob .dd button:hover{background:var(--sunk)}
+.ob .nav .sp{flex:1}
+.ob .nav .ibtn{background:rgba(255,255,255,.08);border-color:transparent;color:var(--side-on)}
+.ob .home{flex:1;overflow:auto;padding:40px 24px;background:linear-gradient(160deg,var(--accent-soft),var(--sunk) 60%)}
+.ob .home h4{text-align:center;margin:0 0 26px;font-size:18px}
+.ob .apps{display:grid;grid-template-columns:repeat(4,128px);gap:22px 26px;justify-content:center}
+.ob .app{background:none;border:0;font:inherit;color:var(--ink);cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px;border-radius:12px}
+.ob .app:hover{background:var(--surface)}
+.ob .app .ic{width:64px;height:64px;border-radius:16px;display:grid;place-items:center;color:#fff;box-shadow:0 6px 14px -8px rgba(0,0,0,.5)}
+.ob .app .ic svg.i{width:28px;height:28px}
+.ob .app span{font-size:13px;font-weight:600;text-align:center}
+
+/* ---------- Option C: icon rail + sub-panel ---------- */
+.rc{width:76px;flex-shrink:0;background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px}
+.rc .mk{width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,.14);color:#fff;display:grid;place-items:center;font-weight:700;margin-bottom:10px}
+.rc button{background:none;border:0;color:inherit;font:inherit;font-size:10.5px;width:66px;padding:8px 2px;border-radius:10px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;line-height:1.2}
+.rc button:hover{background:rgba(255,255,255,.08);color:var(--side-on)}
+.rc button.on{background:rgba(255,255,255,.16);color:var(--side-on)}
+.rc button svg.i{width:21px;height:21px}
+.rc .sp{flex:1}
+.pc{width:232px;flex-shrink:0;background:var(--surface);border-inline-end:1px solid var(--line);display:flex;flex-direction:column;transition:width .2s;overflow:hidden}
+.pc.closed{width:0;border:0}
+.pc .hd{height:56px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap}
+.pc .hd span{flex:1}
+.pc .hd button{background:none;border:0;color:var(--mute);cursor:pointer;padding:4px;border-radius:6px}
+.pc .lst{flex:1;overflow:auto;padding:8px}
+.pc .sub{font-size:11px;color:var(--mute);padding:10px 10px 4px;letter-spacing:.3px}
+.pc .lst button{display:block;width:100%;text-align:start;background:none;border:0;font:inherit;font-size:13px;color:var(--ink);padding:8px 10px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.pc .lst button:hover{background:var(--sunk)}
+.pc .lst button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+
+/* ---------- Option D: built from the Trigon identity (Paper / Steel Blue / Stone / Warm Grey, the three-bar mark, letterhead rule) ---------- */
+.od{--paper:#F2F1EE;--paper-2:#E9E7E1;--card:#FBFAF8;--stone:#D6D2C8;--warm:#8A8578;--steel:#1F3A5F;--steel-ink:#1F3A5F;--text:#1B2A3D;--late:#A33B32;--paid:#2E6B4E;--due:#8C6420;
+  --disp:"Archivo","IBM Plex Sans Arabic",sans-serif;--mono:"IBM Plex Mono","IBM Plex Sans Arabic",monospace;
+  flex:1;display:flex;min-width:0;background:var(--paper);color:var(--text);position:relative}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .od{--paper:#121A25;--paper-2:#0E151F;--card:#172130;--stone:#2B394C;--warm:#9C978C;--steel:#8FB0D8;--steel-ink:#C9D8EC;--text:#E6E3DC;--late:#E58A80;--paid:#7CC4A0;--due:#D9B36A}}
+:root[data-theme="dark"] .od{--paper:#121A25;--paper-2:#0E151F;--card:#172130;--stone:#2B394C;--warm:#9C978C;--steel:#8FB0D8;--steel-ink:#C9D8EC;--text:#E6E3DC;--late:#E58A80;--paid:#7CC4A0;--due:#D9B36A}
+.od .sd{width:248px;flex-shrink:0;background:var(--paper-2);border-inline-end:1px solid var(--stone);display:flex;flex-direction:column}
+.od .lg{padding:18px 18px 14px;display:flex;align-items:center;gap:12px;direction:ltr;justify-content:flex-end}
+.od .mark{display:flex;flex-direction:column;gap:3.4px}
+.od .mark i{display:block;height:4.6px;background:var(--steel)}
+.od .mark i:nth-child(1){width:12.6px}.od .mark i:nth-child(2){width:20px}.od .mark i:nth-child(3){width:27.5px}
+.od .lg .w{font-family:var(--disp);line-height:1.05;text-align:left}
+.od .lg .w b{display:block;font-weight:800;letter-spacing:3px;font-size:17px;color:var(--steel-ink)}
+.od .lg .w span{font-size:10px;letter-spacing:1.2px;color:var(--warm);text-transform:uppercase}
+.od .kbar{margin:0 14px 10px;display:flex;align-items:center;gap:8px;border:1px solid var(--stone);background:var(--card);border-radius:4px;padding:7px 10px;color:var(--warm);font:inherit;font-size:13px;cursor:pointer;text-align:start}
+.od .kbar span{flex:1}.od kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--stone);border-radius:3px;padding:0 5px;color:var(--warm);direction:ltr}
+.od .nl{flex:1;overflow:auto;padding:4px 0 14px}
+.od .gh{width:100%;display:flex;align-items:center;gap:10px;background:none;border:0;font:inherit;color:var(--text);padding:9px 18px;cursor:pointer;text-align:start;font-weight:600}
+.od .gh .bar{width:14px;height:4px;background:var(--stone);flex-shrink:0;transition:width .2s,background .2s}
+.od .g.open .gh .bar{width:22px;background:var(--steel)}
+.od .gh .t{flex:1}.od .gh .c{font-family:var(--mono);font-size:11px;color:var(--warm)}
+.od .gh:hover{background:rgba(138,133,120,.1)}
+.od .its{display:none;padding:2px 0 8px}.od .g.open .its{display:block}
+.od .it{display:block;width:100%;text-align:start;background:none;border:0;font:inherit;font-size:13px;color:var(--text);opacity:.82;padding:6px 18px;padding-inline-start:42px;cursor:pointer;position:relative}
+.od .it:hover{opacity:1;background:rgba(138,133,120,.1)}
+.od .it.on{opacity:1;color:var(--steel-ink);font-weight:600}
+.od .it.on::before{content:"";position:absolute;inset-inline-start:18px;top:50%;width:16px;height:3px;margin-top:-1.5px;background:var(--steel)}
+.od .usr{border-top:1px solid var(--stone);padding:12px 18px;font-size:12px;color:var(--warm);display:flex;justify-content:space-between}
+.od .usr b{color:var(--text);font-weight:600}
+.od .mn{flex:1;min-width:0;overflow:auto;padding:22px 30px 28px}
+.od .hdr{display:flex;align-items:flex-end;gap:14px;padding-bottom:12px;border-bottom:1.5px solid var(--steel)}
+.od .hdr .crumb{font-size:12px;color:var(--warm)}
+.od .hdr h3{font-family:var(--disp);font-size:24px;margin:2px 0 0;font-weight:700;color:var(--steel-ink)}
+.od .hdr .sp{flex:1}
+.od .ref{font-family:var(--mono);font-size:11px;color:var(--warm);direction:ltr}
+.od .btn1{background:var(--steel);color:var(--paper);border:0;border-radius:3px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+.od .btn2{background:none;color:var(--text);border:1px solid var(--stone);border-radius:3px;padding:7px 14px;font:inherit;cursor:pointer}
+.od .figs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:18px 0 22px}
+.od .fig{padding:2px 16px;border-inline-start:1px solid var(--stone)}.od .fig:first-child{border:0;padding-inline-start:0}
+.od .fig .l{font-size:12px;color:var(--warm)}
+.od .fig .v{font-family:var(--mono);font-size:21px;font-weight:500;margin-top:2px;direction:ltr;text-align:end;font-variant-numeric:tabular-nums}
+.od .fig .v small{font-size:11px;color:var(--warm);margin-inline-end:4px}
+.od .fig .s{font-size:12px;color:var(--warm)}
+.od .two{display:grid;grid-template-columns:300px minmax(0,1fr);gap:26px;align-items:start}
+.od .sec h4{font-family:var(--disp);font-size:12px;letter-spacing:1px;color:var(--warm);margin:0 0 10px;font-weight:700;text-transform:uppercase}
+.od .mc{background:var(--card);border:1px solid var(--stone);padding:16px 16px 12px}
+.od .mc .row{display:grid;grid-template-columns:minmax(0,1fr);gap:3px;margin-bottom:12px}
+.od .mc .lbl{display:flex;justify-content:space-between;font-size:12px}
+.od .mc .lbl b{font-family:var(--mono);font-weight:500;direction:ltr}
+.od .mc .track{height:14px;direction:ltr}
+.od .mc .fill{height:100%;background:var(--steel)}
+.od .mc .row.late .fill{background:var(--late)}
+.od .mc .cap{font-size:11px;color:var(--warm);border-top:1px solid var(--stone);padding-top:8px}
+.od table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--stone)}
+.od th{font-size:11px;font-weight:600;color:var(--warm);text-align:start;padding:9px 12px;border-bottom:1.5px solid var(--steel);background:none}
+.od td{padding:9px 12px;border-bottom:1px solid var(--stone);font-size:13px}
+.od tbody tr:hover td{background:rgba(138,133,120,.08)}
+.od td.m{font-family:var(--mono);font-size:12px;color:var(--warm);direction:ltr;text-align:end;white-space:nowrap}
+.od td.a{font-family:var(--mono);direction:ltr;text-align:start;white-space:nowrap;font-variant-numeric:tabular-nums}
+.od .st{font-size:12px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.od .st::before{content:"";width:10px;height:3px;background:currentColor}
+.od .st.ok{color:var(--paid)}.od .st.warn{color:var(--due)}.od .st.bad{color:var(--late)}
+.od .pal{position:absolute;inset:0;background:rgba(18,26,37,.35);display:flex;justify-content:center;align-items:flex-start;padding-top:70px;z-index:4}
+.od .pal[hidden]{display:none}
+.od .pbox{width:460px;max-width:90%;background:var(--card);border:1px solid var(--stone);box-shadow:0 20px 40px -20px rgba(0,0,0,.5)}
+.od .pbox input{width:100%;border:0;border-bottom:1.5px solid var(--steel);background:none;padding:14px 16px;font:inherit;font-size:15px;color:var(--text);outline:none}
+.od .pres{max-height:300px;overflow:auto;padding:6px}
+.od .pres button{display:flex;justify-content:space-between;width:100%;background:none;border:0;font:inherit;color:var(--text);padding:8px 10px;cursor:pointer;text-align:start}
+.od .pres button:hover,.od .pres button.sel{background:rgba(138,133,120,.14)}
+.od .pres span{font-size:12px;color:var(--warm)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap" dir="rtl" lang="ar">
+  <header>
+    <h1>أربع طرق لترتيب واجهة Trigon</h1>
+    <p class="lead">كل نموذج تحت شغّال: اضغط على القوائم وجرّب. المحتوى نفسه في الأربعة (لوحة تحكم وجدول فواتير ببيانات تجريبية)، والفرق في طريقة التنقل وشكل الصفحة. الخيارات أ وب وج بألوان النظام الحالية، والخيار د مبني من دليل هوية Trigon.</p>
+  </header>
+
+  <div class="note"><span>✓</span><div><b>مشكلة الرجوع لأعلى القائمة رح تنحل في كل الخيارات.</b> سببها إن النظام الحالي يعيد رسم الصفحة كاملة مع القائمة عند كل ضغطة، فتنمسح مكان التمرير. بالتصميم الجديد القائمة تضل ثابتة ومكانها محفوظ، وبتتغير بس الصفحة على اليمين.</div></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="t-a" aria-selected="true" data-o="a">أ · قائمة جانبية مطوية</button>
+    <button class="tab" role="tab" id="t-b" aria-selected="false" data-o="b">ب · شاشة تطبيقات (نمط Odoo)</button>
+    <button class="tab" role="tab" id="t-d" aria-selected="false" data-o="d">د · من هوية Trigon (جديد)</button>
+    <button class="tab" role="tab" id="t-c" aria-selected="false" data-o="c">ج · شريط أيقونات + قائمة فرعية (نمط Zoho)</button>
+  </div>
+
+  <section class="opt" id="o-a">
+    <h2>أ · قائمة جانبية مطوية مع بحث</h2>
+    <div class="why">
+      <div><h3>كيف تشتغل</h3><ul><li>كل قسم عنوان واحد بأيقونة، بينفتح لما تضغطه وبيتسكّر الباقي.</li><li>مربع بحث فوق: اكتب «شيك» أو «رواتب» وبتطلعلك الصفحة فوراً.</li><li>زر ☰ يصغّر القائمة لأيقونات بس.</li></ul></div>
+      <div><h3>الإيجابيات</h3><ul><li>أقرب شي للنظام الحالي، فالموظفين ما رح يتوهوا.</li><li>كل الأقسام ظاهرة بنظرة وحدة.</li><li>أقل تغيير في الكود وأقل مخاطرة.</li></ul></div>
+      <div><h3>السلبيات</h3><ul><li>قسم المشتريات فيه 15 صفحة، فلما ينفتح بيضل طويل شوي.</li></ul></div>
+    </div>
+    <div class="scroller"><div class="frame" id="fa"></div></div>
+    <p class="hint">جرّب: اكتب «ضريبة» بمربع البحث، أو اضغط ☰ لتصغير القائمة.</p>
+  </section>
+
+  <section class="opt" id="o-b" hidden>
+    <h2>ب · شاشة تطبيقات وقائمة علوية (نمط Odoo)</h2>
+    <div class="why">
+      <div><h3>كيف تشتغل</h3><ul><li>الشاشة الأولى مربعات كبيرة، مربع لكل قسم (المشاريع، المحاسبة، الموارد البشرية…).</li><li>لما تدخل قسم، صفحاته بتظهر كقائمة أفقية فوق، والزايد بينحط تحت «المزيد».</li><li>زر المربعات فوق يرجعك لشاشة الأقسام.</li></ul></div>
+      <div><h3>الإيجابيات</h3><ul><li>كل الشاشة للشغل، ما في قائمة جانبية بتاخذ مكان.</li><li>شكل عصري ومألوف لمستخدمي Odoo.</li></ul></div>
+      <div><h3>السلبيات</h3><ul><li>الانتقال بين قسمين (مثلاً من فاتورة لقيد يومية) بياخذ ضغطة زيادة.</li><li>أكبر تغيير على طريقة شغل الموظفين.</li></ul></div>
+    </div>
+    <div class="scroller"><div class="frame" id="fb"></div></div>
+    <p class="hint">جرّب: اضغط «المشتريات والمخزون»، وبعدين افتح «المزيد».</p>
+  </section>
+
+  <section class="opt" id="o-d" hidden>
+    <h2>د · واجهة مبنية من هوية Trigon</h2>
+    <div class="why">
+      <div><h3>من وين جاية الفكرة</h3><ul><li>ألوان الدليل نفسها: ورقي، أزرق فولاذي، حجري، رمادي دافئ. بدل الأزرق الغامق المصمت.</li><li>الأشرطة الثلاثة في الشعار صارت لغة التصميم: علامة القسم المفتوح، علامة الصفحة الحالية، وحتى رسم الذمم.</li><li>الخط الرفيع تحت رأس الترويسة صار تحت عنوان كل صفحة، والأرقام بخط IBM Plex Mono زي المستندات المطبوعة.</li></ul></div>
+      <div><h3>التنقل</h3><ul><li>قائمة مطوية زي الخيار أ، بس فاتحة وهادية.</li><li><b>Ctrl+K</b> أو زر «انتقل إلى»: اكتب أي اسم صفحة وبتوصلها مباشرة، من غير ما تفتح القائمة أصلاً.</li></ul></div>
+      <div><h3>ليش ممكن تناسبكم</h3><ul><li>الشاشة والفاتورة المطبوعة بيصيروا من نفس العائلة، فالنظام بيبين إنه «تبع Trigon» مش برنامج جاهز.</li><li>شكل هادي يريّح العين بالجداول الطويلة.</li></ul></div>
+    </div>
+    <div class="scroller"><div class="frame" id="fd"></div></div>
+    <p class="hint">جرّب: اضغط «انتقل إلى» واكتب «رواتب» أو «شيك»، وافتح وسكّر الأقسام.</p>
+  </section>
+
+  <section class="opt" id="o-c" hidden>
+    <h2>ج · شريط أيقونات مع قائمة فرعية (نمط Zoho)</h2>
+    <div class="why">
+      <div><h3>كيف تشتغل</h3><ul><li>شريط رفيع فيه أيقونة لكل قسم.</li><li>لما تضغط قسم، بتنفتح جنبه قائمة فيها صفحاته بس، مرتبة بعناوين فرعية.</li><li>بتقدر تسكّر القائمة الفرعية لتكبر مساحة الشغل.</li></ul></div>
+      <div><h3>الإيجابيات</h3><ul><li>الأقسام كلها بضغطة وحدة، والقائمة دايماً قصيرة.</li><li>مساحة أكبر للجداول من الخيار أ.</li></ul></div>
+      <div><h3>السلبيات</h3><ul><li>الأيقونات بدها يومين ليتعود عليها الموظف.</li><li>عرض أقسام وصفحات بنفس الوقت بياخذ مساحة لما القائمة الفرعية مفتوحة.</li></ul></div>
+    </div>
+    <div class="scroller"><div class="frame" id="fc"></div></div>
+    <p class="hint">جرّب: اضغط على الأيقونات بالشريط، أو سكّر القائمة الفرعية بزر ✕.</p>
+  </section>
+</div>
+
+<script>
+const IC = {
+  home:'<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  building:'<path d="M4 21V5l8-3v19M12 21V9l8 3v9M2 21h20M7 8h2M7 12h2M7 16h2M15 14h2M15 17h2"/>',
+  cart:'<path d="M3 4h2l2.4 11h11l2-8H6.2"/><circle cx="9" cy="19" r="1.5"/><circle cx="17" cy="19" r="1.5"/>',
+  calc:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h2M8 15h2M12 15h2M16 11v6"/>',
+  users:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.5 3.6 5.2"/>',
+  receipt:'<path d="M6 2h12v20l-3-2-3 2-3-2-3 2z"/><path d="M9 7h6M9 11h6M9 15h4"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9L7 7M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+  chev:'<path d="M6 9l6 6 6-6"/>',
+  menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
+  grid:'<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>',
+  bell:'<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  x:'<path d="M6 6l12 12M18 6L6 18"/>'
+};
+const svg = k => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${IC[k]}</svg>`;
+
+// Real Trigon menu, grouped as today. Sub-headings used by option C.
+const G = [
+  {id:'home',ic:'home',col:'#3C6E9F',n:'الرئيسية',s:[['',['لوحة التحكم','المهام','الإشعارات','حسابي ومطالباتي']]]},
+  {id:'proj',ic:'building',col:'#2F7D6B',n:'المشاريع والمبيعات',s:[['المبيعات',['المناقصات والفرص','عروض الأسعار','فواتير العملاء','أعمار الديون وكشوف الحساب']],['التنفيذ',['المشاريع','يومية الموقع','الجدول الزمني']]]},
+  {id:'proc',ic:'cart',col:'#B0702A',n:'المشتريات والمخزون',s:[['الشراء',['طلبات الأسعار','أوامر الشراء','مقاولو الباطن وشهادات الدفع','المصروفات والمشتريات','اعتماد المشتريات والمدفوعات']],['النقدية',['المدفوعات والمقبوضات','الشيكات المؤجلة','توقع التدفق النقدي','الضمانات البنكية','العهدة النقدية']],['المخزون والمعدات',['المخزون','الأصول والمعدات','تشغيل وصيانة المعدات','عمالة ومعدات مستأجرة','العملاء والموردون']]]},
+  {id:'acc',ic:'calc',col:'#4B5FB0',n:'المحاسبة',s:[['',['القوائم المالية','دفتر الأستاذ','قيود اليومية','الشركاء','دليل الحسابات','مطابقة البنك','الربط مع Zoho Books']]]},
+  {id:'hr',ic:'users',col:'#9A4D86',n:'الموارد البشرية',s:[['الموظفون',['لوحة الموارد البشرية','الموظفون','كشوف حساب الموظفين','الحضور والإضافي']],['الطلبات',['الاعتمادات','مطالبات المصاريف','الإجازات','طلبات الموظفين','الخطابات الرسمية']],['الرواتب',['الرواتب ونظام حماية الأجور']]]},
+  {id:'tax',ic:'receipt',col:'#A8463F',n:'الضرائب والامتثال',s:[['',['ضريبة القيمة المضافة','ضريبة الشركات','الامتثال والتدقيق','المستندات']]]},
+  {id:'set',ic:'gear',col:'#5D6878',n:'الإعدادات',s:[['',['الإعدادات','المستخدمون والصلاحيات','هوية الشركة']]]}
+];
+const items = g => g.s.flatMap(x => x[1]);
+
+const ROWS = [
+  ['INV-2026-0142','شركة الواحة للتطوير العقاري','برج المرسى — دبي مارينا','2026-11-18','472,500.00','ok','مدفوعة'],
+  ['INV-2026-0141','مجموعة النخيل القابضة','فلل الريم — المرحلة 2','2026-11-14','188,940.00','warn','مدفوعة جزئياً'],
+  ['INV-2026-0139','مؤسسة الأفق للإنشاءات','مستودع جبل علي — قطعة 7','2026-11-06','96,075.00','bad','متأخرة 14 يوم'],
+  ['INV-2026-0137','شركة الواحة للتطوير العقاري','برج المرسى — دبي مارينا','2026-10-30','315,000.00','ok','مدفوعة'],
+  ['INV-2026-0136','بلدية تجريبية','صيانة طرق — الشارقة','2026-10-27','58,800.00','warn','مرسلة']
+];
+function mainHTML(group, page){
+  return `<div class="topb"><div class="gsearch">${svg('search')}<span>ابحث عن فاتورة، مشروع، موظف…</span></div><span class="sp"></span><span class="demo">بيانات تجريبية</span><button class="ibtn" aria-label="الإشعارات">${svg('bell')}<span class="dot"></span></button><div class="av">م.أ</div></div>
+  <div class="content">
+    <div class="phead"><div><div class="crumb">${group} / ${page}</div><h3>${page}</h3></div><span class="sp"></span><button class="b ghost">تصدير</button><button class="b">+ جديد</button></div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">إيرادات نوفمبر</div><div class="v">1,284,500<small>د.إ</small></div><div class="d up">▲ 12٪ عن أكتوبر</div></div>
+      <div class="kpi"><div class="l">مستحقات العملاء</div><div class="v">642,300<small>د.إ</small></div><div class="d dn">96,075 متأخرة</div></div>
+      <div class="kpi"><div class="l">ضريبة مستحقة (الربع الرابع)</div><div class="v">61,940<small>د.إ</small></div><div class="d">موعد الإقرار 28 يناير</div></div>
+      <div class="kpi"><div class="l">مشاريع نشطة</div><div class="v">12</div><div class="d">3 منها قرب التسليم</div></div>
+    </div>
+    <div class="panel"><div class="ph"><b>آخر فواتير العملاء</b><div class="chips"><span class="chip on">الكل</span><span class="chip">غير مدفوعة</span><span class="chip">متأخرة</span></div></div>
+      <table><thead><tr><th>رقم الفاتورة</th><th>العميل</th><th>المشروع</th><th>التاريخ</th><th class="n">المبلغ (د.إ)</th><th>الحالة</th></tr></thead>
+      <tbody>${ROWS.map(r=>`<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="mono">${r[3]}</td><td class="n">${r[4]}</td><td><span class="pill ${r[5]}">${r[6]}</span></td></tr>`).join('')}</tbody></table></div>
+  </div>`;
+}
+
+/* ---------- A ---------- */
+(function(){
+  const f = document.getElementById('fa');
+  let cur = {g:'proj', p:'فواتير العملاء'}, open = 'proj';
+  f.innerHTML = `<aside class="sa" id="sa"><div class="logo"><div class="mk">T</div><span>Trigon ERP</span><button class="tog" id="atog" aria-label="تصغير القائمة">${svg('menu')}</button></div>
+    <label class="srch">${svg('search')}<input id="asrch" placeholder="ابحث في القائمة…"></label><div class="list" id="alist"></div>
+    <div class="foot"><div class="av">م.أ</div><div class="who">مدير النظام<br><span style="opacity:.7">عربي · English</span></div></div></aside><div class="mainA" id="am"></div>`;
+  const list = f.querySelector('#alist'), q = f.querySelector('#asrch');
+  function drawList(){
+    const term = q.value.trim();
+    list.innerHTML = G.map(g => {
+      const its = items(g).filter(p => !term || p.includes(term));
+      if (term && !its.length) return '';
+      const isOpen = term ? true : open === g.id;
+      return `<div class="g ${isOpen?'open':''} ${cur.g===g.id?'has':''}" data-g="${g.id}"><button class="gh" title="${g.n}">${svg(g.ic)}<span class="t">${g.n}</span><span class="cnt">${items(g).length}</span><span class="chev">${svg('chev')}</span></button>
+        <div class="items">${its.map(p=>`<button class="it ${cur.p===p?'on':''}" data-p="${p}">${p}</button>`).join('')}</div></div>`;
+    }).join('') || '<div class="fav">لا توجد نتائج</div>';
+  }
+  function drawMain(){ f.querySelector('#am').innerHTML = mainHTML(G.find(g=>g.id===cur.g).n, cur.p); }
+  list.addEventListener('click', e => {
+    const gEl = e.target.closest('.g'); if (!gEl) return;
+    const it = e.target.closest('.it');
+    if (it){ cur = {g:gEl.dataset.g, p:it.dataset.p}; list.querySelectorAll('.it.on').forEach(x=>x.classList.remove('on')); it.classList.add('on'); list.querySelectorAll('.g').forEach(x=>x.classList.toggle('has', x===gEl)); drawMain(); return; }   // only the page changes; list keeps its scroll
+    if (f.querySelector('#sa').classList.contains('mini')){ f.querySelector('#sa').classList.remove('mini'); open = gEl.dataset.g; drawList(); return; }
+    open = open === gEl.dataset.g ? '' : gEl.dataset.g; drawList();
+  });
+  q.addEventListener('input', drawList);
+  f.querySelector('#atog').onclick = () => f.querySelector('#sa').classList.toggle('mini');
+  drawList(); drawMain();
+})();
+
+/* ---------- B ---------- */
+(function(){
+  const f = document.getElementById('fb');
+  let mod = null, page = null;
+  function draw(){
+    if (!mod){
+      f.innerHTML = `<div class="ob"><div class="nav"><button class="appbtn" aria-label="الأقسام">${svg('grid')}</button><span class="mod">Trigon ERP</span><span class="sp"></span><button class="ibtn" aria-label="الإشعارات">${svg('bell')}</button></div>
+        <div class="home"><h4>صباح الخير، اختر القسم</h4><div class="apps">${G.map(g=>`<button class="app" data-g="${g.id}"><span class="ic" style="background:${g.col}">${svg(g.ic)}</span><span>${g.n}</span></button>`).join('')}</div></div></div>`;
+      f.querySelectorAll('.app').forEach(b => b.onclick = () => { mod = G.find(g=>g.id===b.dataset.g); page = items(mod)[0]; draw(); });
+      return;
+    }
+    const its = items(mod), vis = its.slice(0,5), more = its.slice(5);
+    f.innerHTML = `<div class="ob"><div class="nav"><button class="appbtn" id="bhome" aria-label="كل الأقسام">${svg('grid')}</button><span class="mod">${mod.n}</span>
+      ${vis.map(p=>`<div class="mi"><button class="${p===page?'on':''}" data-p="${p}">${p}</button></div>`).join('')}
+      ${more.length?`<div class="mi"><button id="bmore" class="${more.includes(page)?'on':''}">المزيد ▾</button></div>`:''}
+      <span class="sp"></span><button class="ibtn" aria-label="الإشعارات">${svg('bell')}</button></div><div class="mainA" id="bm"></div></div>`;
+    f.querySelector('#bm').innerHTML = mainHTML(mod.n, page);
+    f.querySelector('.mainA .topb').style.display = 'none';
+    f.querySelector('#bhome').onclick = () => { mod = null; draw(); };
+    f.querySelectorAll('.mi>button[data-p]').forEach(b => b.onclick = () => { page = b.dataset.p; draw(); });
+    const mb = f.querySelector('#bmore');
+    if (mb) mb.onclick = e => {
+      e.stopPropagation(); const ex = f.querySelector('.dd'); if (ex){ ex.remove(); return; }
+      const dd = document.createElement('div'); dd.className = 'dd';
+      dd.innerHTML = more.map(p=>`<button data-p="${p}">${p}</button>`).join('');
+      mb.parentElement.appendChild(dd);
+      dd.querySelectorAll('button').forEach(b => b.onclick = () => { page = b.dataset.p; draw(); });
+    };
+  }
+  document.addEventListener('click', e => { if (!e.target.closest('.dd')) f.querySelector('.dd')?.remove(); });
+  draw();
+})();
+
+/* ---------- C ---------- */
+(function(){
+  const f = document.getElementById('fc');
+  let mod = G[1], page = 'فواتير العملاء', panel = true;
+  f.innerHTML = `<nav class="rc" id="crail"><div class="mk">T</div>${G.map(g=>`<button data-g="${g.id}" title="${g.n}">${svg(g.ic)}<span>${g.n.split(' ')[0]}</span></button>`).join('')}<span class="sp"></span></nav>
+    <aside class="pc" id="cp"></aside><div class="mainA" id="cm"></div>`;
+  function drawPanel(){
+    const p = f.querySelector('#cp'); p.classList.toggle('closed', !panel);
+    p.innerHTML = `<div class="hd"><span>${mod.n}</span><button id="cx" aria-label="إغلاق">${svg('x')}</button></div><div class="lst">${mod.s.map(([h,ps])=>`${h?`<div class="sub">${h}</div>`:''}${ps.map(x=>`<button class="${x===page?'on':''}" data-p="${x}">${x}</button>`).join('')}`).join('')}</div>`;
+    p.querySelector('#cx').onclick = () => { panel = false; drawPanel(); };
+    p.querySelectorAll('.lst button').forEach(b => b.onclick = () => { page = b.dataset.p; p.querySelectorAll('.lst button.on').forEach(x=>x.classList.remove('on')); b.classList.add('on'); drawMain(); });
+    f.querySelectorAll('#crail button').forEach(b => b.classList.toggle('on', b.dataset.g === mod.id));
+  }
+  function drawMain(){ f.querySelector('#cm').innerHTML = mainHTML(mod.n, page); }
+  f.querySelectorAll('#crail button').forEach(b => b.onclick = () => {
+    const g = G.find(x=>x.id===b.dataset.g);
+    if (g === mod) { panel = !panel; drawPanel(); return; }
+    mod = g; panel = true; drawPanel();
+  });
+  drawPanel(); drawMain();
+})();
+
+
+/* ---------- D ---------- */
+(function(){
+  const f = document.getElementById('fd');
+  let cur = {g:'proj', p:'فواتير العملاء'}, open = 'proj';
+  f.innerHTML = `<div class="od"><aside class="sd"><div class="lg"><div class="mark"><i></i><i></i><i></i></div><div class="w"><b>TRIGON</b><span>Civil Contracting</span></div></div>
+    <button class="kbar" id="dk">${svg('search')}<span>انتقل إلى…</span><kbd>Ctrl K</kbd></button><div class="nl" id="dl"></div>
+    <div class="usr"><span><b>مدير النظام</b><br>محاسب · دبي</span><span>English</span></div></aside>
+    <div class="mn" id="dm"></div>
+    <div class="pal" id="dp" hidden><div class="pbox"><input id="dq" placeholder="اكتب اسم الصفحة…" autocomplete="off"><div class="pres" id="dr"></div></div></div></div>`;
+  const nl = f.querySelector('#dl'), pal = f.querySelector('#dp'), dq = f.querySelector('#dq'), dr = f.querySelector('#dr');
+  function drawNav(){
+    nl.innerHTML = G.map(g => `<div class="g ${open===g.id?'open':''}" data-g="${g.id}"><button class="gh"><span class="bar"></span><span class="t">${g.n}</span><span class="c">${items(g).length}</span></button>
+      <div class="its">${items(g).map(p=>`<button class="it ${cur.p===p?'on':''}" data-p="${p}">${p}</button>`).join('')}</div></div>`).join('');
+  }
+  function drawMain(){
+    const gn = G.find(g=>g.id===cur.g).n, mx = 1284500;
+    const bars = [['متأخر أكثر من 14 يوم',96075,'late'],['مستحق غير محصّل',642300,''],['مفوتر هذا الشهر',1284500,'']];
+    f.querySelector('#dm').innerHTML = `<div class="hdr"><div><div class="crumb">${gn}</div><h3>${cur.p}</h3></div><span class="sp"></span><span class="ref">AS OF 20 NOV 2026</span><button class="btn2">تصدير</button><button class="btn1">+ فاتورة جديدة</button></div>
+    <div class="figs">
+      <div class="fig"><div class="l">إيرادات نوفمبر</div><div class="v"><small>AED</small>1,284,500</div><div class="s">+12٪ عن أكتوبر</div></div>
+      <div class="fig"><div class="l">مستحقات العملاء</div><div class="v"><small>AED</small>642,300</div><div class="s">5 فواتير مفتوحة</div></div>
+      <div class="fig"><div class="l">ضريبة الربع الرابع</div><div class="v"><small>AED</small>61,940</div><div class="s">الإقرار قبل 28 يناير</div></div>
+      <div class="fig"><div class="l">مشاريع نشطة</div><div class="v">12</div><div class="s">3 قرب التسليم</div></div>
+    </div>
+    <div class="two">
+      <div class="sec"><h4>الذمم بشكل الشعار</h4><div class="mc">${bars.map(b=>`<div class="row ${b[2]}"><div class="lbl"><span>${b[0]}</span><b>${b[1].toLocaleString('en-US')}</b></div><div class="track"><div class="fill" style="width:${(b[1]/mx*100).toFixed(1)}%"></div></div></div>`).join('')}
+        <div class="cap">الأشرطة بنفس المقياس (درهم). لما الأرقام تكبر من فوق لتحت، الرسم بيطلع شبه علامة Trigon.</div></div></div>
+      <div class="sec" style="min-width:0"><h4>آخر فواتير العملاء <span class="demo" style="text-transform:none;letter-spacing:0">بيانات تجريبية</span></h4><div style="overflow-x:auto"><table><thead><tr><th>الرقم</th><th>العميل / المشروع</th><th>المبلغ AED</th><th>الحالة</th></tr></thead>
+        <tbody>${ROWS.map(r=>`<tr><td class="m">${r[0]}</td><td>${r[1]}<div style="font-size:12px;opacity:.65">${r[2]}</div></td><td class="a">${r[4]}</td><td><span class="st ${r[5]}">${r[6]}</span></td></tr>`).join('')}</tbody></table></div></div>
+    </div>`;
+  }
+  nl.addEventListener('click', e => {
+    const gEl = e.target.closest('.g'); if (!gEl) return; const it = e.target.closest('.it');
+    if (it){ cur = {g:gEl.dataset.g, p:it.dataset.p}; nl.querySelectorAll('.it.on').forEach(x=>x.classList.remove('on')); it.classList.add('on'); drawMain(); return; }
+    open = open === gEl.dataset.g ? '' : gEl.dataset.g; drawNav();
+  });
+  const ALL = G.flatMap(g => items(g).map(p => ({g, p})));
+  let sel = 0, res = [];
+  function drawPal(){ const t = dq.value.trim(); res = ALL.filter(x => !t || x.p.includes(t) || x.g.n.includes(t)).slice(0,9); sel = 0;
+    dr.innerHTML = res.map((x,i)=>`<button class="${i===sel?'sel':''}" data-i="${i}">${x.p}<span>${x.g.n}</span></button>`).join('') || '<div style="padding:10px;color:var(--warm)">لا توجد صفحة بهذا الاسم</div>'; }
+  function pick(x){ cur = {g:x.g.id, p:x.p}; open = x.g.id; pal.hidden = true; drawNav(); drawMain(); nl.querySelector('.it.on')?.scrollIntoView({block:'nearest'}); }
+  const openPal = () => { pal.hidden = false; dq.value = ''; drawPal(); dq.focus(); };
+  f.querySelector('#dk').onclick = openPal;
+  dq.addEventListener('input', drawPal);
+  dq.addEventListener('keydown', e => { if (e.key==='Enter' && res[sel]) pick(res[sel]); if (e.key==='Escape') pal.hidden = true;
+    if (e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); sel = Math.max(0, Math.min(res.length-1, sel + (e.key==='ArrowDown'?1:-1))); dr.querySelectorAll('button').forEach((b,i)=>b.classList.toggle('sel', i===sel)); } });
+  dr.addEventListener('click', e => { const b = e.target.closest('button'); if (b) pick(res[+b.dataset.i]); });
+  pal.addEventListener('click', e => { if (e.target === pal) pal.hidden = true; });
+  document.addEventListener('keydown', e => { if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k' && !document.getElementById('o-d').hidden){ e.preventDefault(); openPal(); } });
+  drawNav(); drawMain();
+})();
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
+  ['a','b','c','d'].forEach(k => document.getElementById('o-'+k).hidden = k !== t.dataset.o);
+  try{ localStorage.setItem('opt', t.dataset.o) }catch(e){}
+});
+document.querySelector('.tab[data-o="d"]').click();
+</script>

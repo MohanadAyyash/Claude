@@ -63,10 +63,10 @@ module.exports = ctx => {
     const html = (body, code = 200) => { res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PUBLIC_CSP, 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' }); res.end(body); };
     if (!q) return html(page({ S, brand: ctx.brand, title: 'Link not valid', body: '<h2>This link is not valid any more. / هذا الرابط لم يعد صالحاً.</h2>', stamp: false, signature: false }), 404), true;
     if (m[1] === 'q' && req.method === 'GET') {
-      const done = q.accepted_at ? `<div class="qa-done">✔ Accepted by ${esc(q.accepted_by)} on ${esc(q.accepted_at)} — thank you. / تم القبول، شكراً لكم.</div>` : q.rejected_at ? `<div class="qa-done">Declined on ${esc(q.rejected_at)}. / تم الرفض.</div>` : '';
+      const done = q.accepted_at ? `<div class="qa-done">✓ Accepted by ${esc(q.accepted_by)} on ${esc(q.accepted_at)} — thank you. / تم القبول، شكراً لكم.</div>` : q.rejected_at ? `<div class="qa-done">Declined on ${esc(q.rejected_at)}. / تم الرفض.</div>` : '';
       const exp = expired(q), form = done || (exp ? `<div class="qa-done">This quotation expired on ${exp}. Please contact us for an updated offer. / انتهت صلاحية العرض.</div>` : `<div id="qa" data-token="${m[2]}"><h2>Accept this quotation / قبول عرض السعر</h2>
         <label>Your full name / الاسم الكامل<input id="qa-name" maxlength="80" autocomplete="name"></label><label>Signature / التوقيع</label><canvas id="qa-sig" width="500" height="160"></canvas>
-        <div><button type="button" id="qa-clear">Clear / مسح</button> <button type="button" id="qa-accept">✔ Accept &amp; sign / قبول وتوقيع</button></div>
+        <div><button type="button" id="qa-clear">Clear / مسح</button> <button type="button" id="qa-accept">✓ Accept &amp; sign / قبول وتوقيع</button></div>
         <details><summary>Decline or ask for changes / رفض أو طلب تعديل</summary><textarea id="qa-comment" maxlength="1000" placeholder="Comment / ملاحظة"></textarea><button type="button" id="qa-reject">Send / إرسال</button></details><p id="qa-msg"></p></div>`);
       const body = docHtml({ kind: 'quotes', doc: { ...q, client_trn: (enrich().parties[q.client_id] || {}).trn }, settings: S, bare: true, mode: 'print' }) + form + '<link rel="stylesheet" href="/qa.css"><script src="/qa.js"></script>';
       return html(page({ S, brand: ctx.brand, title: `Quotation ${q.number}`, body, ref: q.number, date: q.date, stamp: false, signature: false })), true;

@@ -29,22 +29,22 @@ if ('serviceWorker' in navigator) {
 window.onShell = async () => {
   const foot = $('.side .foot');
   if (foot && installEvt && !$('#inst')) {
-    const b = document.createElement('button'); b.className = 'btn'; b.id = 'inst'; b.textContent = '📲 ' + tr('تثبيت التطبيق', 'Install app');
+    const b = document.createElement('button'); b.className = 'btn'; b.id = 'inst'; b.innerHTML = ico('phone') + ' ' + tr('تثبيت التطبيق', 'Install app');
     b.onclick = async () => { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; b.remove(); };
     foot.prepend(b);
   }
   if (isIos && !standaloneApp && !localStorage.iosHint && $('#main') && !$('#ioshint')) {
     const d = document.createElement('div'); d.className = 'card'; d.id = 'ioshint';
-    d.innerHTML = `<b>📲 ${tr('ثبّت التطبيق على الآيفون', 'Install the app on iPhone')}</b><p class="muted" style="margin:6px 0">${tr('من Safari اضغط زر المشاركة ⬆︎ ثم «إضافة إلى الشاشة الرئيسية». بعدها يفتح كتطبيق وتصلك الإشعارات.', 'In Safari tap Share ⬆︎ then “Add to Home Screen”. It then opens like an app and can receive notifications.')}</p><button class="btn sec sm">${tr('حسناً', 'OK')}</button>`;
+    d.innerHTML = `<b>${ico('phone')} ${tr('ثبّت التطبيق على الآيفون', 'Install the app on iPhone')}</b><p class="muted" style="margin:6px 0">${tr('من Safari اضغط زر المشاركة (المربع مع السهم) ثم «إضافة إلى الشاشة الرئيسية». بعدها يفتح كتطبيق وتصلك الإشعارات.', 'In Safari tap Share (the square with the arrow) then “Add to Home Screen”. It then opens like an app and can receive notifications.')}</p><button class="btn sec sm">${tr('حسناً', 'OK')}</button>`;
     d.querySelector('button').onclick = () => { localStorage.iosHint = '1'; d.remove(); };
     $('#main').before(d);
   }
   try {
     const n = (await api('GET', 'notifications?count=1')).unread;
-    const link = $('.side a[data-r="notifications"]'); if (link) link.innerHTML = `🔔 ${tr('الإشعارات', 'Notifications')}${n ? ` <span class="tag overdue">${n}</span>` : ''}`;
+    const link = $('.side a[data-r="notifications"]'); if (link) link.innerHTML = `${ico('bell')} ${tr('الإشعارات', 'Notifications')}${n ? ` <span class="tag overdue">${n}</span>` : ''}`;
     let bell = $('#bell');
     if (!bell && $('.topbar')) { bell = document.createElement('button'); bell.id = 'bell'; bell.type = 'button'; bell.style.marginInlineStart = 'auto'; bell.onclick = () => go('notifications'); $('.topbar').append(bell); }
-    if (bell) bell.innerHTML = `🔔${n ? `<sup style="font-size:12px">${n}</sup>` : ''}`;
+    if (bell) bell.innerHTML = `${ico('bell')}${n ? `<sup style="font-size:12px">${n}</sup>` : ''}`;
     if (navigator.setAppBadge) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
   } catch { /* offline */ }
 };
@@ -70,8 +70,8 @@ PAGES.notifications = async () => {
   const [d, ps] = await Promise.all([api('GET', 'notifications'), pushState()]);
   const device = !ps.supported
     ? `<p class="muted">${isIos && !standaloneApp ? tr('على الآيفون تعمل الإشعارات بعد تثبيت التطبيق على الشاشة الرئيسية (iOS 16.4 أو أحدث).', 'On iPhone, notifications work once the app is added to the Home Screen (iOS 16.4+).') : tr('هذا المتصفح لا يدعم الإشعارات.', 'This browser does not support notifications.')}</p>`
-    : ps.subscribed ? `<p class="ok">✔ ${tr('الإشعارات مفعّلة على هذا الجهاز', 'Notifications are on for this device')}</p><div class="bar"><button class="btn sec" id="ptest">${tr('إرسال تجربة', 'Send a test')}</button><button class="btn sec" id="poff">${tr('إيقاف على هذا الجهاز', 'Turn off on this device')}</button></div>`
-    : `<p class="muted">${tr('فعّلها لتصلك الاعتمادات والقرارات والتنبيهات على هاتفك حتى والتطبيق مغلق.', 'Turn them on to get approvals, decisions and alerts on your phone even when the app is closed.')}</p><button class="btn" id="pon">🔔 ${tr('تفعيل الإشعارات على هذا الجهاز', 'Turn on notifications on this device')}</button>`;
+    : ps.subscribed ? `<p class="ok">${MK.ok}${tr('الإشعارات مفعّلة على هذا الجهاز', 'Notifications are on for this device')}</p><div class="bar"><button class="btn sec" id="ptest">${tr('إرسال تجربة', 'Send a test')}</button><button class="btn sec" id="poff">${tr('إيقاف على هذا الجهاز', 'Turn off on this device')}</button></div>`
+    : `<p class="muted">${tr('فعّلها لتصلك الاعتمادات والقرارات والتنبيهات على هاتفك حتى والتطبيق مغلق.', 'Turn them on to get approvals, decisions and alerts on your phone even when the app is closed.')}</p><button class="btn" id="pon">${ico('bell')} ${tr('تفعيل الإشعارات على هذا الجهاز', 'Turn on notifications on this device')}</button>`;
   main(`<div class="bar"><h1>${tr('الإشعارات', 'Notifications')}</h1><span class="sp"></span>${d.unread ? `<button class="btn sec sm" id="rd">${tr('تعليم الكل كمقروء', 'Mark all read')}</button>` : ''}</div>
   <div class="card"><h2>${tr('هذا الجهاز', 'This device')}</h2>${device}</div>
   <div class="card">${d.items.map(n => `<div style="padding:8px 0;border-bottom:1px solid #e6e2d8;${n.read ? 'opacity:.6' : ''}${n.url ? ';cursor:pointer' : ''}" ${n.url ? `data-go="${esc(n.url.replace(/^#/, ''))}"` : ''}><b>${esc(n.title)}</b><div>${esc(n.body)}</div><div class="muted" style="font-size:12px">${esc(n.ts)}</div></div>`).join('') || `<p class="muted">${tr('لا توجد إشعارات', 'No notifications')}</p>`}</div>`);
