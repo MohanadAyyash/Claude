@@ -97,7 +97,7 @@ PAGES.rfq = async () => {
 window.poModal = guard(async (id, preset = {}) => {
   const [parties, projects] = await Promise.all([api('GET', 'parties').catch(() => []), api('GET', 'projects')]);
   const row = id ? await api('GET', 'purchase_orders/' + id) : null;
-  const r = row || { date: today(), vat_pct: S.vat_registered === '0' ? 0 : (S.vat_pct || 5), status: 'draft', payment_terms: '60 days from invoice', terms: '', ...preset };
+  const r = row || { date: today(), vat_pct: vatOn(today()) ? (S.vat_pct || 5) : 0, status: 'draft', payment_terms: '60 days from invoice', terms: '', ...preset };
   // order lines: item code, description, unit, qty, unit price, discount %, VAT — net amount after the discount
   const line = (i = {}) => `<tr><td style="width:90px"><input data-k="code" placeholder="${tr('الكود', 'Code')}" value="${esc(i.code || '')}"></td><td><textarea data-k="description" rows="1" placeholder="${tr('الوصف', 'Description')}" style="min-height:34px">${esc(i.description || '')}</textarea></td>
     <td style="width:62px"><input data-k="unit" value="${esc(i.unit || '')}" placeholder="${tr('الوحدة', 'Unit')}"></td><td style="width:80px"><input data-k="qty" type="number" step="any" value="${i.qty ?? 1}"></td><td style="width:95px"><input data-k="rate" type="number" step="any" value="${i.rate ?? 0}"></td>
@@ -231,7 +231,7 @@ function certModal(sub, row, prevCert) {
     ${F('retention_pct', 'المحتجزات %', 'Retention %', 'number', row?.retention_pct ?? sub.retention_pct)}${F('advance_recovery', 'استرداد الدفعة المقدمة (هذه الشهادة)', 'Advance recovery (this certificate)', 'number', row?.advance_recovery ?? 0)}
     <div class="f"><label>${tr('تكلفة الخصومات Contra (هذه الشهادة)', 'Contra charges — cost (this certificate)')}${sub.contra_uplift ? ` + ${sub.contra_uplift}%` : ''}</label><input type="number" step="any" id="ccost" placeholder="${tr('اختياري — يحسب الخصم مع نسبة الإضافة', 'optional — adds the uplift')}"></div>
     ${F('deductions', 'الخصومات Contra Charges (هذه الشهادة)', 'Contra charges (this certificate)', 'number', row?.deductions ?? 0)}${F('release', 'الإفراج عن محتجزات (هذه الشهادة)', 'Release of retention (this certificate)', 'number', row?.release ?? 0)}
-    ${F('vat_pct', 'الضريبة %', 'VAT %', 'number', row?.vat_pct ?? (S.vat_registered === '0' ? 0 : (S.vat_pct || 5)))}${F('app_ref', 'مرجع طلب الدفعة من المقاول (يُطبع بالملاحظات)', 'Subcontractor payment application (printed in the notes)', 'text')}
+    ${F('vat_pct', 'الضريبة %', 'VAT %', 'number', row?.vat_pct ?? (vatOn(today()) ? (S.vat_pct || 5) : 0))}${F('app_ref', 'مرجع طلب الدفعة من المقاول (يُطبع بالملاحظات)', 'Subcontractor payment application (printed in the notes)', 'text')}
     ${field({ k: 'cost_codes', ar: 'توزيع الأكواد (سطر لكل كود: الكود ثم المبلغ)', en: 'Cost codes (one per line: code then amount)', type: 'textarea' }, row?.cost_codes)}${field({ k: 'notes', ar: 'ملاحظات', en: 'Notes', type: 'textarea' }, row?.notes)}</div>
     <div id="pv"></div>
     <div class="acts">${locked ? '' : `<button class="btn" id="save">${tr('حفظ', 'Save')}</button>`}${row && !locked && canFin() ? `<button class="btn sec" id="ap">${tr('اعتماد وإنشاء مصروف', 'Approve & book cost')}</button>` : ''}${row ? `<button class="btn sec" id="pr">${tr('طباعة', 'Print')}</button><button class="btn sec" id="pdf">PDF</button>` : ''}

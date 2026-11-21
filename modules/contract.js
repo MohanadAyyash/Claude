@@ -43,15 +43,15 @@ module.exports = ctx => {
       if (c === 'contract' && req.method === 'GET') { const s = state(+b); if (!s) return send(res, 404, { error: 'not found' }), true; delete s.project; return send(res, 200, s), true; }
       if (c === 'advance-invoice' && req.method === 'POST') {
         const p = db.prepare('SELECT * FROM projects WHERE id=?').get(+b); if (!p) return send(res, 404, { error: 'not found' }), true;
-        const st = getSettings(); if (st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
         const x = await readBody(req), pct = +x.pct || p.advance_pct;
+        const st = getSettings(); if (C.vatRegisteredOn(st, x.date || today()) && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
         if (!(pct > 0 && pct <= 100)) bad('Set the advance payment % on the project first');
         if (!(p.contract_value > 0)) bad('Enter the contract value first');
         if (state(p.id).advance.invoiced > 0) bad('An advance payment invoice already exists for this project — void it first to issue another');
         const amount = round(p.contract_value * pct / 100), rec = p.advance_recovery_pct || pct;
         const items = [{ description: `Advance payment ${pct}% of the contract value (${p.contract_value.toFixed(2)} AED)`, unit: '', qty: 1, rate: amount, vat: 'std' }];
         const r = db.prepare("INSERT INTO invoices(number,date,due_date,project_id,items,vat_pct,retention_pct,notes,kind) VALUES(?,?,?,?,?,?,0,?,'advance')")
-          .run(nextNumber('invoices', 'INV'), x.date || today(), x.due_date || null, p.id, JSON.stringify(items), (st.vat_registered === '0' ? 0 : +st.vat_pct || 5),
+          .run(nextNumber('invoices', 'INV'), x.date || today(), x.due_date || null, p.id, JSON.stringify(items), (C.vatRegisteredOn(st, x.date || today()) ? +st.vat_pct || 5 : 0),
             `Advance payment against the advance payment guarantee; recovered at ${rec}% of each progress invoice. VAT is due on the advance (tax point = date of invoice / receipt).`);
         if (!p.advance_pct) db.prepare('UPDATE projects SET advance_pct=? WHERE id=?').run(pct, p.id);
         audit(req, 'create', 'advance_invoice', Number(r.lastInsertRowid), `${p.name} ${pct}%`);

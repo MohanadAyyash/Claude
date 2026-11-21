@@ -49,7 +49,7 @@ async function appModal(app, pid) {
 const PCNUM = ['work_cum', 'materials', 'adv_rec_cum', 'retention_cum', 'release_cum', 'contra_cum', 'prev_payments', 'prev_work', 'prev_materials', 'prev_adv_rec', 'prev_retention', 'prev_release', 'prev_contra', 'prev_vat'];
 async function pcModal(pc, pid) {
   const info = await api('GET', `claims?project_id=${pid}`), basis = info.project.vat_basis, isNew = !pc.id, inv = !!pc.invoice_id, locked = inv || !CLAIM_EDIT();
-  const vpct = S.vat_registered === '0' ? 0 : (+S.vat_pct || 5);
+  const vpct = vatOn(today()) ? (+S.vat_pct || 5) : 0;
   const appOpts = [['', '—'], ...info.apps.filter(a => !a.pc || a.pc.id === pc.id).map(a => [a.id, `${tr('طلب', 'Application')} ${a.seq} — ${a.number} (${money(a.net)})`])];
   const f = (k, ar, en, type = 'number') => field({ k, ar, en, type }, pc[k] ?? '');
   const m = modal(`<h2>${tr('شهادة دفع مستلمة (PC)', 'Payment certificate received (PC)')} ${pc.number ? esc(pc.number) : ''} ${pc.status ? tag(pc.status) : ''}</h2>

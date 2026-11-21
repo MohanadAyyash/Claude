@@ -151,6 +151,7 @@ Menu: **Settings** → first card.
    - **MOHRE establishment ID (13 digits)**, **Company bank**, **Company bank routing code (9 digits)**, **Company IBAN** — all needed for the WPS salary file
    - **Document footer text**
 2. **VAT registered?** — choose **No** if the company is not registered yet: invoices then default to 0% VAT and are titled "Invoice" instead of "Tax invoice".
+   - **VAT registration effective date** (from the FTA certificate): invoices dated before it are an "Invoice" at 0% by default and need no TRN; from it on, a "Tax Invoice" at 5% with the TRN. Empty = every date. It does not change how purchase VAT is posted: VAT on supplier bills before registration stays in 1200 until the tax adviser decides, and the daily check flags it without reclassifying anything.
    - **Arabic labels on printed documents** — default **No — English only**: invoices, quotations and statements print in English only. Choose **Yes** to print the titles in both languages (e.g. `Quotation / عرض سعر`) and the Arabic title on the quotation cover. Official letters stay on the bilingual letterhead.
 3. **Bank details (shown on invoices)** — the text printed on every invoice for clients to pay you.
 4. **Default quotation terms** — pre-filled into every new quotation.

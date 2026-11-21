@@ -29,13 +29,13 @@ module.exports = ctx => {
   const num = v => (v === null || v === undefined || v === '' ? 0 : round(+v || 0));
   const J = s => { try { return JSON.parse(s || '[]'); } catch { return []; } };
   const proj = id => db.prepare('SELECT * FROM projects WHERE id=?').get(id) || notFound();
-  const vatPct = () => { const st = getSettings(); return st.vat_registered === '0' ? 0 : (+st.vat_pct || 5); };
+  const vatPct = d => { const st = getSettings(); return C.vatRegisteredOn(st, d || today()) ? (+st.vat_pct || 5) : 0; };   // VAT-registered on that date (effective date)
   const lineAmt = (q, r) => round((+q || 0) * (+r || 0));
   const pcsOf = pid => db.prepare('SELECT * FROM client_pcs WHERE project_id=? ORDER BY issue_date, id').all(pid);
 
   // ---- received payment certificates -------------------------------------------------------------------------------------
   function pcCalc(pc, p) {
-    const pct = vatPct(), basis = p.vat_basis === 'net' ? 'net' : 'gross';
+    const pct = vatPct(pc.issue_date), basis = p.vat_basis === 'net' ? 'net' : 'gross';
     const A = round(num(pc.work_cum) + num(pc.materials) - num(pc.adv_rec_cum));
     const B = round(num(pc.retention_cum) - num(pc.release_cum) + num(pc.contra_cum) + num(pc.prev_payments));
     const net = round(A - B);
@@ -72,7 +72,7 @@ module.exports = ctx => {
   // ---- payment applications (proforma) -------------------------------------------------------------------------------------
   function appView(app, p = proj(app.project_id)) {
     const lines = J(app.lines).map(l => ({ ...l, prev_amount: lineAmt(l.prev_qty, l.rate), cum_amount: lineAmt(l.cum_qty, l.rate), this_qty: round((+l.cum_qty || 0) - (+l.prev_qty || 0)), this_amount: round(lineAmt(l.cum_qty, l.rate) - lineAmt(l.prev_qty, l.rate)) }));
-    const prev = lastPc(app.project_id, app.id, app.date), pv = prev ? pcCalc(prev, p) : null, pct = vatPct(), basis = p.vat_basis === 'net' ? 'net' : 'gross';
+    const prev = lastPc(app.project_id, app.id, app.date), pv = prev ? pcCalc(prev, p) : null, pct = vatPct(app.date), basis = p.vat_basis === 'net' ? 'net' : 'gross';
     const work = round(lines.reduce((s, l) => s + l.cum_amount, 0)), materials = num(app.materials);
     const adv = ctx.contractState ? ctx.contractState(app.project_id) : null;
     const advance = adv ? adv.advance.invoiced : 0, recPct = adv ? adv.advance.recovery_pct : 0;
@@ -105,7 +105,7 @@ module.exports = ctx => {
   // ---- tax invoice from a received PC ----------------------------------------------------------------------------------------
   function invoiceFromPc(pc, body, req) {
     const p = proj(pc.project_id), st = getSettings();
-    if (st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
+    if (C.vatRegisteredOn(st, body.date || today()) && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
     if (pc.invoice_id) bad('A tax invoice was already issued for this PC');
     const v = pcView(pc, p), d = v.d, gross = v.basis === 'gross';
     if (!body.force && v.checks.some(c => ['vat', 'prev_payments', 'retention_down'].includes(c.code))) { const e = new Error('check_pc'); e.status = 409; e.checks = v.checks; throw e; }
@@ -125,7 +125,7 @@ module.exports = ctx => {
     if (!due && +p.payment_terms_days > 0) { const x = new Date(Date.parse(date + 'T00:00:00Z')); x.setUTCDate(x.getUTCDate() + +p.payment_terms_days); due = x.toISOString().slice(0, 10); }
     const notes = '';                                                      // PC no., contract no. and main contract print in the details block
     const r = db.prepare('INSERT INTO invoices(number,date,due_date,project_id,items,vat_pct,retention_pct,notes,client_ref,retention_amount,vat_basis,pc_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(nextNumber('invoices', 'INV'), date, due, p.id, JSON.stringify(items), vatPct(), +p.retention_pct || 0, notes, `PC ${pc.number}`, Math.max(0, d.retention), v.basis, pc.id);
+      .run(nextNumber('invoices', 'INV'), date, due, p.id, JSON.stringify(items), vatPct(date), +p.retention_pct || 0, notes, `PC ${pc.number}`, Math.max(0, d.retention), v.basis, pc.id);
     const id = Number(r.lastInsertRowid);
     // the invoice must equal the PC to the fils
     const inv = enrich().invoices.find(x => x.id === id);
