@@ -402,8 +402,11 @@ module.exports = ctx => {
           const parts = r ? split(r) : [{ project_id: null, amount: 1 }], sum = parts.reduce((s, p) => s + p.amount, 0) || 1;
           for (const p of parts) byProj[p.project_id] = (byProj[p.project_id] || 0) + v.amount * p.amount / sum;
         }
+        // the project shares are rounded one by one: the cent left over goes to the largest share, so the journal balances
+        const shares = add(byProj, 5260, 5260, 'debit', 'End-of-service provision'), cent = round(round(total) - shares.reduce((s, l) => s + l.amount, 0));
+        if (cent && shares.length) { const big = shares.reduce((x, l) => (l.amount > x.amount ? l : x)); big.amount = round(big.amount + cent); }
         out.push({ kind: 'jv_eos', local_id: ym(m.month), date: mEnd(m.month), ref: `EOS-${m.month}`, notes: `End-of-service provision ${m.month}`,
-          lines: [...add(byProj, 5260, 5260, 'debit', 'End-of-service provision'), { acct: 2300, dc: 'credit', amount: round(total), desc: 'End-of-service provision' }] });
+          lines: [...shares, { acct: 2300, dc: 'credit', amount: round(total), desc: 'End-of-service provision' }] });
       }
       for (const s of db.prepare('SELECT s.*, e.name, e.project_id FROM eos_settlements s JOIN employees e ON e.id=s.employee_id').all()) {
         if (!inR(s.date)) continue; const diff = round(s.gratuity - s.provision);
@@ -507,6 +510,8 @@ module.exports = ctx => {
       if (!acc && !j.codes) throw new Error(`map our account ${l.acct === 'ar' ? '1100 (Accounts receivable)' : l.acct}${LEDGER[l.acct] ? ' (' + LEDGER[l.acct] + ')' : ''} to a Zoho account first`);
       lines.push({ account_id: acc, debit_or_credit: l.dc, amount: round(l.amount), description: l.desc || '', ...(l.customer ? { customer_id: await contactId(cl, l.customer, run) } : l.sundry ? { customer_id: await sundryId(cl, run) } : {}), ...projectRef(l.project_id) });
     }
+    const dr = round(lines.reduce((s, l) => s + (l.debit_or_credit === 'debit' ? l.amount : 0), 0)), cr = round(lines.reduce((s, l) => s + (l.debit_or_credit === 'credit' ? l.amount : 0), 0));
+    if (Math.abs(dr - cr) > 0.004) throw new Error(`journal not balanced (debit ${dr.toFixed(2)}, credit ${cr.toFixed(2)}) — not sent; report this to the developer`);
     const vals = { journal_date: j.date, reference_number: j.ref.slice(0, 100), notes: j.notes, line_items: lines }, h = hashOf(vals), r = rec(j.kind, j.local_id), eff = sentEff('journal', vals, lk);
     if (dry) dry.vals.set(j.kind + ':' + j.local_id, { type: 'journal', eff });
     if (r && ['ok', 'error', 'retrying'].includes(r.status) && r.zoho_id) {        // also after a failed update: the journal exists there, so it is updated, not posted twice
