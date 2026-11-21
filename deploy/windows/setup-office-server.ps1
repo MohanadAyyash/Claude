@@ -3,6 +3,7 @@
    - starts the ERP automatically at boot (no login needed) and restarts it if it ever crashes
    - runs a daily database backup at 02:30 (optionally copied to another folder / drive / OneDrive)
    - runs the daily data-integrity check at 03:00 (OPS.md; reports problems to GitHub when .env has GITHUB_REPORT_TOKEN)
+   - checks the local health endpoint every 5 minutes and alerts on outages / recovery
    - stops the PC from sleeping, opens the LAN port in the firewall, prints the office address
 
  Run PowerShell AS ADMINISTRATOR, from the project folder (e.g. C:\erp):
@@ -61,6 +62,14 @@ cd /d "$AppDir"
 "@
 Set-Content -Path (Join-Path $AppDir "run-check.cmd") -Value $chk -Encoding ASCII
 
+# --- local availability monitor (does not read the ERP database)
+$mon = @"
+@echo off
+cd /d "$AppDir"
+"$node" --no-warnings scripts\health-monitor.js
+"@
+Set-Content -Path (Join-Path $AppDir "run-monitor.cmd") -Value $mon -Encoding ASCII
+
 # --- scheduled tasks (at boot / daily)
 # Backup and daily check run as SYSTEM. The server itself runs as the signed-in Windows user (S4U: still starts at boot with nobody signed in,
 # no password is stored): Microsoft Edge does not run under the SYSTEM account, so every PDF timed out when the server ran as SYSTEM.
@@ -88,6 +97,11 @@ Register-ScheduledTask -TaskName "TrigonERP-Backup" -Principal $principal -Setti
 Unregister-ScheduledTask -TaskName "TrigonERP-Check" -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName "TrigonERP-Check" -Principal $principal -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable) `
   -Action (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$AppDir\run-check.cmd`"" -WorkingDirectory $AppDir) -Trigger (New-ScheduledTaskTrigger -Daily -At 3:00am) | Out-Null
+Unregister-ScheduledTask -TaskName "TrigonERP-Monitor" -Confirm:$false -ErrorAction SilentlyContinue
+$monitorTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+$monitorSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName "TrigonERP-Monitor" -Principal $principal -Settings $monitorSettings `
+  -Action (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$AppDir\run-monitor.cmd`"" -WorkingDirectory $AppDir) -Trigger $monitorTrigger | Out-Null
 
 # --- keep the PC awake, allow LAN access to the ERP port
 powercfg /change standby-timeout-ac 0 | Out-Null
@@ -109,4 +123,5 @@ Write-Host " First-time admin setup token (only needed once, on a brand-new data
 Write-Host "     $token"
 Write-Host " The server runs as: $RunAs.$pdfNote"
 Write-Host " Logs: $AppDir\data\server.log   Backups: $AppDir\data\backups   Daily check: $AppDir\data\daily-check.log"
+Write-Host " Health monitor: every 5 minutes (GitHub issue + Teams alert on state changes when configured)"
 Write-Host "=============================================================="

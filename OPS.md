@@ -9,6 +9,9 @@
   - الرابط: `https://erp.trigon.ae/api/health`
   - كل دقيقة إلى ٥ دقائق، وتنبيه بالإيميل أو الواتساب أو SMS إذا الرد ليس 200.
 - في Docker (`deploy/docker-compose.yml`) أُضيف `healthcheck`، فيظهر `healthy/unhealthy` في `docker ps`.
+- على جهاز Windows، مهمة `TrigonERP-Monitor` تفحص العنوان المحلي كل ٥ دقائق. عند انقطاع الخدمة تفتح/تحدّث بلاغ GitHub إذا كان `GITHUB_REPORT_TOKEN` مضبوطاً، وترسل تنبيهاً إلى Teams إذا كان webhook مضبوطاً؛ وعند عودة الخدمة تسجل الاستعادة في GitHub وترسل تنبيهاً إلى Teams. لا تقرأ قاعدة البيانات، ولا تكرر التنبيهات ما دامت الحالة لم تتغير، ولا تغلق البلاغ تلقائياً.
+- إعداد Teams يستخدم `M365_TEAMS_WEBHOOK_URL` الموجود أصلاً في `.env`. يُرسل التنبيه حالة الخدمة والوقت فقط، بلا بيانات ERP. تفاصيل إعداد Teams في `M365.md`.
+- هذه المراقبة تعمل على نفس جهاز المكتب؛ لن تستطيع التنبيه إذا كان الجهاز مطفأً أو انقطع عنه الإنترنت. لمراقبة الجهاز من خارجه، يلزم health check خارجي عبر اتصال HTTPS آمن ومحدود، من دون نشر قاعدة البيانات أو لوحة الإدارة.
 
 ## ٢) سجل الأخطاء
 - كل خطأ غير متوقع (كود 500) يُحفظ في جدول `error_log`: الوقت، نوع الطلب، المسار (بدون query string)، الرسالة، والـ stack.
@@ -52,7 +55,7 @@ Linux (VPS): `deploy/install.sh` يضيف تلقائياً النسخة الاح
 0 3 * * * cd /opt/erp/deploy && docker compose exec -T app node scripts/daily-check.js >> /var/log/erp-check.log 2>&1
 ```
 
-Windows (جهاز المكتب): `deploy\windows\setup-office-server.ps1` يضيف مهمة **TrigonERP-Check** الساعة ٣:٠٠ (مع النسخة الاحتياطية ٢:٣٠). لو ركّبت قبل هذا التحديث، أعد تشغيل السكربت، أو أضف المهمة يدوياً من PowerShell **كمسؤول**:
+Windows (جهاز المكتب): `deploy\windows\setup-office-server.ps1` يضيف **TrigonERP-Monitor** كل ٥ دقائق، و**TrigonERP-Check** الساعة ٣:٠٠ (مع النسخة الاحتياطية ٢:٣٠). أعد تشغيل السكربت على الجهاز لتثبيت مهمة المراقبة الجديدة.
 
 ```powershell
 schtasks /Create /SC DAILY /ST 03:00 /TN "TrigonERP-Check" /RU SYSTEM /F /TR "cmd /c cd /d C:\erp && node --no-warnings scripts\daily-check.js >> data\daily-check.log 2>&1"
@@ -90,7 +93,7 @@ daily-check.js ── فشل؟ ──► issue بعلامة ops-report ──►
 
 ### الإعداد (مرة وحدة)
 1. **ادمج هذا الفرع في الفرع الأساسي** (`claude/construction-management-app-rfq8al`). GitHub يشغّل workflows الـ issues والجدولة من الفرع الأساسي بس.
-2. **ركّب تطبيق Claude على المستودع:** https://github.com/apps/claude ثم Install، واختر المستودع `Claude`.
+2. **ركّب تطبيق Claude على المستودع:** https://github.com/apps/claude ثم Install، واختر المستودع `Trigon-ERP-System`.
 3. **أضف مفتاح واحد** في Settings ← Secrets and variables ← Actions ← New repository secret:
    - `ANTHROPIC_API_KEY`: مفتاح من https://console.anthropic.com (الدفع حسب الاستخدام). حط له حد شهري من Billing ← Limits.
    - **أو** `CLAUDE_CODE_OAUTH_TOKEN`: إذا عندك اشتراك Claude Pro/Max، شغّل `claude setup-token` على جهازك والصق الناتج.
@@ -103,7 +106,7 @@ daily-check.js ── فشل؟ ──► issue بعلامة ops-report ──►
    - حط في ملف `.env` على السيرفر (بجانب `docker-compose.yml` في `deploy/`، أو بجانب `server.js` على ويندوز):
      ```
      GITHUB_REPORT_TOKEN=github_pat_...
-     GITHUB_REPORT_REPO=MohanadAyyash/Claude
+     GITHUB_REPORT_REPO=MohanadAyyash/Trigon-ERP-System
      ```
      وبعدها `docker compose up -d` عشان يقرأها.
 6. **جرّب:** افتح issue عنوانه `@claude شغّل npm test وقلّي النتيجة`. لازم يرد خلال دقايق. وجرّب المراجعة الأسبوعية من Actions ← Claude weekly review ← Run workflow.
