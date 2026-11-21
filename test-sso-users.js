@@ -261,14 +261,12 @@ const mailOf = oid => `user-${oid.slice(-2)}@example.test`;
         await refused('21: unlinked on the restored database too', await sso(OID.stranger, {}, rbase), /not linked/);
       } finally {
         if (child.exitCode === null && child.signalCode === null) {
-          await new Promise(resolve => {
-            child.once('exit', resolve);
-            child.kill();
-            setTimeout(resolve, 2000);
-          });
+          const closed = new Promise(resolve => child.once('close', resolve));
+          child.kill();
+          await closed;
         }
       }
-      fs.rmSync(bdir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      fs.rmSync(bdir, { recursive: true, force: true });
       console.log('✔ 20–21: no code / token / secret / key / verifier in responses, logs, audit, users list or backups; a restored backup keeps the identity links (Microsoft sign-in works) but no tokens');
 
       // ---- 22. service worker ----

@@ -119,6 +119,63 @@ td.n,.totals div span:last-child{font-family:"IBM Plex Mono","IBM Plex Sans Arab
   .main{padding-top:calc(22px + env(safe-area-inset-top))}
   .overlay{padding-top:calc(30px + env(safe-area-inset-top))}
 }
+
+/* Copilot is a page-independent, keyboard-accessible floating chat. */
+.main{padding-bottom:calc(110px + env(safe-area-inset-bottom))}
+.tc-launcher{position:fixed;inset-inline-end:20px;bottom:calc(20px + env(safe-area-inset-bottom));z-index:19;
+  width:58px;height:58px;border:2px solid #D6D2C8;border-radius:50%;background:#1F3A5F;color:#fff;
+  box-shadow:0 6px 20px rgba(15,30,45,.28);font-size:27px;font-weight:700;cursor:pointer}
+.tc-launcher:hover,.tc-launcher:focus-visible{background:#162b47;outline:3px solid #D6D2C8;outline-offset:3px}
+.tc-window{position:fixed;inset-inline-end:20px;bottom:calc(90px + env(safe-area-inset-bottom));z-index:19;
+  width:min(380px,calc(100vw - 32px));height:min(600px,calc(100dvh - 112px));min-height:360px;
+  display:flex;flex-direction:column;background:#fff;border:1px solid #D6D2C8;border-radius:16px;
+  box-shadow:0 12px 40px rgba(15,30,45,.28);overflow:hidden;color:#1F3A5F}
+.tc-header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;
+  padding:10px 12px;background:#1F3A5F;color:#fff}
+.tc-heading{min-width:0;display:grid;gap:4px}.tc-heading h2{margin:0;color:#fff;font-size:15px}
+.tc-heading select{width:min(190px,42vw);padding:3px 6px;border-radius:5px;border:1px solid #D6D2C8;background:#fff;font-size:12px}
+.tc-actions{display:flex;gap:3px}.tc-icon{width:30px;height:30px;border:0;border-radius:6px;background:rgba(255,255,255,.13);color:#fff;font-size:19px;cursor:pointer}
+.tc-icon:hover,.tc-icon:focus-visible{background:rgba(255,255,255,.27);outline:2px solid #D6D2C8}
+.tc-icon:disabled{opacity:.45;cursor:not-allowed}
+.tc-thread{flex:1;min-height:0;overflow:auto;padding:12px;background:#F7F6F3;overscroll-behavior:contain}
+.tc-empty{text-align:center;padding:35px 2px;color:#8A8578}.tc-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:6px}
+.tc-chips .btn{white-space:normal;text-align:start}
+.tc-pair{display:flex;flex-direction:column;gap:7px;margin:0 0 14px}
+.tc-user,.tc-assistant{max-width:92%;padding:9px 11px;border-radius:12px;overflow-wrap:anywhere;white-space:normal}
+.tc-user{align-self:flex-end;background:#1F3A5F;color:#fff;border-end-end-radius:3px}
+.tc-assistant{align-self:flex-start;background:#fff;border:1px solid #D6D2C8;border-end-start-radius:3px}
+.tc-user time{display:block;text-align:end;font-size:10px;opacity:.72;margin-top:5px}
+.tc-label,.tc-generated{font-size:10px;color:#8A8578;margin-bottom:6px}
+.tc-answer{white-space:pre-wrap;overflow-wrap:anywhere}
+.tc-generated{margin-top:7px;padding-top:6px;border-top:1px solid #D6D2C8}
+.tc-facts{margin-top:9px;padding-top:7px;border-top:2px solid #1F3A5F;font-size:12px}
+.tc-record{margin-top:7px;padding:8px;border:1px solid #D6D2C8;border-radius:8px;background:#fff;font-size:11px}
+.tc-record-title{display:flex;align-items:center;flex-wrap:wrap;gap:5px}.tc-record dl{margin:7px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.tc-record dl div{min-width:0}.tc-record dt{color:#8A8578;font-size:10px}.tc-record dd{margin:2px 0 0;overflow-wrap:anywhere}
+.tc-feedback{display:flex;align-items:center;gap:5px;margin-top:8px;font-size:11px;color:#8A8578}
+.tc-compose{flex-shrink:0;padding:8px 10px;border-top:1px solid #D6D2C8;background:#fff}
+.tc-compose textarea{width:100%;min-height:52px;max-height:120px;resize:vertical;border:1px solid #D6D2C8;border-radius:8px;padding:8px}
+.tc-compose-row{display:flex;align-items:center;justify-content:space-between;margin-top:5px;color:#8A8578;font-size:11px}
+.tc-typing{display:flex;align-items:center;gap:4px;color:#8A8578;font-size:12px;margin:10px}
+.tc-typing span{width:5px;height:5px;border-radius:50%;background:#1F3A5F;animation:tc-pulse .9s infinite alternate}
+.tc-typing span:nth-child(2){animation-delay:.2s}.tc-typing span:nth-child(3){animation-delay:.4s}
+@keyframes tc-pulse{to{opacity:.25;transform:translateY(-3px)}}
+.tc-error{margin:8px;padding:9px;border-radius:8px;background:#fbe9e9;color:#8c2525;white-space:pre-wrap}
+.tc-notice{margin:8px;padding:8px;border-radius:8px;background:#eef2f6;color:#1F3A5F;font-size:11px}
+.tc-notice[hidden]{display:none}.tc-memory-view{flex:1;min-height:0;overflow:auto;padding:12px}
+.tc-memory-view h3{margin:8px 0;font-size:13px}.tc-memory-view textarea{width:100%;resize:vertical;border:1px solid #D6D2C8;border-radius:7px;padding:7px}
+.tc-memory-item{display:flex;align-items:start;gap:6px;justify-content:space-between;padding:8px 0;border-bottom:1px solid #D6D2C8;overflow-wrap:anywhere}
+.tc-memory-item span{white-space:pre-wrap}.tc-toggle{display:flex;align-items:start;gap:7px;margin:8px 0}.tc-memory-view .muted{font-size:11px}
+body[data-role=viewer] .tc-window .btn.sm{display:inline-flex}
+@media(max-width:800px){
+  .main{padding-bottom:calc(110px + env(safe-area-inset-bottom))}
+  .tc-window{inset:0;width:100vw;height:100dvh;min-height:0;max-height:none;border:0;border-radius:0;padding-top:env(safe-area-inset-top)}
+  .tc-header{padding-inline:10px}.tc-heading select{width:min(170px,38vw)}
+  .tc-launcher{inset-inline-end:16px;bottom:calc(16px + env(safe-area-inset-bottom))}
+  .tc-thread{padding:10px}.tc-user,.tc-assistant{max-width:96%}
+  .tc-compose{padding-bottom:calc(8px + env(safe-area-inset-bottom))}
+}
+@media print{#copilot-root{display:none!important}}
 @media(max-width:800px){
   .modal{padding-top:calc(16px + env(safe-area-inset-top))}          /* forms open full screen: their title was hidden under the clock */
   .login{margin-top:calc(6vh + env(safe-area-inset-top))}

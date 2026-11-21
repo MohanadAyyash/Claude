@@ -120,3 +120,173 @@ daily-check.js ── فشل؟ ──► issue بعلامة ops-report ──►
 - نقل المرفقات القديمة إلى SharePoint: `node --no-warnings scripts/m365-migrate.js` (تجربة فقط) ثم `--execute` بعد المراجعة؛ لا يحذف شيئاً.
 - سجل التدقيق: `m365` (`sharepoint-upload`, `outlook-send`, `config-change`, `teams-*`) و `auth` (`auth-mode`, `emergency-login…`).
 - إيقاف أي ميزة: صفرها في `.env` وأعد التشغيل؛ بيانات النظام لا تتأثر.
+
+## Copilot (معطّل افتراضياً)
+- لا تضبط `COPILOT_ENABLED=1` ولا تتصل بمزوّد إنتاجي حتى تعتمد Trigon مزوّد Azure والمنطقة ومكان إقامة البيانات ومعالجة/احتفاظ/تدريب المزوّد وسياسة الشبكة وقوائم المستخدمين والأدوار؛ التفاصيل في `COPILOT.md` و`docs/COPILOT.md`.
+- اختبارات Copilot تستخدم مزوّداً ومفاتيح Entra وهمية على loopback فقط. لا تستخدم قاعدة إنتاج أو بيانات نسخ احتياطية أو أسرار إنتاج للاختبار.
+- حالة `GET /api/copilot/status` متاحة للمسؤول الموثق حتى عند التعطيل، وتعرض `enabled=false` دون أسرار؛ بعد اعتماد التفعيل، راجعها كمستخدم مسموح. واجهة التدقيق `GET /api/copilot/audit` للمسؤول فقط ولا تحتوي السؤال أو الإجابة.
+- حد الطلب الافتراضي 20 لكل مستخدم و200 لكل عملية خادم في الدقيقة؛ يمكن ضبط الحدود والنتائج والاحتفاظ ضمن النطاقات الموثقة في `docs/COPILOT.md` و`.env.example`.
+- السجل والتقييم وأحداث Copilot لا تُنسخ إلى النسخ المنقّحة. مسح سجل المستخدم لا يؤثر على سجل مستخدم آخر، ولا توجد أدوات تعديل أو موافقة.
+- فتح رابط داخل Copilot لا يمنح صلاحية؛ واجهة ERP المقصودة تعيد فحص الصلاحيات ونطاق المشروع مستقلاً.
+- المحدّث ينشر رأس الفرع الافتراضي؛ لذلك فإن دمج PR #21 يعدّ عملياً نشراً للإنتاج للتثبيتات التي تستخدم المحدّث. يجب أن يبقى `COPILOT_ENABLED=0` بعد أي تحديث أو دمج حتى اكتمال تحقق مرحلي منفصل واعتماد قائمة المستخدمين/الأدوار. لا يغيّر هذا PR مسار التحديث ولا يثبت أو يسجل commit النشر. للتراجع: `COPILOT_ENABLED=0` ثم إعادة تشغيل التطبيق بالطريقة المعتمدة.
+
+The updater deploys the configured default-branch head, so merging PR #21 is effectively a production deployment for updater-managed installs. Keep `COPILOT_ENABLED=0` after every update and merge until provider/region/data-handling decisions, staged validation, and explicit allowlist approval are complete. See `COPILOT.md` and `docs/COPILOT.md` for the staged process. Rollback is `COPILOT_ENABLED=0` followed by the approved application restart; this feature does not alter ERP or Microsoft 365 data.
+
+## Isolated Windows Copilot validation (fake data only)
+
+Use a new checkout and a new data directory. Never copy an installed ERP folder, production database, backup, `.env`, account, or secret into this test. The test binds only to loopback on port `3301`; the Copilot mock is test-only and does not make provider calls.
+
+In PowerShell, confirm the two exact test paths do not already exist. If either exists, inspect it and choose a new dedicated test path rather than deleting or reusing unknown data.
+
+```powershell
+if (Test-Path -LiteralPath 'C:\ERP-copilot-test') { throw 'Test checkout already exists; choose and inspect a new isolated path.' }
+if (Test-Path -LiteralPath 'C:\ERP-copilot-test-data') { throw 'Test data path already exists; choose and inspect a new isolated path.' }
+git clone --single-branch --branch feature/trigon-copilot-foundation https://github.com/MohanadAyyash/Trigon-ERP-System.git C:\ERP-copilot-test
+Set-Location -LiteralPath 'C:\ERP-copilot-test'
+node --version
+npm ci
+New-Item -ItemType Directory -Path 'C:\ERP-copilot-test-data' | Out-Null
+node --no-warnings test-copilot.js
+npm test
+npm run build:standalone
+npm run test:standalone
+npm audit --omit=dev
+```
+
+If this Windows machine has no supported Chrome installation, run `$env:SKIP_PDF='1'; npm test`, then run `Remove-Item Env:SKIP_PDF`; record that the PDF test was skipped locally. The real-browser PDF check must pass in non-Windows CI.
+
+Create `C:\ERP-copilot-test\.env` with these bootstrap settings; Copilot is initially off while creating a new fake local ERP:
+
+```dotenv
+NODE_ENV=test
+HOST=127.0.0.1
+PORT=3301
+DATA_DIR=C:\ERP-copilot-test-data
+COPILOT_ENABLED=0
+COPILOT_PROVIDER=mock
+COPILOT_ALLOWED_USERS=
+COPILOT_ALLOWED_ROLES=
+COPILOT_ENTRA_ENABLED=0
+COPILOT_ENTRA_TENANT_ID=
+COPILOT_ENTRA_API_AUDIENCE=
+COPILOT_AZURE_ENDPOINT=
+COPILOT_AZURE_DEPLOYMENT=
+COPILOT_AZURE_API_VERSION=
+COPILOT_AZURE_API_KEY=
+COPILOT_FOUNDRY_ENDPOINT=
+COPILOT_FOUNDRY_MODEL=
+COPILOT_FOUNDRY_API_KEY=
+M365_ENABLED=0
+M365_TENANT_ID=
+M365_CLIENT_ID=
+M365_CLIENT_SECRET=
+M365_ENCRYPTION_KEY=
+M365_SHAREPOINT_ENABLED=0
+M365_SHAREPOINT_SITE_ID=
+M365_SHAREPOINT_DRIVE_ID=
+M365_SHAREPOINT_AUTO=0
+M365_SHAREPOINT_ATTACHMENTS=0
+M365_OUTLOOK_ENABLED=0
+M365_TEAMS_WEBHOOK_URL=
+M365_TEAMS_EXTRA_HOSTS=
+ZOHO_CLIENT_ID=
+ZOHO_CLIENT_SECRET=
+ZOHO_REFRESH_TOKEN=
+```
+
+Node does not load `.env` implicitly here. Start the server explicitly:
+
+```powershell
+Set-Location -LiteralPath 'C:\ERP-copilot-test'
+node --env-file=.env --no-warnings server.js
+```
+
+Open `http://127.0.0.1:3301/`, create a disposable fake administrator through first-run setup, then add clearly fictitious records only (for example a `QA-DEMO-001` project, sample client, invoice, PO and contract) and a separate unallowlisted viewer. Do not use real names, company records, tenant IDs, or copied production data. Stop the server with Ctrl+C before inspecting the test database or editing `.env`. Read the fake ERP IDs from the local database read-only:
+
+```powershell
+node --no-warnings -e 'const {DatabaseSync}=require("node:sqlite");const db=new DatabaseSync("C:\\ERP-copilot-test-data\\erp.db",{readOnly:true});console.log(db.prepare("SELECT id,username,role FROM users ORDER BY id").all());db.close();'
+```
+
+Edit `.env`: set `COPILOT_ENABLED=1`, and replace the placeholder with the numeric ID of exactly one fake test user. Leave all other settings unchanged:
+
+```dotenv
+NODE_ENV=test
+HOST=127.0.0.1
+PORT=3301
+DATA_DIR=C:\ERP-copilot-test-data
+COPILOT_ENABLED=1
+COPILOT_PROVIDER=mock
+COPILOT_ALLOWED_USERS=<numeric fake ERP user ID>
+COPILOT_ALLOWED_ROLES=
+COPILOT_ENTRA_ENABLED=0
+COPILOT_ENTRA_TENANT_ID=
+COPILOT_ENTRA_API_AUDIENCE=
+COPILOT_AZURE_ENDPOINT=
+COPILOT_AZURE_DEPLOYMENT=
+COPILOT_AZURE_API_VERSION=
+COPILOT_AZURE_API_KEY=
+COPILOT_FOUNDRY_ENDPOINT=
+COPILOT_FOUNDRY_MODEL=
+COPILOT_FOUNDRY_API_KEY=
+M365_ENABLED=0
+M365_TENANT_ID=
+M365_CLIENT_ID=
+M365_CLIENT_SECRET=
+M365_ENCRYPTION_KEY=
+M365_SHAREPOINT_ENABLED=0
+M365_SHAREPOINT_SITE_ID=
+M365_SHAREPOINT_DRIVE_ID=
+M365_SHAREPOINT_AUTO=0
+M365_SHAREPOINT_ATTACHMENTS=0
+M365_OUTLOOK_ENABLED=0
+M365_TEAMS_WEBHOOK_URL=
+M365_TEAMS_EXTRA_HOSTS=
+ZOHO_CLIENT_ID=
+ZOHO_CLIENT_SECRET=
+ZOHO_REFRESH_TOKEN=
+```
+
+`COPILOT_PROVIDER=mock` requires `NODE_ENV=test`; the mock returns a fixed answer and does not call Azure. Entra, M365, SharePoint, Outlook, Teams and Zoho credentials/endpoints are disabled or empty. Start the server with `node --env-file=.env --no-warnings server.js`. Confirm there is no non-loopback server connection:
+
+```powershell
+$server = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*C:\ERP-copilot-test\server.js*' }
+if (-not $server) { throw 'Isolated test server process was not found.' }
+Get-NetTCPConnection -State Established -OwningProcess $server.ProcessId |
+  Where-Object { $_.RemoteAddress -notin @('127.0.0.1','::1') } |
+  Select-Object LocalAddress,LocalPort,RemoteAddress,RemotePort
+```
+
+No rows should be returned. Keep the browser at `127.0.0.1`; do not configure real tenant/provider values.
+
+Manual UI checklist:
+
+1. Sign in as the allowlisted fake user; switch between Arabic and English and confirm the Copilot panel/menu is present in both.
+2. Confirm all five suggested prompts appear and can be selected: **Purchase orders waiting for approval**, **Overdue purchase orders**, **Project procurement summary**, **Contracts expiring within 60 days**, and **SharePoint synchronization failures**.
+3. Ask a supported question with no matching fake records. Confirm **“No structured results for this question.”** appears instead of invented records.
+4. Sign in as the separate fake viewer whose ID is not allowlisted. Confirm the panel is absent and direct `/api/copilot/ask` access is denied.
+5. Ask **“Show payroll”**; confirm the excluded-data request is rejected.
+6. Open an ERP reference as the authorized fake user, then open the same local ERP path as the restricted user; confirm the destination's normal ERP ACL denies access.
+7. Use **Clear history** and confirm the current user's history is empty; verify the restricted account's history is unaffected.
+8. Stop the server, set `COPILOT_ENABLED=0`, restart, and confirm the Copilot panel is hidden while ordinary ERP pages still work.
+
+After Ctrl+C and confirming the server has exited, delete only these exact test paths, after checking that no files need to be kept:
+
+```powershell
+Set-Location -LiteralPath 'C:\'
+Remove-Item -LiteralPath 'C:\ERP-copilot-test' -Recurse -Force
+Remove-Item -LiteralPath 'C:\ERP-copilot-test-data' -Recurse -Force
+```
+
+## Staged production rollout and rollback
+
+This is a future approval-gated procedure, not authorization to merge or deploy. Merging PR #21 to `claude/construction-management-app-rfq8al` is effectively a deployment because the updater downloads the configured default-branch ZIP. The same push triggers `.github/workflows/pages.yml`, which tests, rebuilds and republishes the standalone edition to GitHub Pages; that edition is not a Copilot provider/backend and must not be used to send ERP data to an AI service.
+
+1. Complete security review and obtain Trigon's written approval for the Azure service/deployment, region/data residency, provider retention/training/abuse-monitoring/logging terms, network policy, allowlist and rollout owner. Keep `COPILOT_ENABLED=0` and `COPILOT_ENTRA_ENABLED=0`.
+2. Pass the isolated fake-data checks above and CI. Confirm restore/backup and the approved maintenance window before an update.
+3. Only after approval, merge PR #21 through the normal reviewed PR process. Expect the GitHub Pages edition to rebuild and republish automatically.
+4. During the approved window, run `Trigon-Update.bat` from the installed ERP application folder. It downloads the default-branch ZIP, stages and verifies it, replaces program files, preserves `.env` and data, keeps recent application backups, then starts and health-checks the ERP. Review its final success/rollback message.
+5. Immediately verify the installed `.env` still has `COPILOT_ENABLED=0` and `COPILOT_ENTRA_ENABLED=0`; check `/api/copilot/status` reports disabled and verify ordinary ERP login/core workflows.
+6. First test the mock provider in an isolated non-production copy with `NODE_ENV=test`, fake records, and one fake ERP user ID. Never run the test-only mock in production; complete the manual UI checklist above.
+7. After Trigon approves region and data-handling choices, configure the selected Azure provider in non-production with synthetic records and one approved test ERP user ID. Verify configuration, safe status/audit, authorization and rollback before any production AI connection.
+8. For a separately approved production pilot, configure the approved Azure provider and secret through the authorized secret mechanism; set `COPILOT_ALLOWED_ROLES=` and `COPILOT_ALLOWED_USERS=` to exactly one approved ERP user ID; keep `COPILOT_ENTRA_ENABLED=0`; then set `COPILOT_ENABLED=1` and restart using the approved procedure. Monitor safe status/audit only; expand access only with separate approval.
+9. **Rollback:** set `COPILOT_ENABLED=0`, keep `COPILOT_ENTRA_ENABLED=0`, disable/remove provider credentials in the approved secret store if required, restart using the approved procedure, and verify the panel is hidden, status is disabled, and ERP workflows still work. For a code regression after a successful update, use a separately reviewed revert and approved update procedure; updater rollback is automatic only when its update transaction fails.
