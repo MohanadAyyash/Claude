@@ -70,8 +70,10 @@ PAGES.zoho = async () => {
       <p class="muted">${r.offline ? tr('غير مرتبط بـZoho: استُخدمت قيم تجريبية بدل الحسابات والضرائب.', 'Not connected to Zoho: stand-ins were used for accounts and taxes.') : tr('قُرئت البيانات من Zoho فعلاً، ولم يُكتب فيه شيء.', 'Data was read from Zoho; nothing was written.')}
       ${tr('سيُنشأ', 'Would create')} ${r.would_send} · ${tr('سيُحدّث', 'update')} ${r.would_update} · ${tr('أخطاء', 'errors')} ${r.failed}</p>
       ${r.errors.length ? `<ul class="err">${r.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
+      ${r.preflight ? zohoPreflight(r.preflight) : ''}
+      <h3>${tr('العمليات التي كانت ستُرسل', 'Operations that would be sent')}</h3>
       <div class="tw"><table><thead><tr><th>${tr('العملية', 'Operation')}</th><th>${tr('النوع', 'Type')}</th><th>${tr('المرجع', 'Reference')}</th><th class="n">${tr('المبلغ', 'Amount')}</th></tr></thead><tbody>
-      ${r.ops.map(o => { const base = o.path.replace(/\/(:id|DRY-\d+).*$/, ''); return `<tr><td>${o.method === 'POST' && !/status/.test(o.path) ? tr('إنشاء', 'Create') : o.method === 'PUT' ? tr('تحديث', 'Update') : tr('تغيير حالة', 'Status')}</td><td>${tr(...(OPN[base] || [base, base]))}</td><td>${esc(String(o.what || ''))}</td><td class="n">${o.amount === '' ? '' : money(o.amount)}</td></tr>`; }).join('') || `<tr><td colspan="4" class="muted">${tr('لا شيء للإرسال', 'Nothing to send')}</td></tr>`}</tbody></table></div></div>`;
+      ${r.ops.map(o => { const base = o.path.replace(/\/(:id|DRY-\d+).*$/, ''); return `<tr><td>${o.method === 'DELETE' ? tr('حذف', 'Delete') : o.method === 'POST' && !/status/.test(o.path) ? tr('إنشاء', 'Create') : o.method === 'PUT' ? tr('تحديث', 'Update') : tr('تغيير حالة', 'Status')}</td><td>${tr(...(OPN[base] || [base, base]))}</td><td>${esc(String(o.what || ''))}</td><td class="n">${o.amount === '' ? '' : money(o.amount)}</td></tr>`; }).join('') || `<tr><td colspan="4" class="muted">${tr('لا شيء للإرسال', 'Nothing to send')}</td></tr>`}</tbody></table></div></div>`;
   });
   if ($('#retry')) $('#retry').onclick = guard(async () => { await api('POST', 'zoho/retry'); toast(tr('ستُعاد محاولة الأخطاء في الإرسال القادم', 'Failed records will be retried on the next send')); render(); });
   if (live && connected) zohoMapping(admin);
@@ -119,3 +121,51 @@ async function zohoMapping(admin) {
   card.querySelectorAll('[data-acc]').forEach(x => x.onchange = put('account', x.dataset.acc, x));
   card.querySelectorAll('[data-proj]').forEach(x => x.onchange = put('project', x.dataset.proj, x));
 }
+
+// the preflight report of a dry run (read-only): organisation, what is already linked / synced, the plan per kind, conflicts and
+// possible duplicates, and how every Trigon account the sync uses resolves in Zoho
+function zohoPreflight(pf) {
+  const KIND = { contact: ['جهات الاتصال', 'Contacts'], invoice: ['الفواتير والإشعارات الدائنة', 'Invoices & credit notes'], bill: ['فواتير الموردين والمصروفات', 'Bills & expenses'], payment: ['المقبوضات والمدفوعات', 'Receipts & payments'],
+    jv_payroll: ['قيود الرواتب', 'Payroll journals'], jv_paypaid: ['قيود صرف الرواتب', 'Salaries paid journals'], jv_eos: ['قيود مخصص نهاية الخدمة', 'End-of-service provision journals'], jv_eos_set: ['قيود تسوية نهاية الخدمة', 'End-of-service settlement journals'],
+    jv_retention: ['قيود المحتجزات', 'Retention journals'], jv_ret_release: ['قيود الإفراج عن المحتجزات', 'Retention release journals'], jv_advance: ['قيود السلف', 'Salary advance journals'] };
+  const ACT = { create: ['إنشاء', 'Create'], update: ['تحديث', 'Update'], unchanged: ['موجود ولم يتغير', 'Already synced, unchanged'], link: ['موجود في Zoho — سيُربط', 'Exists in Zoho — would be linked'], conflict: ['تعارض', 'Conflict'], remove: ['حذف من Zoho', 'Remove from Zoho'], void: ['إلغاء في Zoho', 'Void in Zoho'], skip: ['متروك', 'Skipped'], error: ['خطأ', 'Error'] };
+  const ORDER = ['create', 'update', 'unchanged', 'link', 'conflict', 'remove', 'void', 'skip', 'error'];
+  const k = x => tr(...(KIND[x] || [x, x])), act = x => tr(...(ACT[x] || [x, x]));
+  const HOW = [[/^mapped/, 'مربوط في بطاقة الربط', 'Mapped'], [/^automatic \(first Zoho (bank|cash) account\)/, 'تلقائي (أول حساب بنك / نقدية في Zoho)', null], [/^automatic \(name contains/, 'تلقائي (اسم الحساب يحتوي الفئة)', null], [/^automatic/, 'تلقائي (حساب Zoho الافتراضي من هذا النوع)', null],
+    [/^fallback/, 'بديل: Cost of Goods Sold', null], [/^missing/, 'غير مربوط — اربطه قبل الإرسال', null], [/^Zoho tax/, 'ضريبة في Zoho', null], [/^Zoho default/, 'الافتراضي في Zoho (حساب المبيعات للبند)', null]];
+  const how = h => { const m = HOW.find(([re]) => re.test(h)); return m ? tr(m[1], m[2] || h) : h; };
+  const o = pf.organization || {};
+  const rows = Object.entries(pf.plan || {});
+  const ST = { mapped: ['مربوط', 'Mapped'], automatic: ['تلقائي (الحساب الوحيد من نوعه)', 'Automatic (the only one of its type)'], ambiguous: ['غير محدد — أكثر من حساب من نفس النوع', 'Ambiguous — several of that type'],
+    missing: ['غير مربوط', 'Not mapped'], type_mismatch: ['نوع الحساب لا يطابق', 'Type mismatch'], not_found: ['غير موجود في Zoho', 'Not found in Zoho'] };
+  const st = x => tr(...(ST[x] || [x, x])), zc = z => z ? `${esc(z.name)} <small class="muted">${esc(z.id)} · ${esc(z.type)}${z.code ? ' · ' + esc(z.code) : ''}${z.parent ? ' · ' + esc(z.parent) : ''}</small>` : '—';
+  const verdictBox = pf.verdict ? `<div class="card" style="border:2px solid ${pf.verdict === 'READY' ? '#2a7' : pf.verdict === 'BLOCKED' ? '#c33' : '#d90'}"><b>${tr('النتيجة', 'Verdict')}: ${esc(pf.verdict)}</b>
+    ${pf.blockers.length ? `<p class="err">${tr('يمنع الإرسال', 'Blocking')}:</p><ul>${pf.blockers.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
+    ${pf.to_configure.length ? `<p>${tr('يجب إعداده في Zoho قبل تفعيل الأنواع الجديدة', 'To configure in Zoho before the new types can be enabled')}:</p><ol>${pf.to_configure.map(b => `<li>${esc(b)}</li>`).join('')}</ol>` : ''}</div>
+    <h3>${tr('الحسابات المطلوبة للمزامنة المقترحة (تُطابق بالنوع وبالربط، لا بالاسم)', 'Accounts the proposed sync needs (matched by type and mapping, never by name)')}</h3>
+    <div class="tw"><table><thead><tr><th>${tr('الحساب', 'Account')}</th><th>${tr('الاسم', 'Name')}</th><th>${tr('مطلوب لـ', 'Needed by')}</th><th>${tr('النوع المتوقع', 'Expected type')}</th><th>${tr('الحالة', 'Status')}</th><th>${tr('حساب Zoho', 'Zoho account')}</th><th>${tr('ملاحظة', 'Note')}</th></tr></thead><tbody>
+      ${pf.required_accounts.map(a => `<tr${['type_mismatch', 'not_found'].includes(a.status) ? ' class="err"' : ''}><td>${esc(a.code)}</td><td>${esc(a.label)}</td><td>${esc(a.needed)}</td><td>${esc(a.expected)}</td><td><b>${st(a.status)}</b></td><td>${zc(a.zoho)}</td><td class="muted">${esc(a.note || '')}</td></tr>`).join('')}</tbody></table></div>
+    ${pf.partner_accounts.length ? `<h3>${tr('حسابات الشركاء (الهيكل المقترح — لم يُنشأ)', 'Partner accounts (proposed hierarchy — not created)')}</h3><div class="tw"><table><thead><tr><th>${tr('الشريك', 'Partner')}</th><th>${tr('الحساب', 'Account')}</th><th>${tr('الحساب المقترح', 'Proposed account')}</th><th>${tr('تحت', 'Under')}</th><th>${tr('النوع', 'Type')}</th><th>${tr('الحالة', 'Status')}</th><th>${tr('حساب Zoho', 'Zoho account')}</th></tr></thead><tbody>
+      ${pf.partner_accounts.flatMap(p => p.accounts.map(a => `<tr><td>${esc(p.partner)}</td><td>${esc(a.code)}</td><td>${esc(a.proposed)}</td><td>${esc(a.parent)}</td><td>${esc(a.expected)}</td><td><b>${st(a.status)}</b></td><td>${zc(a.zoho)}</td></tr>`)).join('')}</tbody></table></div>` : ''}` : '';
+  return `<h3>${tr('فحص ما قبل الإرسال (قراءة فقط)', 'Preflight (read-only)')}</h3>${verdictBox}
+    <p>${tr('المؤسسة', 'Organisation')}: <b>${esc(o.name || '—')}</b> (${esc(o.id || '—')})${o.currency ? ' · ' + esc(o.currency) : ''}${o.error ? ` <span class="err">${esc(o.error)}</span>` : ''}
+      · ${tr('مركز البيانات', 'Data centre')}: <b>${esc(pf.data_centre || '')}</b>${pf.api_host ? ' · ' + esc(pf.api_host) : ''}
+      · ${tr('الفترة', 'Period')}: ${esc(pf.period.from || '…')} → ${esc(pf.period.to || '')}</p>
+    <p class="muted">${tr('لم يُكتب أي شيء في Zoho ولا في سجل الإرسال: أي طلب غير القراءة يُرفض قبل إرساله.', 'Nothing was written to Zoho or to the send log: any request other than a read is refused before it is sent.')}</p>
+    <div class="tw"><table><thead><tr><th>${tr('النوع', 'Type')}</th>${ORDER.map(a => `<th class="n">${act(a)}</th>`).join('')}</tr></thead><tbody>
+      ${rows.map(([kind, c]) => `<tr><td>${k(kind)}</td>${ORDER.map(a => `<td class="n">${c[a] || ''}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${ORDER.length + 1}" class="muted">—</td></tr>`}</tbody></table></div>
+    ${pf.conflicts.length ? `<h3 class="err">${tr('تعارضات وتكرارات محتملة', 'Conflicts and possible duplicates')} (${pf.conflicts.length})</h3>
+      <ul>${pf.conflicts.map(i => `<li><b>${esc(i.ref)}</b> — ${act(i.action)}: ${esc(i.why)}</li>`).join('')}</ul>` : `<p>${tr('لا تعارضات ولا تكرارات محتملة.', 'No conflicts or possible duplicates.')}</p>`}
+    ${pf.missing_accounts.length ? `<h3 class="err">${tr('حسابات غير مربوطة', 'Accounts not mapped')} (${pf.missing_accounts.length})</h3>
+      <p>${pf.missing_accounts.map(a => `<b>${esc(a.code)}</b> ${esc(a.label)}`).join(' · ')}</p>` : ''}
+    <h3>${tr('حسابات تريجون المستخدمة في الإرسال وما يقابلها في Zoho', 'Trigon accounts used by the sync and their Zoho account')}</h3>
+    <div class="tw"><table><thead><tr><th>${tr('الحساب', 'Account')}</th><th>${tr('الاسم', 'Name')}</th><th>${tr('حساب Zoho', 'Zoho account')}</th><th>${tr('كيف', 'How')}</th></tr></thead><tbody>
+      ${pf.accounts.map(a => `<tr${a.how.startsWith('missing') ? ' class="err"' : ''}><td>${esc(a.code)}</td><td>${esc(a.label)}</td><td>${esc(a.zoho_name || '')}</td><td>${esc(how(a.how))}</td></tr>`).join('')}</tbody></table></div>
+    <details><summary>${tr('ما أُرسل سابقاً (سجل الإرسال)', 'Already sent (send log)')}</summary><div class="tw"><table><tbody>
+      ${pf.synced.map(x => `<tr><td>${k(x.kind)}</td><td>${esc(x.status)}</td><td class="n">${x.n}</td></tr>`).join('') || `<tr><td class="muted">${tr('لا شيء بعد', 'Nothing yet')}</td></tr>`}</tbody></table></div></details>
+    <details><summary>${tr('الربط المحفوظ', 'Saved mappings')} (${pf.mappings.length})</summary><div class="tw"><table><tbody>
+      ${pf.mappings.map(m => `<tr><td>${esc(m.kind)}</td><td>${esc(m.local_key)}</td><td>${esc(m.label || m.zoho_id)}</td></tr>`).join('')}</tbody></table></div></details>
+    <details><summary>${tr('كل السجلات', 'Every record')} (${pf.items.length})</summary><div class="tw"><table><tbody>
+      ${pf.items.map(i => `<tr><td>${k(i.kind)}</td><td>${esc(i.ref)}</td><td>${act(i.action)}</td><td class="muted">${esc(i.why)}</td></tr>`).join('')}</tbody></table></div></details>`;
+}
+
