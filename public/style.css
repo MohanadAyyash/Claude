@@ -153,3 +153,51 @@ input:focus,select:focus,textarea:focus{outline:2px solid rgba(31,58,95,.18);bor
 .mk{display:inline-block;width:10px;height:3px;vertical-align:middle;margin-inline-end:6px;background:var(--mute)}.mk.ok{background:#2E6B4E}.mk.warn{background:#8C6420}.mk.bad{background:#A33B32}
 a{color:var(--brand);text-decoration-color:rgba(31,58,95,.35);text-underline-offset:2px}
 input[type=file]::file-selector-button{font:inherit;color:var(--brand);background:var(--card);border:1px solid var(--line);border-radius:4px;padding:5px 10px;margin-inline-end:8px;cursor:pointer}
+
+/* ---- design polish: refinement layer (visual only) ---- */
+:root{--r:6px;--sh:0 1px 2px rgba(31,58,95,.05),0 2px 8px rgba(31,58,95,.05);--ring:0 0 0 3px rgba(70,110,160,.22)}
+html{-webkit-text-size-adjust:100%}
+body{line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:rgba(70,110,160,.22)}
+:focus-visible{outline:2px solid #466EA0;outline-offset:2px}
+.side a,.side .gh{transition:background .15s,opacity .15s}
+.side a:focus-visible,.side .gh:focus-visible{outline-offset:-2px}
+.side a{border-radius:0}
+.main{padding:28px 32px;max-width:1500px}
+h1{font-size:24px;font-weight:700;letter-spacing:-.01em;margin-bottom:20px}
+h1::after{content:"";display:block;width:36px;height:3px;background:var(--brand);margin-top:8px}
+h2{font-weight:600;letter-spacing:-.005em}
+.card,.kpi,.tw{border-radius:var(--r);box-shadow:var(--sh)}
+.card{padding:20px}
+.kpi{padding:16px;transition:box-shadow .15s,border-color .15s}
+.kpi:hover{border-color:#bfb9a9}
+.kpi .l{letter-spacing:.01em}
+.kpi .v{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.btn,.btn.sec{border-radius:var(--r);transition:background .15s,border-color .15s,box-shadow .15s,transform .05s;font-weight:500}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible{box-shadow:var(--ring);outline:none}
+.btn.sec:hover{border-color:#bfb9a9}
+.btn[disabled],.btn:disabled{opacity:.5;cursor:not-allowed}
+input,select,textarea{border-radius:var(--r);transition:border-color .15s,box-shadow .15s}
+input:hover,select:hover,textarea:hover{border-color:#bfb9a9}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#466EA0;box-shadow:var(--ring)}
+input::placeholder,textarea::placeholder{color:#aaa595}
+label{font-weight:500;letter-spacing:.01em}
+th{padding-block:10px;letter-spacing:.01em}
+tbody tr{transition:background .12s}
+tr.click:hover td{background:#EFEDE7}
+tr.click:focus-visible{outline-offset:-2px}
+.tw{scrollbar-width:thin}
+.side{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.side .items a{border-radius:0}
+.login{border-radius:var(--r);box-shadow:0 2px 6px rgba(31,58,95,.06),0 12px 32px rgba(31,58,95,.08)}
+.login h1::after{margin-inline:auto}
+[dir=rtl] body,[dir=rtl] .side{letter-spacing:0}
+[dir=rtl] h1,[dir=rtl] h2,[dir=rtl] th,[dir=rtl] label,[dir=rtl] .kpi .l{letter-spacing:0}
+[dir=rtl] .side .gotob kbd{margin-inline-start:auto}
+@media (max-width:800px){
+  .main{padding:18px 12px}h1{font-size:21px}.card{padding:14px}
+  .btn{padding:10px 14px}.btn.sm{padding:6px 12px}
+  .side a{padding-block:10px}.side .gh{padding-block:12px}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
