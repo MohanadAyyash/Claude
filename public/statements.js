@@ -21,7 +21,7 @@ async function statementPage(id) {
   const s = await api('GET', `statement/${id}?to=${to}${from ? '&from=' + from : ''}`), qs = `to=${to}${from ? '&from=' + from : ''}`;
   main(`<div class="bar"><button class="btn sec" onclick="go('aging')">←</button><h1 style="margin:0">${tr('كشف حساب', 'Statement of account')} — ${esc(s.party.name)}</h1><span class="sp"></span>
     <a class="btn sec" target="_blank" href="/api/doc/statement/${id}?${qs}&print=1">${tr('طباعة', 'Print')}</a><a class="btn sec" target="_blank" href="/api/doc/statement/${id}/pdf?${qs}">PDF</a>
-    ${['admin', 'accountant'].includes(ME.role) ? `<button class="btn" id="mail">✉ ${tr('إرسال بالبريد', 'Email')}</button>` : ''}</div>
+    ${['admin', 'accountant'].includes(ME.role) ? `<button class="btn" id="mail">${ico('mail')} ${tr('إرسال بالبريد', 'Email')}</button>` : ''}</div>
   <div class="bar"><label class="muted">${tr('من', 'From')}</label><input type="date" id="sf" value="${esc(from)}" style="width:auto"><label class="muted">${tr('إلى', 'To')}</label><input type="date" id="st" value="${esc(to)}" style="width:auto"></div>
   <div class="tw"><table><thead><tr><th>${tr('التاريخ', 'Date')}</th><th>${tr('المرجع', 'Ref')}</th><th>${tr('البيان', 'Description')}</th><th class="n">${tr('مدين', 'Debit')}</th><th class="n">${tr('دائن', 'Credit')}</th><th class="n">${tr('الرصيد', 'Balance')}</th></tr></thead><tbody>
   ${from ? `<tr><td>${esc(from)}</td><td></td><td>${tr('رصيد افتتاحي', 'Opening balance')}</td><td></td><td></td><td class="n">${money(s.opening)}</td></tr>` : ''}

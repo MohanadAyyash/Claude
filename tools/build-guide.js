@@ -20,7 +20,7 @@ function inline(s) {
 }
 
 function render(md, L) {
-  const lines = md.replace(/<!--[\s\S]*?-->/g, '').replace(/<\/?div[^>]*>/g, '').split('\n');
+  const lines = md.replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?-->/g, '').replace(/<\/?div[^>]*>/g, '').split('\n');
   const out = []; let i = 0, para = [];
   const flush = () => { if (para.length) { out.push(`<p>${inline(para.join(' '))}</p>`); para = []; } };
   while (i < lines.length) {

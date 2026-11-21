@@ -21,7 +21,7 @@ PAGES.portal = async () => {
   const card = document.createElement('div'); card.className = 'card'; card.style.textAlign = 'center';
   card.innerHTML = `<h2>${tr('الحضور', 'Attendance')}${st.site ? ` — ${esc(st.site.name)}` : ''}</h2>
     <p class="muted">${last ? `${last.kind === 'in' ? tr('آخر دخول', 'Last in') : tr('آخر خروج', 'Last out')} ${esc(last.at.slice(11, 16))}${last.inside === 0 ? ` · <span class="neg">${tr('خارج الموقع', 'outside the site')}</span>` : ''}` : tr('لم تسجّل حضوراً اليوم', 'Not clocked in today')}</p>
-    <button class="btn" id="clk" style="font-size:20px;padding:16px 28px;width:100%;max-width:340px">${st.clocked_in ? '⏹ ' + tr('تسجيل الانصراف', 'Clock out') : '▶ ' + tr('تسجيل الحضور', 'Clock in')}</button>
+    <button class="btn" id="clk" style="font-size:20px;padding:16px 28px;width:100%;max-width:340px">${st.clocked_in ? ico('stop') + ' ' + tr('تسجيل الانصراف', 'Clock out') : ico('play') + ' ' + tr('تسجيل الحضور', 'Clock in')}</button>
     <p class="muted" style="font-size:12px">${tr('يُسجَّل الوقت من الخادم ويُرفق موقعك الحالي.', 'The time comes from the server and your current location is attached.')}${st.site && !st.site.located ? ' ' + tr('(موقع المشروع غير محدد بعد)', '(project location not set yet)') : ''}</p>`;
   $('#main .bar').after(card);
   $('#clk').onclick = guard(async () => {
@@ -36,7 +36,7 @@ PAGES.portal = async () => {
 
 // ---- approvals ----
 const approvalRows = q => q.map(it => { const r = it.record; return `<div style="padding:10px 0;border-bottom:1px solid #e6e2d8"><b>${esc(it.employee)}</b> — ${it.kind === 'leave' ? `${lt(r.type)} ${esc(r.start_date)} → ${esc(r.end_date)} (${r.days} ${tr('يوم', 'days')})` : `${tr(...REQT[r.type])}${r.amount ? ' — ' + money(r.amount) : ''}`}
-  <div class="muted" style="font-size:12px">${tr('المستوى', 'Level')} ${it.level}/${it.levels}${it.balance ? ` · ${tr('رصيد الإجازة', 'leave balance')} ${it.balance.balance}` : ''}${r.reason || r.details ? ' · ' + esc(r.reason || r.details) : ''}${it.history.map(h => ` · ✔ ${esc(h.by)}${h.note ? ': ' + esc(h.note) : ''}`).join('')}</div>
+  <div class="muted" style="font-size:12px">${tr('المستوى', 'Level')} ${it.level}/${it.levels}${it.balance ? ` · ${tr('رصيد الإجازة', 'leave balance')} ${it.balance.balance}` : ''}${r.reason || r.details ? ' · ' + esc(r.reason || r.details) : ''}${it.history.map(h => ` · ${MK.ok}${esc(h.by)}${h.note ? ': ' + esc(h.note) : ''}`).join('')}</div>
   <div class="bar" style="margin-top:6px"><button class="btn sm" data-ap="${it.step_id}">${tr('موافقة', 'Approve')}</button><button class="btn sec sm" data-rj="${it.step_id}">${tr('رفض', 'Reject')}</button></div></div>`; }).join('');
 const wireApprovals = root => {
   root.querySelectorAll('[data-ap]').forEach(b => b.onclick = guard(async () => {
@@ -61,7 +61,7 @@ PAGES.attendance = async () => {
   const byEmp = Object.fromEntries(a.rows.map(r => [r.employee_id, r]));
   const evOf = id => ev.filter(x => x.employee_id === id);
   const restDay = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][new Date(date + 'T00:00:00Z').getUTCDay()] === (a.rest_day || 'fri');   // worked rest day: pay +50% or a substitute day
-  main(`<div class="bar"><h1>${tr('الحضور والعمل الإضافي', 'Attendance & overtime')}</h1><span class="sp"></span><button class="btn" id="crew">📍 ${tr('تسجيل حضور الفريق', 'Clock in my crew')}</button><input type="date" id="d" value="${date}" style="width:auto"></div>
+  main(`<div class="bar"><h1>${tr('الحضور والعمل الإضافي', 'Attendance & overtime')}</h1><span class="sp"></span><button class="btn" id="crew">${ico('pin')} ${tr('تسجيل حضور الفريق', 'Clock in my crew')}</button><input type="date" id="d" value="${date}" style="width:auto"></div>
   <p class="muted">${tr('أوقات الدخول والخروج تأتي من الجوال. الساعات الإضافية تُحسب حسب القانون: بعد ساعات العمل اليومية وساعة الراحة، +٢٥٪ نهاراً و+٥٠٪ ليلاً (١٠م–٤ص) ويوم الراحة. أي تعديل يدوي هنا يبقى ولا يُستبدل بالتسجيل من الجوال.', 'In/out times come from the phone. Overtime follows the law: after the daily hours and the 1-hour break, +25% by day, +50% at night (10pm–4am) and on the rest day. A manual change here is kept; phone clocking does not overwrite it.')}</p>
   <div class="tw"><table><thead><tr><th>${tr('الموظف', 'Employee')}</th><th>${tr('دخول / خروج', 'In / out')}</th><th>${tr('الحالة', 'Status')}</th><th class="n">${tr('إضافي +٢٥٪', 'OT +25%')}</th><th class="n">${tr('إضافي +٥٠٪', 'OT +50%')}</th><th>${tr('المشروع', 'Project')}</th><th>${tr('ملاحظة', 'Note')}</th></tr></thead><tbody>
   ${a.roster.map(e => { const r = byEmp[e.id] || { status: 'present', ot_normal_hours: 0, ot_special_hours: 0, project_id: e.project_id, note: '' }, es = evOf(e.id);
@@ -73,7 +73,7 @@ PAGES.attendance = async () => {
   $('#d').onchange = e => { sessionStorage.ad = e.target.value; render(); };
   document.querySelectorAll('tr[data-e]').forEach(tr_ => tr_.querySelectorAll('[data-f]').forEach(x => x.onchange = guard(async () => {
     const body = { employee_id: +tr_.dataset.e, date }; tr_.querySelectorAll('[data-f]').forEach(y => body[y.dataset.f] = y.value);
-    await api('PUT', 'attendance', body); tr_.style.background = '#eefaf1'; setTimeout(() => (tr_.style.background = ''), 600);
+    await api('PUT', 'attendance', body); tr_.style.background = '#E9E7E1'; setTimeout(() => (tr_.style.background = ''), 600);
   })));
   $('#crew').onclick = () => {
     const hr = ['admin', 'hr'].includes(ME.role);
@@ -99,7 +99,7 @@ PAGES.hrdash = async () => {
   const [iss, fl] = await Promise.all([api('GET', 'hr/compliance?month=' + month), api('GET', 'hr/flows')]);
   const card = document.createElement('div'); card.className = 'card';
   card.innerHTML = `<div class="bar"><h2>${tr('الالتزام بقانون العمل', 'Labour-law compliance')}</h2><span class="sp"></span><input type="month" id="hrm" value="${month}" style="width:auto"></div>
-    ${iss.length ? `<div class="tw"><table><thead><tr><th>${tr('الموظف', 'Employee')}</th><th>${tr('التاريخ', 'Date')}</th><th>${tr('الملاحظة', 'Issue')}</th><th>${tr('المرجع', 'Reference')}</th></tr></thead><tbody>${iss.map(i => `<tr><td>${esc(i.employee)}</td><td>${esc(i.date)}</td><td>${tr(...(RULE[i.rule] || [i.rule, i.rule]))}<div class="muted" style="font-size:12px">${esc(i.detail)}</div></td><td class="muted">${esc(i.law)}</td></tr>`).join('')}</tbody></table></div>` : `<p class="pos">✔ ${tr('لا توجد مخالفات هذا الشهر', 'No issues this month')}</p>`}`;
+    ${iss.length ? `<div class="tw"><table><thead><tr><th>${tr('الموظف', 'Employee')}</th><th>${tr('التاريخ', 'Date')}</th><th>${tr('الملاحظة', 'Issue')}</th><th>${tr('المرجع', 'Reference')}</th></tr></thead><tbody>${iss.map(i => `<tr><td>${esc(i.employee)}</td><td>${esc(i.date)}</td><td>${tr(...(RULE[i.rule] || [i.rule, i.rule]))}<div class="muted" style="font-size:12px">${esc(i.detail)}</div></td><td class="muted">${esc(i.law)}</td></tr>`).join('')}</tbody></table></div>` : `<p class="pos">${MK.ok}${tr('لا توجد مخالفات هذا الشهر', 'No issues this month')}</p>`}`;
   $('#main').append(card);
   $('#hrm').onchange = e => { sessionStorage.hrm = e.target.value; render(); };
   const opts = ['line_manager', 'role:hr', 'role:admin', 'role:manager', 'role:accountant'];
@@ -147,7 +147,7 @@ window.employeeExtras = async (m, row) => {
       <h3 style="margin-top:12px">${tr('المغادرة والتسوية النهائية', 'Leaving & final settlement')}</h3>
       ${ob && ob.status === 'completed' ? `<p class="muted">${tr('اكتملت المغادرة', 'Offboarding completed')} ${esc(ob.completed)}</p>` : ''}
       ${st ? `<table style="max-width:420px">${line(tr('راتب حتى آخر يوم', 'Salary to the last day'), st.salary)}${line(tr(`بدل إجازات (${st.leave_days} يوم)`, `Leave encashment (${st.leave_days} d)`), st.leave_encashment)}${line(tr(`مكافأة نهاية الخدمة (${st.service_years} سنة${st.unpaid_days ? ` بعد خصم ${st.unpaid_days} يوم غياب بدون أجر` : ''})`, `Gratuity (${st.service_years} y${st.unpaid_days ? ` after ${st.unpaid_days} unpaid days` : ''})`), st.gratuity)}${line(tr(`فترة الإشعار (${st.notice_days} يوم)`, `Notice (${st.notice_days} d)`), st.notice)}${st.advance ? line(tr('رصيد السلف المتبقي', 'Outstanding advance'), st.advance) : ''}${line(tr('خصومات', 'Deductions'), st.deductions)}<tr><td><b>${tr('الإجمالي', 'Total')}</b></td><td class="n"><b>${money(st.total)}</b></td></tr></table>
-        ${st.warnings.map(w => `<p class="neg" style="font-size:13px">⚠ ${esc(w)}</p>`).join('')}${list(d.offboarding)}` : ''}
+        ${st.warnings.map(w => `<p class="neg" style="font-size:13px">${MK.warn}${esc(w)}</p>`).join('')}${list(d.offboarding)}` : ''}
       ${!ob || ob.status !== 'completed' ? `<div class="f2"><div class="f"><label>${tr('آخر يوم عمل', 'Last working day')}</label><input type="date" id="ob-last" value="${esc(ob ? ob.last_day : '')}"></div>
         <div class="f"><label>${tr('السبب', 'Reason')}</label><select id="ob-reason">${[['resignation', tr('استقالة', 'Resignation')], ['termination', tr('إنهاء من الشركة', 'Termination by the company')], ['end_of_contract', tr('انتهاء العقد', 'End of contract')], ['other', tr('أخرى', 'Other')]].map(([k, l]) => `<option value="${k}" ${ob && ob.reason === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <div class="f"><label>${tr('تاريخ الإشعار', 'Notice given on')}</label><input type="date" id="ob-notice" value="${esc(ob ? ob.notice_date || '' : '')}"></div><div class="f"><label>${tr('خصومات أخرى (عهد…) — السلف تُخصم تلقائياً', 'Other deductions (items…) — advances are deducted automatically')}</label><input type="number" id="ob-ded" value="${ob ? ob.other_deductions : 0}"></div></div>
@@ -170,7 +170,7 @@ window.employeeExtras = async (m, row) => {
 // ---- project form: "use my current location" for the site area ----
 new MutationObserver(() => {
   const lat = $('#modal-root [name=site_lat]'); if (!lat || $('#geo-btn')) return;
-  const b = document.createElement('button'); b.type = 'button'; b.id = 'geo-btn'; b.className = 'btn sec sm'; b.textContent = '📍 ' + tr('استخدم موقعي الحالي (وأنا في الموقع)', 'Use my current location (while on site)');
+  const b = document.createElement('button'); b.type = 'button'; b.id = 'geo-btn'; b.className = 'btn sec sm'; b.innerHTML = ico('pin') + ' ' + tr('استخدم موقعي الحالي (وأنا في الموقع)', 'Use my current location (while on site)');
   b.onclick = guard(async () => { const p = await getPos(); if (p.lat == null) throw new Error(tr('تعذّر تحديد الموقع', 'Could not get the location')); lat.value = p.lat.toFixed(6); $('#modal-root [name=site_lng]').value = p.lng.toFixed(6); });
   lat.closest('.f').after(b);
 }).observe(document.getElementById('modal-root'), { childList: true, subtree: true });

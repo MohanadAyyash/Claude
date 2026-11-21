@@ -32,11 +32,11 @@ PAGES.zoho = async () => {
     <div class="f2"><div class="f"><label>${tr('مركز بيانات Zoho', 'Zoho data centre')}</label><select id="z-dc">${d.centres.map(v => `<option value="${v}"${c.dc === v ? ' selected' : ''}>${tr(...(ZOHO_DC[v] || [v, v]))}</option>`).join('')}</select></div>
     <div class="f"><label>Client ID</label><input id="z-id" dir="ltr" value="${esc(c.client_id || '')}"${/client_id/.test(c.env || '') ? ' disabled' : ''}></div>
     <div class="f"><label>Client Secret</label><input id="z-secret" type="password" dir="ltr" autocomplete="new-password"${/client_secret/.test(c.env || '') ? ' disabled' : ''} placeholder="${/client_secret/.test(c.env || '') ? tr('من ملف .env', 'from the .env file') : c.secret_set ? tr('محفوظ — اتركه فارغاً للإبقاء عليه', 'saved — leave empty to keep it') : ''}"></div></div>
-    ${c.env ? `<p class="ok">✔ ${tr('مفاتيح Zoho مقروءة من ملف .env على الخادم — لا تُعدّل من هنا ولا تظهر في المتصفح', 'Zoho keys are read from the .env file on the server — they cannot be changed here and never reach the browser')} (${esc(c.env)})</p>` : `<p class="muted">${tr('الأفضل: ضع ZOHO_CLIENT_ID و ZOHO_CLIENT_SECRET في ملف .env بجانب server.js ثم أعد تشغيل النظام.', 'Preferred: put ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET in the .env file next to server.js and restart the system.')}</p>`}
+    ${c.env ? `<p class="ok">${MK.ok}${tr('مفاتيح Zoho مقروءة من ملف .env على الخادم — لا تُعدّل من هنا ولا تظهر في المتصفح', 'Zoho keys are read from the .env file on the server — they cannot be changed here and never reach the browser')} (${esc(c.env)})</p>` : `<p class="muted">${tr('الأفضل: ضع ZOHO_CLIENT_ID و ZOHO_CLIENT_SECRET في ملف .env بجانب server.js ثم أعد تشغيل النظام.', 'Preferred: put ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET in the .env file next to server.js and restart the system.')}</p>`}
     <div class="bar"><button class="btn sec" id="z-save-client">${tr('حفظ', 'Save')}</button></div>
     <div class="f2" style="margin-top:12px"><div class="f"><label>${tr('كود الربط (Grant code)', 'Grant code')}</label><input id="z-code" dir="ltr" autocomplete="off" placeholder="1000.xxxx…"></div>
     <div class="f" style="align-self:end"><button class="btn" id="z-connect">${connected ? tr('إعادة الربط', 'Reconnect') : tr('ربط', 'Connect')}</button></div></div>
-    ${connected ? `<p class="ok">✔ ${tr('مرتبط', 'Connected')}${c.org_name ? ` — ${esc(c.org_name)}` : ''} <button class="btn sec sm" id="z-disc">${tr('فصل الربط', 'Disconnect')}</button></p>
+    ${connected ? `<p class="ok">${MK.ok}${tr('مرتبط', 'Connected')}${c.org_name ? ` — ${esc(c.org_name)}` : ''} <button class="btn sec sm" id="z-disc">${tr('فصل الربط', 'Disconnect')}</button></p>
       ${c.orgs.length > 1 || !c.org ? `<div class="f"><label>${tr('مؤسسة Zoho Books', 'Zoho Books organisation')}</label><select id="z-org"><option value="">—</option>${c.orgs.map(o => `<option value="${esc(o.id)}"${o.id === c.org ? ' selected' : ''}>${esc(o.name)} (${esc(o.id)})</option>`).join('')}</select></div>` : ''}` : ''}
     <div class="f2" style="margin-top:12px"><div class="f"><label>${tr('إرسال المعاملات المؤرخة من', 'Send transactions dated from')}</label><input id="z-start" type="date" value="${esc(c.start || today())}"></div><div class="f"><label>${tr('الأنواع الجديدة (العهد، المطالبات، الشركاء، الأصول، الرواتب حسب التاريخ) تُرسل من', 'New types (petty cash, claims, partners, assets, salaries by date) sent from')}</label><input id="z-start2" type="date" value="${esc(c.start_v2 || '')}"${admin ? '' : ' disabled'}><small class="muted">${tr('فارغ = لا تُرسل. ما قبل هذا التاريخ لا يُرسل أبداً (لا إعادة إرسال للقديم).', 'Empty = not sent. Nothing dated before it is ever sent (history is not resent).')}</small></div>
     <div class="f"><label>${tr('الإرسال التلقائي اليومي الساعة', 'Automatic daily send at hour')}</label><input id="z-hour" type="number" min="0" max="23" value="${esc(c.hour || '23')}"></div></div>
@@ -47,7 +47,7 @@ PAGES.zoho = async () => {
   : `<div class="card"><p>${tr('الإرسال المباشر إلى Zoho يعمل من نسخة الخادم فقط. في هذه النسخة استخدم ملفات الاستيراد أدناه.', 'Sending straight to Zoho works on the server edition only. In this edition use the import files below.')}</p></div>`}
 
   <div class="card"><h2>${tr('ملفات جاهزة للاستيراد في Zoho Books (بدون API)', 'Zoho Books import files (no API needed)')}</h2>
-    <p class="muted">${tr('في Zoho Books افتح القائمة المطلوبة ← ⋯ ← Import، وارفع الملف وطابق الأعمدة. ابدأ بالعملاء والموردين، ثم الفواتير، ثم الدفعات.', 'In Zoho Books open the list → ⋯ → Import, upload the file and match the columns. Start with customers and vendors, then invoices and bills, then payments.')}</p>
+    <p class="muted">${tr('في Zoho Books افتح القائمة المطلوبة ← … ← Import، وارفع الملف وطابق الأعمدة. ابدأ بالعملاء والموردين، ثم الفواتير، ثم الدفعات.', 'In Zoho Books open the list → … → Import, upload the file and match the columns. Start with customers and vendors, then invoices and bills, then payments.')}</p>
     <div class="f2"><div class="f"><label>${tr('من', 'From')}</label><input type="date" id="x-from" value="${esc(day)}"></div><div class="f"><label>${tr('إلى', 'To')}</label><input type="date" id="x-to" value="${esc(day)}"></div></div>
     <div class="bar" style="flex-wrap:wrap">${[['customers', 'العملاء', 'Customers'], ['vendors', 'الموردون', 'Vendors'], ['invoices', 'الفواتير', 'Invoices'], ['creditnotes', 'الإشعارات الدائنة', 'Credit notes'], ['bills', 'فواتير الموردين', 'Bills'], ['expenses', 'المصروفات', 'Expenses'], ['customer_payments', 'المقبوضات', 'Customer payments'], ['vendor_payments', 'المدفوعات', 'Vendor payments']].map(([kd, ar, en]) => `<a class="btn sec" data-x="${kd}" href="#">${tr(ar, en)} (CSV)</a>`).join('')}</div></div>
 
@@ -96,11 +96,11 @@ PAGES.zoho = async () => {
     $('#z-res').innerHTML = `<p class="muted">${tr('جارٍ الاتصال…', 'Connecting…')}</p>`;
     try {
       const r = await api('POST', 'zoho/test'), L = r.lookups;
-      $('#z-res').innerHTML = `<p class="ok">✔ ${tr('تم الاتصال بـ', 'Connected to')} ${esc(r.org)} (${esc(r.currency || '')})</p><ul class="muted">
+      $('#z-res').innerHTML = `<p class="ok">${MK.ok}${tr('تم الاتصال بـ', 'Connected to')} ${esc(r.org)} (${esc(r.currency || '')})</p><ul class="muted">
         <li>${tr('الضريبة', 'VAT')}: ${esc(L.tax || '—')}${L.zero ? ' · ' + esc(L.zero) : ''}${L.exempt ? ' · ' + esc(L.exempt) : ''}</li>
         <li>${tr('البنك / النقدية', 'Bank / cash')}: ${esc([L.bank, L.cash].filter(Boolean).join(' · ') || '—')}</li><li>${tr('حساب المصروفات الافتراضي', 'Default expense account')}: ${esc(L.expense || '—')}</li></ul>
         ${r.missing.length ? `<p class="err">${tr('ناقص في Zoho Books', 'Missing in Zoho Books')}: ${esc(r.missing.join(', '))} — ${tr('فعّل ضريبة القيمة المضافة للإمارات وأضف حساب البنك في Zoho Books', 'enable UAE VAT and add the bank account in Zoho Books')}</p>` : ''}`;
-    } catch (e) { $('#z-res').innerHTML = `<p class="err">✘ ${esc(e.message)}</p>`; }
+    } catch (e) { $('#z-res').innerHTML = `<p class="err">${MK.bad}${esc(e.message)}</p>`; }
   });
 };
 

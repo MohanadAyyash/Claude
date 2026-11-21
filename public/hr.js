@@ -17,7 +17,7 @@ PAGES.hrdash = async () => {
    ${k(tr('طلبات بانتظار القرار', 'Requests awaiting decision'), s.pending_requests, s.pending_requests ? 'warn' : '', 'hrrequests')}${k(tr('في إجازة اليوم', 'On leave today'), s.on_leave_today)}</div>
   <div class="f2"><div class="card"><h2>${tr('إجازات معلّقة', 'Pending leave')}</h2>${leaves.filter(l => l.status === 'pending').slice(0, 6).map(l => `<div>• ${esc(l.name)} — ${lt(l.type)} ${esc(l.start_date)} → ${esc(l.end_date)} (${l.days})</div>`).join('') || `<span class="muted">—</span>`}</div>
   <div class="card"><h2>${tr('طلبات معلّقة', 'Pending requests')}</h2>${reqs.filter(r => r.status === 'pending').slice(0, 6).map(r => `<div>• ${esc(r.name)} — ${tr(...REQT[r.type])}</div>`).join('') || `<span class="muted">—</span>`}</div></div>
-  <div class="card"><h2>${tr('مستندات تنتهي خلال ٦٠ يوماً', 'Documents expiring within 60 days')}</h2>${s.expiring.map(e => `<div>⚠ <b>${esc(e.name)}</b>: ${[['eid_expiry', tr('هوية', 'Emirates ID')], ['visa_expiry', tr('إقامة', 'Visa')], ['passport_expiry', tr('جواز', 'Passport')], ['card_expiry', tr('بطاقة عمل', 'Labour card')]].filter(([f]) => e[f]).map(([f, l]) => `${l} ${e[f]}`).join(' · ')}</div>`).join('') || `<span class="pos">✔ ${tr('لا شيء', 'None')}</span>`}</div>`);
+  <div class="card"><h2>${tr('مستندات تنتهي خلال ٦٠ يوماً', 'Documents expiring within 60 days')}</h2>${s.expiring.map(e => `<div>${MK.warn}<b>${esc(e.name)}</b>: ${[['eid_expiry', tr('هوية', 'Emirates ID')], ['visa_expiry', tr('إقامة', 'Visa')], ['passport_expiry', tr('جواز', 'Passport')], ['card_expiry', tr('بطاقة عمل', 'Labour card')]].filter(([f]) => e[f]).map(([f, l]) => `${l} ${e[f]}`).join(' · ')}</div>`).join('') || `<span class="pos">${MK.ok}${tr('لا شيء', 'None')}</span>`}</div>`);
 };
 
 // ---- leave ------------------------------------------------------------------------------------
@@ -113,7 +113,7 @@ PAGES.attendance = async () => {
   $('#d').onchange = e => { sessionStorage.ad = e.target.value; render(); };
   document.querySelectorAll('tr[data-e]').forEach(tr_ => tr_.querySelectorAll('[data-f]').forEach(x => x.onchange = guard(async () => {
     const body = { employee_id: +tr_.dataset.e, date }; tr_.querySelectorAll('[data-f]').forEach(y => body[y.dataset.f] = y.value);
-    await api('PUT', 'attendance', body); tr_.style.background = '#eefaf1'; setTimeout(() => (tr_.style.background = ''), 600);
+    await api('PUT', 'attendance', body); tr_.style.background = '#E9E7E1'; setTimeout(() => (tr_.style.background = ''), 600);
   })));
 };
 
