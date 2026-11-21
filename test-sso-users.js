@@ -259,7 +259,13 @@ const mailOf = oid => `user-${oid.slice(-2)}@example.test`;
         assert.equal(ok(await call('GET', 'status', undefined, `sid=${rs.sid}`, rbase)).user.username, 'proc');
         const chk = await call('POST', 'm365/check', {}, `sid=${rs.sid}`, rbase); assert.equal(chk.s, 502); assert.match(chk.j.error, /renewed/, 'the link\'s Graph access needs a reconnect (tokens are never in backups)');
         await refused('21: unlinked on the restored database too', await sso(OID.stranger, {}, rbase), /not linked/);
-      } finally { child.kill(); }
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          const closed = new Promise(resolve => child.once('close', resolve));
+          child.kill();
+          await closed;
+        }
+      }
       fs.rmSync(bdir, { recursive: true, force: true });
       console.log('✔ 20–21: no code / token / secret / key / verifier in responses, logs, audit, users list or backups; a restored backup keeps the identity links (Microsoft sign-in works) but no tokens');
 

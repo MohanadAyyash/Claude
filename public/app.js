@@ -3,6 +3,7 @@ let lang = localStorage.lang || 'ar';
 let S = {};            // company settings
 let ME = {};           // current user {username, role}
 let BR = new Set();    // brand assets that exist (logo, stamp, …)
+let COPILOT_AVAILABLE = false;
 let route = location.hash.slice(1) || 'dashboard';
 const tr = (ar, en) => (lang === 'ar' ? ar : en);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -53,12 +54,14 @@ async function boot() {
     $('#retry').onclick = boot; window.addEventListener('online', boot, { once: true }); return;
   }
   document.documentElement.lang = lang; document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
-  if (st.setup) return setupScreen(st.token_required);
-  if (!st.user) return loginScreen(st);
+  if (st.setup) { ME = {}; COPILOT_AVAILABLE = false; window.mountCopilotWidget?.(); return setupScreen(st.token_required); }
+  if (!st.user) { ME = {}; COPILOT_AVAILABLE = false; window.mountCopilotWidget?.(); return loginScreen(st); }
   ME = st.user; document.body.dataset.role = ME.role; route = location.hash.slice(1) || landing();
   if (!allowedNav().some(n => n[0] === route.split('/')[0])) route = landing();
-  const [s, br] = await Promise.all([api('GET', 'settings'), api('GET', 'brand').catch(() => [])]);   // in parallel: faster start on mobile data
-  S = s; BR = new Set(br.map(b => b.name));
+  const [s, br, copilot] = await Promise.all([
+    api('GET', 'settings'), api('GET', 'brand').catch(() => []), api('GET', 'copilot/status').catch(() => null),
+  ]);
+  S = s; BR = new Set(br.map(b => b.name)); COPILOT_AVAILABLE = !!copilot?.enabled;
   document.title = S.company_name || tr('نظام إدارة المقاولات', 'Contractor ERP');
   shell();
 }
@@ -106,7 +109,8 @@ const NAV = [   // [route, ar, en, roles]; '#' rows are group headings
   ['notifications', 'الإشعارات', 'Notifications', ALLROLES],
   ['settings', 'الإعدادات', 'Settings', ALLROLES],
 ];
-const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role) && (n[0] !== 'myaccount' || ME.employee_id));   // my account: only for a user linked to an employee
+const allowedNav = () => NAV.filter(n => n[0] !== '#' && (n[3] || []).includes(ME.role) &&
+  (n[0] !== 'myaccount' || ME.employee_id) && (n[0] !== 'copilot' || COPILOT_AVAILABLE));   // my account: only for a user linked to an employee
 const landing = () => ({ employee: 'portal', hr: 'hrdash', foreman: 'attendance', site_engineer: 'sitediary', qs: 'projects', procurement: 'po', storekeeper: 'stock' }[ME.role] || 'dashboard');
 function shell() {
   const ok = allowedNav(), okSet = new Set(ok.map(n => n[0]));
@@ -126,6 +130,7 @@ function shell() {
   $('#lang').onclick = () => { lang = lang === 'ar' ? 'en' : 'ar'; localStorage.lang = lang; boot(); };
   $('#out').onclick = async () => { await api('POST', 'logout'); boot(); };
   render();
+  window.mountCopilotWidget?.();
   if (window.onShell) onShell();                                          // mobile.js: bell, install button
 }
 const go = r => { location.hash = r; };
