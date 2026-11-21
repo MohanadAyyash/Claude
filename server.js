@@ -586,7 +586,11 @@ async function api(req, res, url) {
       if (body.mohre_id && !C.validEstablishment(body.mohre_id)) return send(res, 400, { error: 'MOHRE establishment ID must be 13 digits' });
       if (body.employer_routing && !C.validRouting(body.employer_routing)) return send(res, 400, { error: 'Routing code must be 9 digits' });
       if (body.employer_iban && !C.validIban(body.employer_iban)) return send(res, 400, { error: 'Invalid UAE IBAN' });
-      if (body.vat_effective_date && !/^\d{4}-\d\d-\d\d$/.test(String(body.vat_effective_date).trim())) return send(res, 400, { error: 'The VAT registration effective date must be YYYY-MM-DD' });
+      if (body.vat_effective_date) {
+        const date = String(body.vat_effective_date).trim(), parsed = new Date(`${date}T00:00:00Z`);
+        if (!/^\d{4}-\d\d-\d\d$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date)
+          return send(res, 400, { error: 'The VAT registration effective date must be a valid YYYY-MM-DD date' });
+      }
       for (const k of SETTING_KEYS) if (k in body) ins.run(k, String(body[k] ?? '').trim());
       if (body.smtp_pass) ins.run('smtp_pass', String(body.smtp_pass));                // password only changes when a new one is typed
       if (body.graph_secret) ins.run('graph_secret', String(body.graph_secret).trim());     // same for the Microsoft 365 client secret

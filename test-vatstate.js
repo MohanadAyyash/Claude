@@ -30,6 +30,7 @@ server.listen(0, async () => {
 
     // ---- registered from 1 December 2026 (TRN not known yet before that)
     no(await call('PUT', 'settings', { vat_effective_date: '01/12/2026' }), /YYYY-MM-DD/);
+    no(await call('PUT', 'settings', { vat_effective_date: '2026-02-30' }), /valid YYYY-MM-DD/);
     ok(await call('PUT', 'settings', { vat_registered: '1', vat_effective_date: '2026-12-01', trn: '' }));
     iv = await inv('2026-11-15'); assert.equal(iv.vat_pct, 0, 'before the effective date: 0% by default'); assert.equal(iv.vat, 0);
     const h = await title(iv); assert.ok(/>Invoice</.test(h) && !/Tax Invoice/.test(h), 'before the effective date: "Invoice"');
@@ -45,7 +46,8 @@ server.listen(0, async () => {
     assert.equal(tb()['1200'], 50, 'supplier VAT stays in 1200 (no posting change)');
     ok(await call('POST', 'invoices', { project_id: p, date: '2026-11-25', vat_pct: 5, items: [{ description: 'Works', qty: 1, rate: 100 }] }));
     const c = await chk(); assert.equal(c.status, 'warn');
-    assert.match(c.detail, /2 invoice\(s\) with VAT dated before the VAT registration/);   // 25 Nov, and the October invoice issued with VAT before the effective date was known assert.match(c.detail, /1 supplier bill\(s\) with VAT dated before the VAT registration: recorded as input VAT \(1200\), awaiting the tax adviser — not reclassified/);
+    assert.match(c.detail, /2 invoice\(s\) with VAT dated before the VAT registration/);   // 25 Nov, and the October invoice issued with VAT before the effective date was known
+    assert.match(c.detail, /1 supplier bill\(s\) with VAT dated before the VAT registration: recorded as input VAT \(1200\), awaiting the tax adviser — not reclassified/);
     assert.ok(c.items.includes(`bill #${b}`)); assert.doesNotMatch(c.detail, /\b50\b|1000/, 'no amounts in the check text');
     assert.equal(tb()['1200'], 50, 'still 1200 after the check');
     out.push('purchase VAT before registration: stays in 1200, flagged by the daily check, not reclassified');
