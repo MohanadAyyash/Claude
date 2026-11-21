@@ -470,6 +470,7 @@ Open the quotation, then:
 
 ### 6.3 Convert to a project
 When the client accepts, open the quotation and press **Convert to project**. The project is created and the quotation lines are copied into the project's **BOQ**.
+Provisional lines stay in the BOQ for site tracking, but their completion is not billed or included in payment applications or interim payment certificates. When the work is instructed, record it as an approved variation before claiming its value.
 
 ---
 
@@ -691,6 +692,8 @@ Menu: **Sales invoices**.
 3. The system creates an invoice for the newly completed work, deducts retention and advance recovery, and opens it.
 4. Check it and press **Save**.
 5. **Payment certificate** / **Certificate PDF** prints the interim payment certificate (IPC): per item contract qty, previous, this period, cumulative and %, then retention, advance recovery, net, VAT and amount due.
+
+Provisional items remain visible for progress tracking but are excluded from invoices, payment applications and IPCs. Completion alone does not authorize billing; record instructed work as an approved variation before claiming it.
 
 ### 8.2 Manual invoice
 1. **+ New** (or **+ Invoice** on the project page).

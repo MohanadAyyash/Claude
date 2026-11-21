@@ -29,6 +29,14 @@ module.exports = ctx => {
   const num = v => (v === null || v === undefined || v === '' ? 0 : round(+v || 0));
   const J = s => { try { return JSON.parse(s || '[]'); } catch { return []; } };
   const proj = id => db.prepare('SELECT * FROM projects WHERE id=?').get(id) || notFound();
+  function assertNoProvisionalClaims(app) {
+    const claimed = J(app.lines).some(l => {
+      const m = /^b(\d+)$/.exec(String(l.key));
+      if (!m || num(l.cum_qty) <= num(l.prev_qty) + 0.0001) return false;
+      return !!db.prepare('SELECT 1 FROM boq_items WHERE id=? AND project_id=? AND COALESCE(provisional,0)=1').get(+m[1], app.project_id);
+    });
+    if (claimed) bad('Provisional BOQ items cannot be claimed directly — record instructed work as an approved variation');
+  }
   const vatPct = () => { const st = getSettings(); return st.vat_registered === '0' ? 0 : (+st.vat_pct || 5); };
   const lineAmt = (q, r) => round((+q || 0) * (+r || 0));
   const pcsOf = pid => db.prepare('SELECT * FROM client_pcs WHERE project_id=? ORDER BY issue_date, id').all(pid);
@@ -91,7 +99,7 @@ module.exports = ctx => {
   }
   function newLines(pid) {
     const prev = lastPc(pid), cert = {}; for (const l of J(prev && prev.lines)) cert[l.key] = +l.cert_qty || 0;
-    const boq = db.prepare('SELECT * FROM boq_items WHERE project_id=? ORDER BY id').all(pid).map((i, n) => {
+    const boq = db.prepare('SELECT * FROM boq_items WHERE project_id=? AND COALESCE(provisional,0)=0 ORDER BY id').all(pid).map((i, n) => {
       const key = 'b' + i.id, pq = key in cert ? cert[key] : round(i.qty * (i.billed_pct || 0) / 100);
       return { key, boq_id: i.id, item: String(n + 1), section: i.section || '', description: i.description, unit: i.unit || '', qty: i.qty, rate: i.rate, prev_qty: pq, cum_qty: (i.done_pct || 0) > (i.billed_pct || 0) + 0.0001 ? Math.max(pq, round(i.qty * i.done_pct / 100)) : pq };   // only new progress moves the quantity
     });
@@ -107,6 +115,7 @@ module.exports = ctx => {
     const p = proj(pc.project_id), st = getSettings();
     if (st.vat_registered !== '0' && !C.validTrn(st.trn)) bad('Enter your company TRN (15 digits) in Settings before issuing tax invoices');
     if (pc.invoice_id) bad('A tax invoice was already issued for this PC');
+    if (pc.app_id) assertNoProvisionalClaims(db.prepare('SELECT * FROM pay_apps WHERE id=?').get(pc.app_id) || notFound());
     const v = pcView(pc, p), d = v.d, gross = v.basis === 'gross';
     if (!body.force && v.checks.some(c => ['vat', 'prev_payments', 'retention_down'].includes(c.code))) { const e = new Error('check_pc'); e.status = 409; e.checks = v.checks; throw e; }
     if (d.retention < -0.004) bad('The retention on this PC is lower than on the previous one — record the difference as a release of retention');
@@ -219,6 +228,7 @@ module.exports = ctx => {
           let lines = J(row.lines);
           if (Array.isArray(x.lines)) { const byKey = Object.fromEntries(x.lines.map(l => [String(l.key), l])); lines = lines.map(l => byKey[l.key] ? { ...l, cum_qty: Math.max(0, num(byKey[l.key].cum_qty)) } : l); }
           const status = x.status && ['draft', 'submitted'].includes(x.status) && ['draft', 'submitted'].includes(row.status) ? x.status : row.status;
+          if (status === 'submitted' || Array.isArray(x.lines)) assertNoProvisionalClaims({ ...row, lines: JSON.stringify(lines) });
           db.prepare('UPDATE pay_apps SET date=?, period_to=?, materials=?, notes=?, lines=?, status=? WHERE id=?').run(f.date, f.period_to, f.materials, f.notes, JSON.stringify(lines), status, row.id);
           audit(req, 'update', 'pay_apps', row.id, status);
           return send(res, 200, appView(db.prepare('SELECT * FROM pay_apps WHERE id=?').get(row.id))), true;
@@ -244,6 +254,7 @@ module.exports = ctx => {
         if (m === 'POST' && !c) {
           const x = await readBody(req), p = proj(+x.project_id), r0 = pcRow(x);
           if (r0.app_id && !db.prepare('SELECT 1 FROM pay_apps WHERE id=? AND project_id=?').get(r0.app_id, p.id)) bad('That application belongs to another project');
+          if (r0.app_id) assertNoProvisionalClaims(db.prepare('SELECT * FROM pay_apps WHERE id=?').get(r0.app_id) || notFound());
           if (r0.app_id && db.prepare('SELECT 1 FROM client_pcs WHERE app_id=?').get(r0.app_id)) bad('A PC is already recorded for this application');
           const cols = [...PCF, 'lines'];
           const r = db.prepare(`INSERT INTO client_pcs(project_id,${cols.join(',')},status,created,created_by) VALUES(?,${cols.map(() => '?').join(',')},'recorded',?,?)`).run(p.id, ...cols.map(k => r0[k]), today(), me.username);

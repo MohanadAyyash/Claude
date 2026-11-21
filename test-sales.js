@@ -1,7 +1,12 @@
 // Tender pipeline and online quote acceptance (public link, signature, decline, expiry, renewal): node --no-warnings test-sales.js
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
+const { DatabaseSync } = require('node:sqlite');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'erp-sales-'));
 process.env.SALES_NO_SCHEDULER = '1';
+const legacyDb = new DatabaseSync(path.join(process.env.DATA_DIR, 'erp.db'));
+legacyDb.exec('CREATE TABLE boq_items(id INTEGER PRIMARY KEY, project_id INTEGER, section TEXT, description TEXT, unit TEXT, qty REAL DEFAULT 0, rate REAL DEFAULT 0, cost_rate REAL DEFAULT 0, done_pct REAL DEFAULT 0, billed_pct REAL DEFAULT 0)');
+legacyDb.prepare("INSERT INTO boq_items(id,project_id,section,description,qty,rate,done_pct,billed_pct) VALUES(999,999,'Provisional items','Legacy provisional',1,50,75,25)").run();
+legacyDb.close();
 const { server } = require('./server.js');
 
 server.listen(0, async () => {
@@ -12,6 +17,9 @@ server.listen(0, async () => {
   const SIG = 'data:image/png;base64,' + 'iVBORw0KGgo' + 'A'.repeat(400) + '=';
   try {
     ok(await call('POST', 'setup', { username: 'admin', password: 'secret12', company: 'Trigon' }));
+    const legacy = ok(await call('GET', 'boq_items/999'));
+    assert.equal(legacy.provisional, 1, 'existing provisional BOQ items are safely flagged during migration');
+    assert.equal(legacy.done_pct, 75); assert.equal(legacy.billed_pct, 25, 'migration preserves historical progress and billed values');
     ok(await call('PUT', 'settings', { trn: '100123456700003', terms: 'Payment 30 days' }));
     const cl = ok(await call('POST', 'parties', { type: 'client', name: 'Al Waha Developments', trn: '100234567800003', address: 'Dubai South' })).id;
 
@@ -87,6 +95,7 @@ server.listen(0, async () => {
     assert.equal(bproj.contract_value, 4500, 'contract value = the quotation total without the provisional items');
     const bboq = ok(await call('GET', 'boq_items?project_id=' + bp)).filter(x => x.project_id === bp);
     assert.deepEqual(bboq.map(x => x.section), ['Pre-construction', 'Paving works', 'Paving works', 'Pre-construction', 'Provisional items']);
+    assert.ok(bboq.slice(0, 4).every(x => x.provisional === 0)); assert.equal(bboq[4].provisional, 1, 'converted provisional line remains flagged');
 
     // ---- roles
     ok(await call('POST', 'users', { username: 'viewer1', password: 'pass1234', role: 'viewer' }));

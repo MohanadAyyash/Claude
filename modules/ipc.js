@@ -8,9 +8,9 @@ module.exports = ctx => {
   db.exec('CREATE TABLE IF NOT EXISTS ipcs(id INTEGER PRIMARY KEY, invoice_id INTEGER UNIQUE, project_id INTEGER, seq INTEGER, lines TEXT, created TEXT)');
   const notFound = () => { const e = new Error('not found'); e.status = 404; throw e; };
 
-  // called by the progress invoice (server.js) before billed_pct moves: the whole BOQ with its previous and new completion
+  // called by the progress invoice (server.js) before billed_pct moves: contract BOQ lines with previous and new completion
   ctx.ipcSnapshot = (projectId, invoiceId) => {
-    const lines = db.prepare('SELECT id, section, description, unit, qty, rate, billed_pct, done_pct FROM boq_items WHERE project_id=? ORDER BY id').all(projectId)
+    const lines = db.prepare('SELECT id, section, description, unit, qty, rate, billed_pct, done_pct FROM boq_items WHERE project_id=? AND COALESCE(provisional,0)=0 ORDER BY id').all(projectId)
       .map(i => ({ boq_id: i.id, section: i.section || '', description: i.description, unit: i.unit || '', qty: i.qty, rate: i.rate, prev_pct: i.billed_pct || 0, cum_pct: Math.max(i.done_pct || 0, i.billed_pct || 0) }));
     const seq = (db.prepare('SELECT MAX(seq) n FROM ipcs WHERE project_id=?').get(projectId).n || 0) + 1;
     db.prepare('INSERT INTO ipcs(invoice_id,project_id,seq,lines,created) VALUES(?,?,?,?,?)').run(invoiceId, projectId, seq, JSON.stringify(lines), today());

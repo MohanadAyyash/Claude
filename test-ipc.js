@@ -69,6 +69,34 @@ server.listen(0, async () => {
     ok(await call('PUT', 'settings', { kpi_manday_target: 250 }));
     assert.equal(ok(await call('GET', `project-summary/manday?month=2026-11&project_id=${k}`)).rows[0].on_target, false);
     out.push(`revenue per worker-day: 50,000 ÷ 220 = ${kp.rows[0].per_worker_day} (target 219 ✔; with target 250 → below)`);
+    // ---- provisional BOQ items remain trackable but cannot enter progress invoices or payment applications
+    const pq = ok(await call('POST', 'quotes', { client_id: cl, project_name: 'Provisional safeguards', items: [
+      { description: 'Contract works', unit: 'm2', qty: 100, rate: 100 },
+      { description: 'Provisional works', unit: 'm2', qty: 30, rate: 100, provisional: true },
+    ] })).id;
+    const pp = ok(await call('POST', `quotes/${pq}/convert`)).project_id;
+    const pboq = ok(await call('GET', `boq_items?project_id=${pp}`));
+    const contractItem = pboq.find(x => x.description === 'Contract works'), provisionalItem = pboq.find(x => x.description === 'Provisional works');
+    assert.ok(contractItem && provisionalItem?.provisional, 'converted provisional BOQ line is flagged');
+    assert.equal((await call('PUT', `boq_items/${provisionalItem.id}`, { provisional: 0 })).s, 400, 'provisional items cannot be enabled for direct billing');
+    ok(await call('PUT', `boq_items/${contractItem.id}`, { done_pct: 100 }));
+    ok(await call('PUT', `boq_items/${provisionalItem.id}`, { done_pct: 100 }));
+    const pi = ok(await call('POST', `projects/${pp}/progress-invoice`, {})).id;
+    const progress = ok(await call('GET', `invoices/${pi}`));
+    assert.deepEqual(progress.items.map(x => x.description), ['Contract works (0% → 100%)'], 'progress invoice contains only contract BOQ work');
+    const ipc = ok(await call('GET', `invoices/${pi}/certificate`));
+    assert.deepEqual(ipc.lines.map(x => x.description), ['Contract works'], 'IPC excludes provisional work');
+    const pboqAfter = ok(await call('GET', `boq_items?project_id=${pp}`));
+    assert.equal(pboqAfter.find(x => x.id === provisionalItem.id).done_pct, 100, 'site progress is retained');
+    assert.equal(pboqAfter.find(x => x.id === provisionalItem.id).billed_pct, 0, 'provisional progress is not marked billed');
+    const ps = ok(await call('GET', 'project-summary')).find(x => x.id === pp);
+    assert.equal(ps.boq_value, 10000); assert.equal(ps.provisional_boq_value, 3000); assert.equal(ps.boq_earned, 10000);
+    const app = ok(await call('POST', 'claims/apps', { project_id: pp }));
+    assert.deepEqual(app.lines.map(x => x.description), ['Contract works'], 'payment application excludes provisional work');
+    assert.equal(app.work, 10000);
+    assert.equal((await call('POST', `projects/${pp}/progress-invoice`, {})).s, 400, 'provisional completion alone creates no second invoice');
+    out.push('provisional BOQ: site progress retained; progress invoice, IPC, payment application and contract BOQ totals exclude it');
+
     // money view only
     ok(await call('POST', 'users', { username: 'fm1', password: 'pass1234', role: 'foreman' }));
     const adminCookie = cookie; cookie = ''; ok(await call('POST', 'login', { username: 'fm1', password: 'pass1234' }));
